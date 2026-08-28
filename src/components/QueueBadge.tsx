@@ -1,8 +1,14 @@
 // QueueBadge — 顶栏右侧小徽章，显示当前任务队列状态
-// 点击展开看详情，可取消单个任务
-import { useEffect, useState, useCallback } from 'react';
+// 点击展开看任务明细；每个任务可展开看它的实时生成日志（agent 输出按 taskId 归类）
+import { useEffect, useState, useCallback, useRef } from 'react';
 import type { QueueSnapshot, QueueTask } from '../types';
 import { showToast } from '../toast';
+
+type LogLine = { type: string; text: string; at: number };
+
+const LOG_COLOR: Record<string, string> = {
+  stdout: '#b8c4bf', info: '#38bdf8', error: '#f43f5e', stderr: '#fbbf24', done: '#14b789', sys: '#a78bfa',
+};
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '排队中',
@@ -38,6 +44,9 @@ export function QueueBadge() {
   const [snapshot, setSnapshot] = useState<QueueSnapshot | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [tick, setTick] = useState(0);  // 触发"running 已用时"刷新
+  const [logsByTask, setLogsByTask] = useState<Record<string, LogLine[]>>({});
+  const [openTask, setOpenTask] = useState<string | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   // 订阅队列状态
   useEffect(() => {
@@ -48,12 +57,32 @@ export function QueueBadge() {
     return unsub;
   }, []);
 
+  // 订阅 agent 流式输出 → 按 taskId 归档（全局持有，跳页也不丢）
+  useEffect(() => {
+    if (!window.electronAPI?.onAgentChunk) return;
+    const unsub = window.electronAPI.onAgentChunk((chunk: any) => {
+      const id = chunk.taskId;
+      if (!id) return;
+      setLogsByTask((prev) => {
+        const cur = prev[id] || [];
+        const next = cur.length >= 400 ? [...cur.slice(-300), chunk] : [...cur, chunk];
+        return { ...prev, [id]: next };
+      });
+    });
+    return unsub;
+  }, []);
+
   // running 期间每 1s 重新计算已用时
   useEffect(() => {
     if (!snapshot || snapshot.running === 0) return;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [snapshot?.running]);
+
+  // 有任务结束时不自动收起；日志展开时滚到底
+  useEffect(() => {
+    if (openTask) logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [openTask, logsByTask[openTask || '']?.length]);
 
   const active = (snapshot?.running || 0) + (snapshot?.pending || 0);
 
@@ -109,7 +138,16 @@ export function QueueBadge() {
               <div className="qbp-empty">无任务</div>
             )}
             {snapshot.tasks.map((t) => (
-              <QueueRow key={t.id} task={t} tick={tick} onCancel={handleCancel} />
+              <QueueRow
+                key={t.id}
+                task={t}
+                tick={tick}
+                logs={logsByTask[t.id] || []}
+                open={openTask === t.id}
+                onToggle={() => setOpenTask((cur) => (cur === t.id ? null : t.id))}
+                logEndRef={logEndRef}
+                onCancel={handleCancel}
+              />
             ))}
           </div>
           <div className="qbp-footer">
@@ -121,9 +159,12 @@ export function QueueBadge() {
   );
 }
 
-function QueueRow({ task, tick, onCancel }: { task: QueueTask; tick: number; onCancel: (id: string) => void }) {
-  void tick;  // 让父组件 tick 变化触发重渲染
-  const isLive = task.status === 'running' || task.status === 'pending';
+function QueueRow({ task, tick, logs, open, onToggle, logEndRef, onCancel }: {
+  task: QueueTask; tick: number; logs: LogLine[]; open: boolean;
+  onToggle: () => void; logEndRef: React.RefObject<HTMLDivElement>; onCancel: (id: string) => void;
+}) {
+  void tick;
+  const isLive = task.status === 'running' || task.status === 'pending' || task.status === 'cancelling';
   const elapsedMs = task.startedAt
     ? (task.endedAt || Date.now()) - task.startedAt
     : Date.now() - task.enqueuedAt;
@@ -131,10 +172,14 @@ function QueueRow({ task, tick, onCancel }: { task: QueueTask; tick: number; onC
   return (
     <div className={`qbp-row qbp-status-${task.status}`}>
       <div className="qbp-row-main">
+        <button type="button" className="qbp-expander" onClick={onToggle} title={open ? '收起日志' : '查看日志'}>
+          {open ? '▾' : '▸'}
+        </button>
         <span className="qbp-type">{TYPE_LABEL[task.type] || task.type}</span>
         <span className="qbp-label" title={task.label}>{task.label}</span>
         <span className="qbp-meta">
           {task.meta?.cli && <span className="qbp-cli">{task.meta.cli}</span>}
+          {logs.length > 0 && <span className="qbp-logcount">{logs.length}</span>}
           {isLive && <span className="qbp-elapsed">{fmtElapsed(elapsedMs)}</span>}
         </span>
       </div>
@@ -148,6 +193,25 @@ function QueueRow({ task, tick, onCancel }: { task: QueueTask; tick: number; onC
           </button>
         )}
       </div>
+
+      {open && (
+        <div className="qbp-log">
+          {logs.length === 0 ? (
+            <div className="qbp-log-empty">暂无输出…</div>
+          ) : (
+            logs.map((l, i) => (
+              l.type === 'sys' ? (
+                <details key={i} className="qbp-log-sys"><summary>📝 提示词（{l.text.length} 字）</summary><pre>{l.text}</pre></details>
+              ) : (
+                <div key={i} className="qbp-log-line" style={{ color: LOG_COLOR[l.type] || '#b8c4bf' }}>
+                  {l.text}
+                </div>
+              )
+            ))
+          )}
+          <div ref={logEndRef} />
+        </div>
+      )}
     </div>
   );
 }

@@ -363,6 +363,33 @@ select:focus-visible {
   background: #0a0f0e; border-radius: 6px; color: #8a9a94;
   font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
 }
+
+/* ===== 队列明细：任务行 + 内联日志 ===== */
+.qbp-row { flex-wrap: wrap; }
+.qbp-expander {
+  width: 18px; height: 18px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--muted); font-size: 11px; cursor: pointer;
+}
+.qbp-expander:hover { background: var(--bg-soft); color: var(--ink); }
+.qbp-logcount {
+  font-size: 10px; color: var(--muted); background: var(--bg-soft);
+  padding: 0 6px; border-radius: 999px; font-variant-numeric: tabular-nums;
+}
+.qbp-log {
+  width: 100%; margin-top: 6px; max-height: 240px; overflow: auto;
+  background: #0e1413; border-radius: 8px; padding: 8px 10px;
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5;
+}
+.qbp-log-empty { color: var(--muted); }
+.qbp-log-line { white-space: pre-wrap; word-break: break-word; }
+.qbp-log-sys { margin: 4px 0; }
+.qbp-log-sys summary { cursor: pointer; color: #a78bfa; opacity: .85; }
+.qbp-log-sys pre {
+  margin: 6px 0 0; padding: 8px; max-height: 220px; overflow: auto;
+  background: #0a0f0e; border-radius: 6px; color: #8a9a94;
+  font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
 /* ===== Queue Badge (顶栏悬浮) ===== */
 .queue-badge-wrap {
   position: fixed;

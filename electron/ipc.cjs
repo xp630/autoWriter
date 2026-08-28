@@ -38,13 +38,16 @@ agentQueue.on('state', emitQueueState);
 
 /** 队列化运行 runAgent：返回 { taskId, promise }，调用方 await promise 拿结果 */
 function enqueueAgentRun(type, label, cfg, prompt, meta = {}) {
+  let taskId = '';
   const task = agentQueue.enqueue(
     type,
     label,
-    ({ signal }) => runAgent(cfg, prompt, emitAgentChunk, { signal }),
+    // 每块 chunk 带上 taskId，供队列明细按任务归类展示
+    ({ signal }) => runAgent(cfg, prompt, (chunk) => emitAgentChunk({ ...chunk, taskId }), { signal }),
     { meta: { ...meta, cli: cfg.cli, model: cfg.model } },
   );
-  return { taskId: task.id, promise: task.promise };
+  taskId = task.id;
+  return { taskId, promise: task.promise };
 }
 
 function registerIpc() {
@@ -233,10 +236,9 @@ function registerIpc() {
         `\n📌 用户没有输入主题关键词。请先通读参考文章，**提炼出它的核心主题**作为本次大纲的主题，再按参考文的写作框架（标题/开头/段落/结尾）生成大纲。\n`,
     });
 
-    emitAgentChunk({ type: 'info', text: `🎯 [Step 1/2] 生成大纲（派给 ${cli}）` });
-    // 把完整 prompt 投递到日志面板，便于排查
-    emitAgentChunk({ type: 'sys', text: `📝 发给 ${cli} 的提示词：\n${prompt}` });
     const { taskId, promise } = enqueueAgentRun('outline', `大纲: ${(keywords || []).slice(0, 3).join('/') || '从参考文'}`, { cli, model }, prompt);
+    emitAgentChunk({ type: 'info', taskId, text: `🎯 [Step 1/2] 生成大纲（派给 ${cli}）` });
+    emitAgentChunk({ type: 'sys', taskId, text: `📝 发给 ${cli} 的提示词：\n${prompt}` });
     const { content, elapsedMs } = await promise;
     console.log(`[agent:outline] taskId=${taskId} 返回 ${content.length} 字符, 耗时 ${elapsedMs}ms, 前100字: ${content.slice(0,100)}`);
     return { taskId, outline: content.trim(), elapsedMs };
@@ -274,11 +276,10 @@ function registerIpc() {
       imageHint: need_image === false ? '' : `\n# 配图占位（重要）\n在适合配图的位置插入**纯文本占位符**，必须带唯一ID（用于后续图片分离存储与替换）：\n格式：[[配图:具体场景描述@pic 序号]]\n例如：[[配图:深圳南山写字楼夜景@pic1]]、[[配图:程序员深夜写代码@pic2]]\n每篇文章插入 1-3 个占位（章节首/小节切换/结尾行动点）。描述用具体名词、不超过 20 字，不要用"插图1"这种泛词。\n注意：一定不要用 Markdown 图片语法 ![xxx](url)，要用 [[配图:描述@picN]] 纯文本格式。`,
     });
 
-    emitAgentChunk({ type: 'info', text: `🎯 [Step 2/2] 基于大纲生成正文（派给 ${cli}）` });
-    // 把完整 prompt 投递到日志面板，便于排查
-    emitAgentChunk({ type: 'sys', text: `📝 发给 ${cli} 的提示词：\n${prompt}` });
     const start = Date.now();
     const { taskId, promise } = enqueueAgentRun('article', `正文: ${(keywords || []).slice(0, 3).join('/') || '默认'}`, { cli, model }, prompt);
+    emitAgentChunk({ type: 'info', taskId, text: `🎯 [Step 2/2] 基于大纲生成正文（派给 ${cli}）` });
+    emitAgentChunk({ type: 'sys', taskId, text: `📝 发给 ${cli} 的提示词：\n${prompt}` });
     const { content, elapsedMs } = await promise;
     console.log(`[agent:article] taskId=${taskId} 返回 ${content.length} 字符, 耗时 ${elapsedMs}ms, 前100字: ${content.slice(0,100)}`);
 
@@ -425,8 +426,8 @@ function registerIpc() {
       content,
     });
 
-    emitAgentChunk({ type: 'info', text: `✨ [润色] ${instruction}` });
     const { taskId, promise } = enqueueAgentRun('polish', `润色: ${instruction.slice(0, 30)}`, { cli, model }, prompt);
+    emitAgentChunk({ type: 'info', taskId, text: `✨ [润色] ${instruction}` });
     const { content: polished, elapsedMs } = await promise;
     return { taskId, content: polished.trim(), elapsedMs };
   });

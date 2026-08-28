@@ -113,16 +113,6 @@ export function WritePage() {
   // 当前正在跑的队列任务 ID（用于取消真实子进程）
   const currentTaskIdRef = useRef<string | null>(null);
 
-  // 订阅 Agent 实时进度
-  useEffect(() => {
-    if (!window.electronAPI?.onAgentChunk) return;
-    const unsub = window.electronAPI.onAgentChunk((chunk) => {
-      setLogs((prev) => [...prev, { ...chunk, at: Date.now() }]);
-      setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 10);
-    });
-    return unsub;
-  }, []);
-
   // 生成计时：generating 期间每 500ms 刷新已用秒数
   useEffect(() => {
     if (!generating) { setElapsed(0); return; }
@@ -1039,7 +1029,7 @@ export function WritePage() {
                 {stage === 'outline' ? '🖋️ 正在生成大纲…' : stage === 'article' ? '✍️ 正在生成正文…' : stage === 'analyze' ? '🧩 正在分析参考文框架…' : '⏳ 处理中…'}
               </div>
               <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                已用时 <span className="mono" style={{ fontWeight: 600 }}>{elapsed}s</span> · 可查看下方日志了解进度
+                已用时 <span className="mono" style={{ fontWeight: 600 }}>{elapsed}s</span> · 实时输出见右下角「队列」明细
               </div>
             </div>
             <button 
@@ -1053,58 +1043,6 @@ export function WritePage() {
         </Card>
       )}
 
-      {/* ===== 日志面板（仅在生成中或有日志时显示） ===== */}
-      {(logs.length > 0 || generating) && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
-            📊 {stage === 'outline' ? '生成大纲中' : stage === 'article' ? '生成正文中' : stage === 'analyze' ? '分析中' : '日志'}
-            {generating && <span className="pulse-dot" style={{ marginLeft: 8 }} />}
-          </div>
-          <div
-            style={{
-              maxHeight: 320,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              wordBreak: 'break-word',
-              padding: 10,
-              background: '#0e1413',
-              color: '#b8c4bf',
-              borderRadius: 8,
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11,
-              lineHeight: 1.5,
-            }}
-          >
-            {logs.length === 0 ? (
-              <div style={{ color: 'var(--muted)' }}>等待 agent 输出...</div>
-            ) : (
-              logs.map((l, i) => {
-                const colorMap: Record<string, string> = {
-                  stdout: '#b8c4bf', info: '#38bdf8', error: '#f43f5e', stderr: '#fbbf24', done: '#14b789', sys: '#a78bfa',
-                };
-                // sys = 完整提示词，默认折叠，避免刷屏撑大面板
-                if (l.type === 'sys') {
-                  return (
-                    <details key={i} className="log-sys">
-                      <summary>📝 提示词（{l.text.length} 字）</summary>
-                      <pre>{l.text}</pre>
-                    </details>
-                  );
-                }
-                return (
-                  <div key={i} style={{ color: colorMap[l.type] || '#b8c4bf' }}>
-                    <span style={{ color: 'var(--muted)', marginRight: 6 }}>
-                      {new Date(l.at).toLocaleTimeString('zh-CN', { hour12: false })}
-                    </span>
-                    {l.text}
-                  </div>
-                );
-              })
-            )}
-            <div ref={logEndRef} />
-          </div>
-        </div>
-      )}
     </>
   );
 }
