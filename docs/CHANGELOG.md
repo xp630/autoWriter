@@ -56,6 +56,36 @@
 
 ---
 
+### 🩹 E2E 补全 + 致命 bug 修复（commit `324efbd`）
+
+用户实测「页面打不开」，定位到之前没跑 E2E 就提交的多个致命 bug，
+现全部修复并补齐 82 个 E2E 用例。
+
+**致命 bug（应用完全不可用）**：
+1. `preload.cjs` 含 TS 注解 `(params: any)` → preload 加载失败 → `window.electronAPI` 不存在 → **所有页面白屏**
+2. `ipc.cjs` 含 TS 注解 `let x: string` / `catch (e: any)` → main 进程启动即崩
+3. WritePage draft useEffect 引用后置声明的 setter → TDZ 崩溃
+4. SettingsPage 漏 `getImageSettings`/`getAgentSettings` import
+5. QueueBadge 在 `return null` 之后还有 `useCallback` → React #310 整树崩溃
+
+**中等**：
+6. scheduler `sync-bloggers`/`cleanup-stale-topics` 引用已 revert 掉的表 → sqlite_master 存在性检查跳过
+7. `analysis:run` 的 `loadAnalysisSkill()` 在 try/catch 外
+8. analysis skill 文件路径 `content-analysis.md` → `content-analysis/SKILL.md`
+
+**新增 E2E（35→82 用例）**：
+| 文件 | 用例 | 覆盖 |
+|---|---|---|
+| `settings-flow.spec.ts` | 7 | 调度器卡 / 启停 / 立即跑 / Provider / channel 注册 |
+| `writepage-flow.spec.ts` | 9 | Step1 / 关键词 / 高级 / 分析 / **草稿刷新恢复** / 禁用态 / 订阅 |
+| `articles-flow.spec.ts` | 12 | 列表 / 筛选 / 搜索 / 发布 / 排程 / 删除 / 更新 |
+| `queue-and-scheduler-flow.spec.ts` | 12 | queue snapshot / 订阅 / cancel / scheduler 全生命周期 |
+| `dashboard-flow.spec.ts` | 10 | KPI×4 / Agent / 快速开始 / 空态 / 最近文章 / 磁贴跳转 |
+
+**教训**：以后声称"完成"前必须实际跑 `npx playwright test` + `npx vitest run`，不能只看 build 通过。
+
+---
+
 ## 📦 v0.2.0 · 2026-08-28（已交付）
 
 ### 🆕 后台调度器（Scheduler）
