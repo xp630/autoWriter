@@ -18,6 +18,7 @@ declare global {
       getActiveImageProviders: () => Promise<ImageProvider[]>;
       listImageModels: (providerId: string) => Promise<ImageModel[]>;
       saveImageModel: (data: Partial<ImageModel>) => Promise<any>;
+      testImageProvider: (data: { providerId: string; token?: string }) => Promise<{ ok: boolean; toolCount?: number; message?: string }>;
       // 文章生成（全部走队列，taskId 可用于取消）
       generateOutline: (params: GenerateParams) => Promise<{ taskId: string; outline: string; elapsedMs: number }>;
       generateArticle: (params: GenerateArticleParams) => Promise<GenerateResult>;

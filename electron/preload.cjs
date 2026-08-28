@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getActiveImageProviders: () => ipcRenderer.invoke('image:provider:get-active'),
   listImageModels: (providerId) => ipcRenderer.invoke('image:model:list', providerId),
   saveImageModel: (data) => ipcRenderer.invoke('image:model:save', data),
+  testImageProvider: (data) => ipcRenderer.invoke('provider:test', data),
 
   // Skills
   listSkills: () => ipcRenderer.invoke('skills:list'),

@@ -106,6 +106,7 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['image:generate-for', '为占位符生成'],
   ['image:upload-for', '为占位符上传'],
   ['image:read-dataurl', '读 data URL'],
+  ['provider:test', '测试 provider 连接'],
   ['file:save-md', '保存 Markdown'],
   ['file:save-image', '保存图片'],
   ['queue:list', '队列状态快照'],

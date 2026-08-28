@@ -813,6 +813,12 @@ function registerIpc() {
   });
 
   // ===== 任务队列 =====
+  // ===== Provider 连接测试（主进程 fetch，避 CORS）=====
+  ipcMain.handle('provider:test', async (_e, { providerId, token } = {}) => {
+    const { testProviderConnection } = require('./image-providers.cjs');
+    return await testProviderConnection(String(providerId || ''), String(token || ''));
+  });
+
   ipcMain.handle('queue:list', () => agentQueue.snapshot());
 
   ipcMain.handle('queue:cancel', (_e, taskId) => {

@@ -67,6 +67,7 @@ export function SettingsPage() {
   const [imageModels, setImageModels] = useState<ImageModel[]>([]);
   const [editingProvider, setEditingProvider] = useState<ImageProvider | null>(null);
   const [providerForm, setProviderForm] = useState({ accessToken: '', timeout: 180000 });
+  const [testingProvider, setTestingProvider] = useState(false);
 
   // 提示词模板管理
   const [prompts, setPrompts] = useState<{ name: string; label: string; path: string }[]>([]);
@@ -94,37 +95,18 @@ export function SettingsPage() {
     } catch (err: any) { console.error('加载 Provider 失败:', err); }
   };
 
-  // 测试 Provider 连接
+  // 测试 Provider 连接（走主进程 IPC，无 CORS）
   const testProvider = async (provider: ImageProvider, token: string) => {
-    if (!token) {
-      showToast('❌ 请先输入 Access Token');
-      return;
-    }
-    
+    if (!token) { showToast('❌ 请先输入 Access Token'); return; }
+    setTestingProvider(true);
     try {
-      // 直接调用 Tensor.art API 测试
-      const result = await fetch('https://openapi.tensor.art/openworks/v1/tool/list', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Echo-Access-Key': token,
-        },
-        body: JSON.stringify({}),
-      });
-      
-      const data = await result.json();
-      
-      if (data?.code === '0' || data?.data?.tools) {
-        const toolCount = data?.data?.tools?.length || 0;
-        showToast(`✅ 连接成功！可用工具: ${toolCount} 个`);
-        return true;
-      } else {
-        showToast(`❌ 连接失败: ${data?.message || 'Token 无效'}`);
-        return false;
-      }
+      const r = await window.electronAPI.testImageProvider({ providerId: provider.provider_id, token });
+      if (r.ok) showToast(`✅ 连接成功${r.toolCount != null ? `，可用工具 ${r.toolCount} 个` : (r.message ? `：${r.message}` : '')}`);
+      else showToast(`❌ 连接失败: ${r.message || 'Token 无效'}`);
     } catch (err: any) {
       showToast(`❌ 连接失败: ${err.message}`);
-      return false;
+    } finally {
+      setTestingProvider(false);
     }
   };
 
@@ -568,9 +550,9 @@ export function SettingsPage() {
                   <button
                     className="btn btn-outline btn-sm"
                     onClick={() => testProvider(editingProvider, providerForm.accessToken)}
-                    disabled={!providerForm.accessToken}
+                    disabled={!providerForm.accessToken || testingProvider}
                   >
-                    🧪 测试
+                    {testingProvider ? <><Loader2 size={12} className="spin" /> 测试中…</> : '🧪 测试'}
                   </button>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>

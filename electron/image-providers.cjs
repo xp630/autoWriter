@@ -201,4 +201,22 @@ async function generateImage(providerId, prompt, params = {}) {
   }
 }
 
-module.exports = { generateImage };
+module.exports = { generateImage, testProviderConnection };
+
+/**
+ * 主进程侧测试 provider 连接（避开渲染进程 CORS）
+ * @returns {Promise<{ok:boolean, toolCount?:number, message?:string}>}
+ */
+async function testProviderConnection(providerId, accessToken) {
+  if (providerId === 'pollinations') return { ok: true, message: 'Pollinations 免费，无需 Token' };
+  if (providerId === 'tensorart') {
+    if (!accessToken) return { ok: false, message: '未填 Access Token' };
+    try {
+      const tools = await tensorartListTools(accessToken);
+      return { ok: true, toolCount: tools.length };
+    } catch (e) {
+      return { ok: false, message: e?.message || String(e) };
+    }
+  }
+  return { ok: false, message: `未知 provider: ${providerId}` };
+}
