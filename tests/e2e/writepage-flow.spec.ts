@@ -15,6 +15,7 @@ import {
   launchAutoWriter,
   cleanupAutoWriter,
   invokeIpc,
+  execSql,
   type LaunchedApp,
 } from './_electron-app';
 
@@ -48,28 +49,40 @@ test('输入主题后，关键词 chips 自动出现', async () => {
   expect(allText.join('|')).toMatch(/Sora|短视频|冲击|创作者/);
 });
 
-test('展开高级设置，能看到渠道 / 人设 / 风格 / 长度 4 个下拉', async () => {
-  await ctx.window.locator('text=/高级设置/').first().click();
-  await expect(ctx.window.locator('select').first()).toBeVisible();
-  // 至少 4 个 select
-  const selects = ctx.window.locator('select');
-  const count = await selects.count();
-  expect(count).toBeGreaterThanOrEqual(4);
+test('展开高级设置：渠道/风格/长度 3 个下拉 + 赛道/人设 是账号级只读 chip', async () => {
+  // 自洽：不依赖前一个测试把页面留在哪（文件内共享一个 app 实例，隐式状态会让用例互踩）
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+
+  const adv = ctx.window.locator('button:has-text("高级设置")').first();
+  await expect(adv).toBeVisible({ timeout: 5000 });
+  // 折叠态文案是「▼ 高级设置（4 渠道 / 5 人设）」（不含“展开”二字），展开后才是「▲ 收起」。
+  // 用“没有收起”判断需要点，避免误判断导致面板未展开、select=0。
+  if (!(await adv.textContent() || '').includes('收起')) await adv.click();
+  await expect(ctx.window.locator('select').first()).toBeVisible({ timeout: 5000 });
+
+  const count = await ctx.window.locator('select').count();
+  expect(count).toBeGreaterThanOrEqual(3);
+
+  // 四轴重构后的事实：赛道/人设不再是写文章页的下拉，而是 profile 级的只读 chip
+  await expect(ctx.window.locator('.identity-chip').first()).toBeVisible();
+  expect(count, '赛道已上收到身份层，Step1 不应再有 4 个下拉').toBeLessThan(6);
 });
 
-test('点「分析内容」按钮，没有参考文时按钮处于 disabled', async () => {
-  // 清空 referenceText 的方式：输入一个不触发 referenceText 的 query
-  // 然后检查分析按钮的状态
-  // (实际是 referenceText 状态决定 disabled，前面抓取后应该被填充了)
-  // 这里主要验证：分析按钮存在
-  const btn = ctx.window.locator('button:has-text("分析内容")').first();
-  await expect(btn).toBeVisible();
-  // 不强断 disabled（取决于上面测试是否已抓取）
+test('分析触发器存在；无参考文时 disabled（用稳定 class，不靠会变的文案）', async () => {
+  // 旧写法靠 button:has-text("分析内容")，但该按钮文案会随状态变成「分析中…」，
+  // 前一用例触发的异步任务未结束时就定位不到 —— 改用类名定位。
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  const trigger = ctx.window.locator('.write-analysis-trigger').first();
+  await expect(trigger).toBeVisible({ timeout: 5000 });
+  await expect(trigger).toBeDisabled();
 });
 
-test('IPC 模拟抓取参考文 + 调用分析（端到端：跑真实的 Agent）', async () => {
-  // 直接通过 IPC 设置一个 article 用于后续验证
-  // 这里不强跑真分析（依赖 LLM），改测：调用 runAnalysis 会写入 content_analysis
+test('agent 不可用时 analysis:run 应写 failed 记录而不是抛错', async () => {
+  // 注意：原来这条叫“跑真实的 Agent”，但调 analysis:run 不传 cli 会默认 'claude'，
+  // 即真的 spawn CLI 等 LLM 返回 —— 结果不确定、超 30s、还烧 token。不该待在默认套件里。
+  // 这里按原注释的本意改成确定性断言：用不存在的 cli（agent.cjs 在 default 分支立即 reject，
+  // 不 spawn），验证“无论如何都落一条记录 + 错误被记下来 + 不抛到 renderer”。
   const sampleContent = `
 # 测试参考文
 
@@ -88,16 +101,22 @@ test('IPC 模拟抓取参考文 + 调用分析（端到端：跑真实的 Agent�
     author: '测试作者',
     source_url: 'https://example.com/post/123',
     domain: '情感',
+    cli: '__nonexistent_cli__',
   });
 
-  // 即便真实 agent 不可用（CLI 没装），这个调用应该返回 ok:false 而不抛
-  // 至少会写入一条 status='failed' 记录
-  if (!r.ok) {
-    expect(r.error || r.id).toBeDefined();
-  } else {
-    expect(r.analysis).toBeDefined();
-    expect(r.analysis?.topic).toBeDefined();
-  }
+  // 不抛异常，而是返回结构化失败
+  expect(r.ok).toBe(false);
+  expect(r.error).toBeTruthy();
+  expect(r.id).toBeTruthy();
+
+  // 记录确实入库了，而且状态是 failed、错误被持久化
+  const rows = await execSql<Array<{ status: string; error: string; title: string }>>(
+    ctx.window, `SELECT status, error, title FROM content_analysis WHERE id = ?`, [r.id],
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0].status).toBe('failed');
+  expect(rows[0].error).toMatch(/未知 CLI/);
+  expect(rows[0].title).toBe('为什么年轻人不结婚');
 });
 
 test('通过 IPC 验证 content_analysis 记录被持久化', async () => {

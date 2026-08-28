@@ -8,7 +8,7 @@ const { renderPrompt } = require('./prompts.cjs');
 const { TaskQueue } = require('./queue.cjs');
 const {
   parseAnalysisJson, parseAngleResult, loadAnalysisSkill, loadAngleSkill,
-  buildAnalysisPrompt, buildAnalysisContextBlock, saveAnalysis,
+  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, saveAnalysis,
 } = require('./analysis.cjs');
 
 /** 把 agent 流式 chunk 推到所有 renderer 窗口 */
@@ -210,7 +210,7 @@ function registerIpc() {
 
   // Step 1: 生成大纲
   ipcMain.handle('article:outline', async (_e, params) => {
-    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, analysis } = params;
+    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, analysis, strategy } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     // keywords 可为空：有参考文时由 AI 从参考文推断主题
     if ((!keywords || !keywords.length) && !reference_text) throw new Error('关键词或参考文至少要有一个');
@@ -229,6 +229,7 @@ function registerIpc() {
       trackHint: ctx.trackHint,
       referenceBlock: ctx.refBlock,
       analysisBlock: analysisBlock || '',
+      strategyBlock: buildStrategyBlock(strategy),
       inferHint: (keywords && keywords.length) ? '' :
         `\n📌 用户没有输入主题关键词。请先通读参考文章，**提炼出它的核心主题**作为本次大纲的主题，再按参考文的写作框架（标题/开头/段落/结尾）生成大纲。\n`,
     });
@@ -243,7 +244,7 @@ function registerIpc() {
 
   // Step 2: 基于大纲生成正文
   ipcMain.handle('article:article', async (_e, params) => {
-    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, outline, need_image, analysis } = params;
+    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, outline, need_image, analysis, strategy } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     if (!outline) throw new Error('缺少大纲，请先生成大纲');
     // 关键词可为空：只要有大纲（从链接/参考文进来的流程，主题已凝在大纲里）
@@ -266,6 +267,7 @@ function registerIpc() {
       trackHint: ctx.trackHint,
       referenceBlock: ctx.refBlock,
       analysisBlock: analysisBlock || '',
+      strategyBlock: buildStrategyBlock(strategy),
       editWarning: hasUserEdit
         ? '已确认，含 [已修订] 标记的章节是用户调整后的，必须严格遵循'
         : '已确认',
@@ -310,6 +312,20 @@ function registerIpc() {
       cli,
       channel || 'wechat',
     );
+
+    // 策略→文章闭环：若本次正文是基于用户采纳的创作策略生成的，回写关联
+    // （content_analysis → content_angles → article_drafts）
+    if (strategy && strategy.anglesId && Number.isInteger(strategy.index)) {
+      try {
+        db.prepare(`
+          UPDATE content_angles
+          SET article_id = ?, adopted_index = ?, adopted_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(result.lastInsertRowid, strategy.index, Number(strategy.anglesId));
+      } catch (linkErr) {
+        console.warn('[article:article] 策略关联写入失败:', linkErr.message);
+      }
+    }
 
     return {
       taskId,
@@ -848,7 +864,7 @@ function registerIpc() {
 
   // ===== Content Analysis (P0) =====
   ipcMain.handle('analysis:run', async (_e, params) => {
-    const { title, content, platform, author, source_url, domain } = params || {};
+    const { title, content, platform, author, source_url, domain, profileId, cli, model } = params || {};
     if (!content || !String(content).trim()) {
       throw new Error('缺少分析内容');
     }
@@ -856,14 +872,15 @@ function registerIpc() {
     // 先入库一条 pending 记录拿出去
     const pendingId = db.prepare(`
       INSERT INTO content_analysis
-      (source_url, title, platform, author, content, analysis_json, status, duration_ms)
-      VALUES (?, ?, ?, ?, ?, '{}', 'running', 0)
+      (source_url, title, platform, author, content, analysis_json, status, duration_ms, profile_id)
+      VALUES (?, ?, ?, ?, ?, '{}', 'running', 0, ?)
     `).run(
       source_url || '',
       title || '',
       platform || '',
       author || '',
       String(content),
+      String(profileId || ''),
     ).lastInsertRowid;
 
     // 构造 prompt + 跑 skill
@@ -890,7 +907,9 @@ function registerIpc() {
       const { taskId, promise } = enqueueAgentRun(
         'analysis',
         `分析: ${(title || '').slice(0, 30) || '未命名'}`,
-        { cli: 'claude', model: '' },
+        // 以前这里是硬编码 { cli: 'claude', model: '' }，导致「分析内容」无条件用 claude，
+        // 用户在设置/仪表盘里选的 Agent 不生效（analysis:angles 则是收 cli 的，不一致）。
+        { cli: String(cli || 'claude'), model: String(model || '') },
         fullPrompt,
       );
       const { content: raw, elapsedMs } = await promise;
@@ -1000,9 +1019,34 @@ function registerIpc() {
   });
 
 
-    ipcMain.handle('analysis:list', (_e, { limit = 20 } = {}) => {
-    const rows = db.prepare(`
-      SELECT id, source_url, title, platform, author, status, duration_ms, created_at
+  // 记录用户采纳了哪个角度（不生成文章，仅标记策略；article_id 由正文生成时补）
+  ipcMain.handle('angles:adopt', (_e, params) => {
+    const id = Number(params && params.id);
+    const index = params && params.index;
+    if (!id || !Number.isInteger(index)) return { ok: false, error: '缺少 id 或 index' };
+    const row = db.prepare('SELECT id, angles_json, status FROM content_angles WHERE id = ?').get(id);
+    if (!row) return { ok: false, error: '方向记录不存在' };
+    let list = [];
+    try { list = JSON.parse(row.angles_json || '{}').angles || []; } catch {}
+    if (index < 0 || index >= list.length) return { ok: false, error: `角度下标越界（${index} / 共 ${list.length} 个）` };
+    db.prepare(`UPDATE content_angles SET adopted_index = ?, adopted_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(index, id);
+    return { ok: true, id, index, angle: list[index] };
+  });
+
+    ipcMain.handle('analysis:list', (_e, { limit = 20, profileId } = {}) => {
+  // 身份隔离：传 profileId 则只看本身份 + 旧数据（profile_id='' 的历史记录不隐身）
+  const pid = String(profileId || '');
+  const rows = pid
+    ? db.prepare(`
+      SELECT id, source_url, title, platform, author, status, duration_ms, created_at, profile_id
+      FROM content_analysis
+      WHERE profile_id = ? OR profile_id = '' OR profile_id IS NULL
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(pid, Number(limit) || 20)
+    : db.prepare(`
+      SELECT id, source_url, title, platform, author, status, duration_ms, created_at, profile_id
       FROM content_analysis
       ORDER BY created_at DESC
       LIMIT ?

@@ -62,9 +62,30 @@ function getDb(opts = {}) {
         db.exec('ALTER TABLE article_images ADD COLUMN image_id INTEGER NOT NULL DEFAULT 0');
       }
       // content_analysis 若缺 profile_id（P0 内容决策·身份隔离）
-      const caCols = db.prepare(`PRAGMA table_info(content_analysis)`).all().map(c => c.name);
-      if (caCols.length > 0 && !caCols.includes('profile_id')) {
-        try { db.exec(`ALTER TABLE content_analysis ADD COLUMN profile_id TEXT DEFAULT ''`); } catch {}
+      const ensureCols = (table, defs) => {
+        const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+        if (!cols.length) return false;
+        for (const [name, type] of defs) {
+          if (!cols.includes(name)) {
+            try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`); } catch (e) { console.warn(`[db] ${table}.${name} 迁移失败:`, e.message); }
+          }
+        }
+        return true;
+      };
+      // 索引必须在补列之后建：旧库的表可能还没这些列
+      const ensureIdx = (sql) => { try { db.exec(sql); } catch (e) { console.warn('[db] index skipped:', e.message); } };
+
+      if (ensureCols('content_analysis', [['profile_id', "TEXT DEFAULT ''"]])) {
+        ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_analysis_profile ON content_analysis(profile_id, created_at DESC)`);
+      }
+      // content_angles 若缺策略采纳相关列（P0-2 策略进入写作）
+      if (ensureCols('content_angles', [
+        ['adopted_index', 'INTEGER DEFAULT -1'],
+        ['adopted_at', 'DATETIME'],
+        ['article_id', 'INTEGER'],
+      ])) {
+        ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_angles_adopted ON content_angles(profile_id, adopted_index, created_at DESC)`);
+        ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_angles_article ON content_angles(article_id)`);
       }
     }
   } catch (e) { console.warn('[db] migration skipped:', e.message); }

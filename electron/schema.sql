@@ -139,9 +139,11 @@ CREATE TABLE IF NOT EXISTS content_analysis (
   status          TEXT DEFAULT 'completed',  -- pending | running | completed | failed
   error           TEXT DEFAULT '',
   duration_ms     INTEGER DEFAULT 0,
+  profile_id      TEXT DEFAULT '',           -- 创作身份隔离（旧库由 db.cjs 迁移补列）
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_content_analysis_created ON content_analysis(created_at DESC);
+-- 注：idx_content_analysis_profile 必须在 db.cjs 迁移之后建（旧库可能还没 profile_id 列）
 
 -- ============================================================================
 -- P0 内容决策系统
@@ -157,8 +159,13 @@ CREATE TABLE IF NOT EXISTS content_angles (
   status          TEXT DEFAULT 'running',   -- running|completed|failed
   error           TEXT DEFAULT '',
   duration_ms     INTEGER DEFAULT 0,
+  adopted_index   INTEGER DEFAULT -1,       -- 用户采纳的角度下标；-1 = 未采纳
+  adopted_at      DATETIME,                 -- 采纳时间
+  article_id      INTEGER,                  -- 采纳后生成的文章（content_angles → article_drafts 闭环）
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (analysis_id) REFERENCES content_analysis(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_content_angles_analysis ON content_angles(analysis_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_content_angles_profile ON content_angles(profile_id, created_at DESC);
+-- 注：adopted / article_id 两个索引引用迁移新增的列，必须在 db.cjs 的 ALTER 之后建，
+--     否则旧库启动时 schema 会在列还不存在时建索引 → no such column → app 起不来。

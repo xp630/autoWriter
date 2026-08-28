@@ -64,7 +64,7 @@ declare global {
       schedulerSetInterval: (ms: number) => Promise<{ ok: boolean; error?: string; snapshot?: SchedulerSnapshot }>;
 
       /** 内容分析 */
-      runAnalysis: (params: { title?: string; content: string; platform?: string; author?: string; source_url?: string; domain?: string }) => Promise<{
+      runAnalysis: (params: { title?: string; content: string; platform?: string; author?: string; source_url?: string; domain?: string; profileId?: string; cli?: string; model?: string }) => Promise<{
         ok: boolean;
         id?: number;
         taskId?: string | null;
@@ -73,7 +73,7 @@ declare global {
         durationMs?: number;
       }>;
       getAnalysis: (id: number) => Promise<ContentAnalysisRecord | null>;
-      listAnalyses: (params?: { limit?: number }) => Promise<Array<{ id: number; title: string; platform: string; status: string; duration_ms: number; created_at: string }>>;
+      listAnalyses: (params?: { limit?: number; profileId?: string }) => Promise<Array<{ id: number; title: string; platform: string; status: string; duration_ms: number; created_at: string; profile_id?: string }>>;
       deleteAnalysis: (id: number) => Promise<{ ok: boolean; changes: number }>;
       generateAngles: (params: { analysisId: number; track: string; profileId: string; cli: string; model?: string }) => Promise<{
         ok: boolean;
@@ -81,6 +81,13 @@ declare global {
         taskId?: string | null;
         angles?: Angle[];
         track_fit?: { matches?: boolean; article_track?: string; user_track?: string; note?: string };
+        error?: string;
+      }>;
+      adoptAngle: (params: { id: number; index: number }) => Promise<{
+        ok: boolean;
+        id?: number;
+        index?: number;
+        angle?: Angle;
         error?: string;
       }>;
     };
@@ -118,6 +125,12 @@ export interface GenerateParams {
   reference_urls?: string[];
   /** AI 对参考内容的分析结果（如有），会注入到 prompt 作为上下文 */
   analysis?: ContentAnalysisResult;
+  /**
+   * 用户采纳的创作策略（P0-2）：拍平的角度字段 + 来源定位。
+   * 主进程用 buildStrategyBlock 渲染成 {{strategyBlock}} 注入大纲/正文，
+   * 正文入库后据 anglesId/index 回写 content_angles.article_id。
+   */
+  strategy?: Angle & { anglesId?: number; index?: number };
 }
 
 export interface GenerateArticleParams extends GenerateParams {
@@ -162,6 +175,19 @@ export interface Angle {
   target_user?: string;
   structure?: string[];
   reason?: string;
+  /** 0-10 推荐指数：这个角度在当前赛道值不值得写 */
+  value_score?: number;
+  /** 情绪策略：读完后的主导情绪（共鸣/愤怒/焦虑/治愈/反转/鼓励） */
+  emotion?: string;
+  /** 内容目标：这篇要拿到的结果（涨粉/评论/收藏/建立IP/商业转化） */
+  goal?: string;
+}
+
+/** 用户采纳的创作策略：角度 + 它的来源记录定位，用于回写关联与提示词注入 */
+export interface StrategySelection {
+  anglesId: number;
+  index: number;
+  angle: Angle;
 }
 
 export interface ContentAnalysisResult {

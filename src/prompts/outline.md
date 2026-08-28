@@ -8,6 +8,7 @@
 {{personaHint}}{{channelHint}}{{trackHint}}
 {{referenceBlock}}
 {{analysisBlock}}
+{{strategyBlock}}
 {{inferHint}}
 
 # 大纲要求（三段论）

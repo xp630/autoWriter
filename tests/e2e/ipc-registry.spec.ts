@@ -122,6 +122,7 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['analysis:list', '列出分析'],
   ['analysis:delete', '删除分析'],
   ['analysis:angles', '生成创作方向'],
+  ['angles:adopt', '采纳某个创作方向（P0-2 策略进入写作）'],
   // 测试钩子（自身）
   ['test:list-channels', '测试用：列 channels'],
   ['test:invoke', '测试用：调 handler'],
@@ -157,6 +158,9 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   ['scheduler:snapshot', [], true],  // 启动后才存在
   ['scheduler:enable', [], true],
   ['analysis:list', [{}]],
+  // angles:adopt 入参不合法时应返回结构化错误（不碰 AI），用于验证守卫分支
+  ['angles:adopt', [{}]],
+  ['angles:adopt', [{ id: 999999, index: 0 }]],
   ['article:images', [99999], true],
   ['test:list-channels', []],
   ['test:userdata', []],

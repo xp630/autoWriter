@@ -8,6 +8,7 @@
 {{personaHint}}{{channelHint}}{{trackHint}}
 {{referenceBlock}}
 {{analysisBlock}}
+{{strategyBlock}}
 
 # 用户大纲（{{editWarning}}）
 {{outline}}

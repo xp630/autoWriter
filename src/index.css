@@ -2324,7 +2324,7 @@ select:focus-visible {
 .track-fit-banner.mismatch { background: var(--accent-soft); color: #b45309; }
 .angles-list { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
 .angle-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 14px 16px; }
-.angle-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 8px; }
+.angle-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .angle-type { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; background: var(--bg-soft); border-radius: 999px; font-weight: 600; }
 .angle-title { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 6px; line-height: 1.4; }
 .angle-core { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; line-height: 1.6; padding: 8px 10px; background: var(--bg-soft); border-radius: var(--r-sm); }
@@ -2332,5 +2332,24 @@ select:focus-visible {
 .angle-row { display: flex; flex-direction: column; gap: 2px; }
 .angle-row span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .angle-row > span + *, .angle-row > ol { font-size: 13px; color: var(--ink-2); }
-.angle-start { white-space: nowrap; }
+.angle-start { white-space: nowrap; margin-left: auto; }
 .angle-save { margin-top: 10px; }
+
+/* P0-2 创作策略：推荐指数 / 已采纳标记 / 情绪与目标 chip */
+.angle-score {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: #92400e; background: var(--accent-soft);
+  border: 1px solid #fde68a; border-radius: 999px; padding: 2px 7px;
+}
+.angle-adopted {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 700;
+  color: #047857; background: var(--line-soft);
+  border: 1px solid #a7f3d0; border-radius: 999px; padding: 2px 7px;
+}
+.angle-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.angle-chip {
+  font-size: 11px; color: var(--ink-2); background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 2px 8px;
+}

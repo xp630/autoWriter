@@ -1,7 +1,7 @@
 // AnalysisPanel — 展示 AI 内容分析的 7 个卡片 + 创作方向（P0-1b）
 import {
   FileText, Globe, Hash, Lightbulb, MessageSquare,
-  Sparkles, Target, Users, Wand2, XCircle, CheckCircle2, AlertTriangle, Loader2, BookmarkPlus,
+  Sparkles, Target, Users, Wand2, XCircle, CheckCircle2, AlertTriangle, Loader2, BookmarkPlus, Star,
 } from 'lucide-react';
 import type { ContentAnalysisResult, Angle } from '../types';
 
@@ -17,6 +17,8 @@ interface Props {
   trackFit?: { matches?: boolean; article_track?: string; user_track?: string; note?: string } | null;
   onSaveTopic?: (angle: Angle) => void;
   onStartWithAngle?: (angle: Angle) => void;
+  /** 已采纳的角度下标（-1 = 未采纳），用于卡片上的“已采纳”标记 */
+  adoptedIndex?: number;
 }
 
 const SECTIONS = [
@@ -38,7 +40,7 @@ function kvList(arr?: string[]) {
   );
 }
 
-export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle }: Props) {
+export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedIndex = -1 }: Props) {
   if (status === 'failed') {
     return (
       <div className="analysis-panel analysis-failed">
@@ -197,14 +199,28 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
             <div key={i} className="angle-card">
               <div className="angle-head">
                 <span className="angle-type">{a.angle_type || `方向 ${i + 1}`}</span>
+                {typeof a.value_score === 'number' && (
+                  <span className="angle-score" title="这个角度在当前赛道的推荐指数">
+                    <Star size={11} /> {a.value_score.toFixed(1)}
+                  </span>
+                )}
+                {adoptedIndex === i && (
+                  <span className="angle-adopted"><CheckCircle2 size={11} /> 已采纳</span>
+                )}
                 {onStartWithAngle && (
                   <button type="button" className="btn btn-primary btn-sm angle-start" onClick={() => onStartWithAngle(a)}>
-                    用此方向开始创作 <Wand2 size={12} />
+                    采用策略并开始创作 <Wand2 size={12} />
                   </button>
                 )}
               </div>
               <div className="angle-title">{a.title}</div>
               {a.core_point && <div className="angle-core">{a.core_point}</div>}
+              {(a.emotion || a.goal) && (
+                <div className="angle-chips">
+                  {a.emotion && <span className="angle-chip">情绪 · {a.emotion}</span>}
+                  {a.goal && <span className="angle-chip">目标 · {a.goal}</span>}
+                </div>
+              )}
               <div className="angle-meta">
                 {a.target_user && <div className="angle-row"><span className="viral-label">目标用户</span><span>{a.target_user}</span></div>}
                 {a.structure && a.structure.length > 0 && (
