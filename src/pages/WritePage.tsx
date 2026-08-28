@@ -12,6 +12,7 @@ import { showToast } from '../toast';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
+import { ArticleViewer } from '../components/ArticleViewer';
 import type { ContentAnalysisResult } from '../types';
 import { getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
 import { useActiveProfile } from '../hooks/useActiveProfile';
@@ -832,71 +833,12 @@ export function WritePage() {
               fontFamily: 'var(--font-serif)',
             }}
           >
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                p: ({ children, node }) => {
-                  // 检测段落中是否有配图占位符
-                  const text = String(children);
-                  const matches = text.matchAll(/\[\[配图:([^@]+)@(\w+)\]\]/g);
-                  const placeholders = Array.from(matches).map(m => ({ desc: m[1], id: m[2] }));
-
-                  if (placeholders.length === 0) {
-                    return <p>{children}</p>;
-                  }
-
-                  return (
-                    <p>
-                      {text.split(/(\[\[配图:[^\]]+\]\])/).map((part, i) => {
-                        const match = part.match(/\[\[配图:([^@]+)@(\w+)\]\]/);
-                        if (!match) return part;
-                        const [, desc, picId] = match;
-                        const existingImage = generatedImages[picId];
-                        const isGenerating = generatingImages[picId];
-
-                        if (existingImage) {
-                          return (
-                            <div key={i} style={{ margin: '20px 0', textAlign: 'center' }}>
-                              <img src={existingImage} alt={desc} style={{ maxWidth: '100%', borderRadius: 12, boxShadow: 'var(--shadow-md)' }} />
-                              <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>{desc}</p>
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <div
-                            key={i}
-                            onClick={() => generateImage(picId, desc)}
-                            style={{
-                              margin: '20px 0',
-                              padding: '24px',
-                              background: isGenerating ? 'var(--line-light)' : 'var(--line-light)',
-                              border: '2px dashed var(--line)',
-                              borderRadius: 12,
-                              textAlign: 'center',
-                              cursor: isGenerating ? 'default' : 'pointer',
-                              transition: 'all 0.2s',
-                            }}
-                          >
-                            {isGenerating ? (
-                              <span>⏳ 正在生成：{desc}</span>
-                            ) : (
-                              <>
-                                <div style={{ fontSize: 24, marginBottom: 8 }}>🖼️</div>
-                                <strong style={{ color: 'var(--line-2)' }}>点击生成配图</strong>
-                                <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{desc}</p>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </p>
-                  );
-                },
-              }}
-            >
-              {result.content}
-            </ReactMarkdown>
+            <ArticleViewer
+              content={result.content}
+              articleId={result.id}
+              imagesMap={generatedImages}
+              onImageUpdated={(pid, url) => setGeneratedImages((prev) => ({ ...prev, [pid]: url }))}
+            />
           </div>
           <div style={{
             marginTop: 16,
