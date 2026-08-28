@@ -1,22 +1,66 @@
-# autoWriter-desktop · Changelog & Implementation Log
+# autoWriter-desktop · Changelog & Roadmap
 
-> 本文档追踪已完成的方案、关键设计决策、待修复的已知问题。
-> 代码状态基线：`develop` 分支 · 62 单元测试 / 3 E2E 全过
+> 单一文档追踪：**已完成方案** + **关键设计决策** + **后续计划（带勾选框）**
+> 代码基线：`develop` 分支 · 51 单元测试 / 3 E2E 全过
 
 ---
 
-## 📦 v0.2.0 · 2026-08-28
+## 📋 待办清单（勾选式）
+
+### P0 · 立即做（影响用户感知）
+
+- [ ] **本地更新 / 死代码修复** — `saveDraft` / `loadDraft` 定义了但 0 调用点，「刷新不丢」功能没生效；启用 + debounce 1.5s
+- [ ] **localStorage 统一封装** — 抽 `src/utils/storage.ts`，5 文件 11 处直接 `JSON.parse` 收敛到 `getAgentSettings()` / `getImageSettings()` 等具名 API
+- [ ] **`aw_open_article` 去 localStorage 化** — CustomEvent 已经够用，删 localStorage 中转步骤
+- [ ] **V2 内容发现 / SourcesPage 真实化** — 当前 22 行空壳，扩成博主 CRUD + 内容列表 + 热度筛选
+- [ ] **V2 内容发现 / 爆款分析页** — 内容详情 + AI 拆解 + 6 卡片（与现有 AnalysisPanel 复用）
+
+### P1 · 本周做（产品能力补齐）
+
+- [ ] **V2 内容发现 / 选题中心** — 真实选题列表 + 详情 + 6 视角扩写
+- [ ] **V2 内容发现 / 仪表盘 5 模块** — 今日热点 / 今日新增选题 / 待创作 / 最近文章 / Agent 状态
+- [ ] **调度器扩展 / 真实抓取** — `sync-bloggers` 目前只更新 `last_synced_at`，接入 RSSHub / playwright 抓取
+- [ ] **Publisher · 公众号** — playwright + 草稿模式自动发布
+- [ ] **自动保存 debounce** — 防止每次 onChange 写一次卡顿（依赖 saveDraft 启用）
+
+### P2 · 下个 sprint（基础设施 + UX）
+
+- [ ] **暗色模式** — `[data-theme="dark"]` 块；DESIGN.md 提及未实现
+- [ ] **ReAct Engine** — 替换 spawn shim，Reason→Act→Observe 多步
+- [ ] **MCP 客户端** — `@modelcontextprotocol/sdk` 集成
+- [ ] **React ErrorBoundary** — 组件 throw 时避免整页空白
+- [ ] **RSS 抓取** — `rss-parser` + scheduler
+- [ ] **Schema 版本字段** — localStorage 加 `v` 字段 + migration
+- [ ] **类型守卫 + 错误日志** — localStorage parse 失败时 console.warn
+- [ ] **inline-style 大清理** — ArticlesPage 93 处、ImagesPage 96 处（task 长期）
+
+### P3 · 长期（不紧急）
+
+- [ ] **内容知识库** — RAG / 全文检索
+- [ ] **AI 分身** — 用户风格学习
+- [ ] **多端加密同步** — 端到端云同步
+- [ ] **i18n locale** — 英文 UI
+- [ ] **发布 workflow** — `.github/workflows/release.yml` 自动构建安装包
+- [ ] **CHANGELOG 自动生成** — conventional commits + release-it
+
+### 已完成 ✓
+
+- [x] **后台调度器** — Scheduler 类 + 3 内置任务 + 14 测试 · commit `d24b169`
+- [x] **内容分析中心 (P0)** — AnalysisPanel 7 卡片 + JSON 容错 + 11 测试 · commit `42c97a5`
+- [x] **Revert V2 Phase 1 残留** — 清理 scheduler commit 里多带的 schema/skill · commit `43a5ba9`
+- [x] **Queue + 取消** — TaskQueue 真实 SIGTERM 子进程 · commit `3e2e2b3` (pre-v0.2)
+- [x] **Lucide 图标 + Card accent 变体** — 替换 emoji-as-icon · commit `664d1e4`
+- [x] **Dashboard 落地页** — KPI + 当前 Agent + 最近编辑 + 首次启动引导 · commit `6192a0d`
+
+---
+
+## 📦 v0.2.0 · 2026-08-28（已交付）
 
 ### 🆕 后台调度器（Scheduler）
 
-**Commit**: `d24b169 feat(scheduler): 后台调度器 — setInterval 周期任务 + 3 个内置任务`
+**Commit**: `d24b169`
 
 **是什么**：在 Electron 主进程常驻一个 `setInterval` 循环，每 60s 扫描一次注册的 handler，自动执行周期任务。
-
-**为什么需要**：
-- 之前 `article_drafts.scheduled_at` 字段存在但**无人扫描**，排程文章永远不会自动发布
-- 之前内容发现能力完全没有基础设施
-- 之前主题清理、博主同步等需求无处下手
 
 **架构**：
 
@@ -60,15 +104,9 @@
 - 折叠式历史（最近 10 条）
 - 整体启停切换
 
-**测试**：`tests/unit/scheduler.test.ts` 14 个用例：
-- 生命周期（start/stop/enable/disable/interval 校验）
-- tick 串行执行 + 顺序写入 history
-- 异常隔离（一个 handler 抛错不影响其他）
-- 手动 runNow + 重入保护
-- disabled 状态 tick 为 no-op
-- history 超过 historyLimit 自动丢弃
+**测试**：`tests/unit/scheduler.test.ts` 14 个用例 — 生命周期、tick 串行、异常隔离、runNow、重入保护、disabled no-op、history 上限。
 
-**文件**：
+**文件清单**：
 - `electron/scheduler.cjs` (new, 200 行)
 - `electron/main.cjs`（app.whenReady 后启动）
 - `electron/ipc.cjs`（5 个新 handler）
@@ -82,11 +120,9 @@
 
 ### 🆕 内容分析中心（P0）
 
-**Commit**: `42c97a5 feat(analysis): P0 内容分析中心 — AI 拆解参考内容`
+**Commit**: `42c97a5`
 
 **是什么**：用户在写文章页粘贴参考内容后，点「分析内容」按钮，AI 把参考文拆解为 7 个维度的结构化 JSON，渲染成卡片。
-
-**为什么需要**：之前用户输入参考文后**直接进写作**，缺一步「为什么这篇值得写」「我从什么角度创作」的判断辅助。
 
 **完整使用流程**：
 
@@ -108,7 +144,7 @@
 |---|---|---|
 | **基本信息** | 标题 / 平台 / 作者 / 来源 / 关键词 chips | 快速认出这是哪篇 |
 | **主题** | 一级主题 + 分类 + 50字总结 | 一眼看穿文章核心 |
-| **核心观点** | 3 条条 锐度观点（不是废话） | 拿来参考或挑战 |
+| **核心观点** | 3 条锐度观点（不是废话） | 拿来参考或挑战 |
 | **爆点** | 主导情绪 + 核心冲突（X vs Y 格式）+ 传播原因 | 解释「为什么火」 |
 | **结构** | 3-5 步文章骨架 | 复用框架 |
 | **用户画像** | 目标用户 + 3 个关注点 | 决定要不要写给这群人 |
@@ -143,7 +179,7 @@ function parseAnalysisJson(text) {
 - 每个字段都要有具体内容（不写「未知」）
 - 关键词 3-5 个、reasons 从固定清单选、adaptation 给具体建议
 
-**文件**：
+**文件清单**：
 - `electron/analysis.cjs` (new, 90 行) — JSON 解析 / Skill 读取 / prompt 构造 / 入库
 - `src/skills/analysis/content-analysis.md` (new, 70 行) — Skill prompt
 - `src/components/AnalysisPanel.tsx` (new, 180 行) — 7 卡片渲染组件
@@ -158,11 +194,11 @@ function parseAnalysisJson(text) {
 
 ---
 
-## 🔧 v0.2.0 后续清理
+### 🔧 v0.2.0 后续清理
 
-### Revert V2 Phase 1 残留
+#### Revert V2 Phase 1 残留
 
-**Commit**: `43a5ba9 revert: drop V2 Phase 1 leftovers from scheduler commit`
+**Commit**: `43a5ba9`
 
 **发生了什么**：上一个 Scheduler commit 里**多带了两个文件**：
 - `electron/schema.sql` 追加的 V2 5 张表（bloggers / contents / comments / comment_analysis / topics / content_topics）
@@ -179,61 +215,38 @@ function parseAnalysisJson(text) {
 
 ## 📊 测试矩阵
 
-| 时间 | 套件 | 用例数 | 覆盖 |
-|---|---|---|---|
-| v0.1.0 | `queue.test.ts` | 13 | 任务队列并发/取消 |
-| v0.1.0 | `prompts.test.ts` | 7 | 模板变量替换 |
-| v0.1.0 | `skills.test.ts` | 6 | frontmatter 解析 |
-| v0.2.0 | `scheduler.test.ts` | 14 | 调度器生命周期/异常隔离/重入 |
-| v0.2.0 | `analysis.test.ts` | 11 | JSON 容错 3 路径 |
-| **总计** | **5 套件** | **51 用例** | |
+| 套件 | 用例数 | 覆盖 |
+|---|---|---|
+| `queue.test.ts` | 13 | 任务队列并发/取消 |
+| `prompts.test.ts` | 7 | 模板变量替换 |
+| `skills.test.ts` | 6 | frontmatter 解析 |
+| `scheduler.test.ts` | 14 | 调度器生命周期/异常隔离/重入 |
+| `analysis.test.ts` | 11 | JSON 容错 3 路径 |
+| **总计** | **51 用例** | |
 
 E2E：3 用例（IPC 注册表 / handler smoke / UI smoke）
 
 ---
 
-## 🐛 已知问题 / 待办审计
+## 📝 维护规则
 
-### 1. localStorage 更新逻辑混乱（**未修复**，P0-P1）
+每次完成 1 个 roadmap 项：
+1. 在「已完成 ✓」区加上 `- [x] **标题** — 简短说明 · commit <hash>`
+2. 在提交时引用本文档 section
+3. 如果是 P0 重大功能，在「📦 版本日志」加完整小节（含架构图、决策、测试）
 
-**来源**：`docs/CHANGELOG.md`（本文件）§ 「待办审计」 / 此前对话 review
-
-**问题**：
-- 🔴 **死代码**：`WritePage.tsx:19-26` 定义了 `saveDraft` / `loadDraft` 但全文件 0 个调用点。「刷新不丢」功能实际没生效
-- 🟡 **5 个文件 11 处直接 `JSON.parse(localStorage.getItem(...))`**：WritePage / DashboardPage / ArticlesPage / ImagesPage / RichEditor 重复解析同一组 key
-- 🟡 **无统一封装**：4 个 localStorage key 散落，无常量集中、无类型守卫、无 schema 版本
-- 🟡 **aw_open_article 多此一举**：CustomEvent 已经够用，localStorage 中转是冗余
-- 🟢 **缺 debounce**：如启用 `saveDraft`，每次 onChange 都写会卡
-- 🟢 **类型不安全**：`JSON.parse(...)` 后直接 `.provider` 访问，无 runtime 校验
-
-**修复路径**：
-
-| 优先级 | 项 | 估时 |
-|---|---|---|
-| P0 | 启用 `saveDraft` / `loadDraft`（修死代码）+ debounce | 30 min |
-| P0 | 抽 `src/utils/storage.ts` 统一封装（`getAgentSettings()` 等） | 1 hour |
-| P1 | `aw_open_article` 改纯事件，删 localStorage 中转 | 10 min |
-| P2 | 加 schema 版本字段（versioned storage） | 30 min |
-| P3 | 类型守卫 + 错误日志 | 30 min |
-
-### 2. 其他遗留（pre-existing）
-
-- `src/components/RichEditor.tsx:121` — `prompt` 变量自引用导致 TS 报错（不影响运行）
-- `src/utils/export.ts:321` — `docx` 类型不匹配（不影响构建产物）
-- `docs/FEATURES.md` §10 路线图未实现项（P0 调度器已部分实现，其他未动）
+每累计 ≥ 3 commits 更新本文档一次。
 
 ---
 
-## 📚 相关文档
+## 🔗 相关文档
 
-- `docs/FEATURES.md` — 功能矩阵 + 路线图
+- `docs/FEATURES.md` — 能力矩阵（静态，长期稳定）
 - `docs/USER_GUIDE.md` — 用户使用说明
-- `docs/MODULE_STATUS.md` — 模块完成度审计
+- `docs/MODULE_STATUS.md` — 模块完成度审计（基于代码事实）
 - `DESIGN.md` — 设计规范
 - `README.md` — 项目门面
 
 ---
 
-**最后更新**：2026-08-28 · `develop` 分支 `42c97a5` 后
-
-**维护规则**：每次发版（或累计 ≥ 3 commits）更新本文件，列出新增功能 + 关键决策 + 已知问题
+**最后更新**：2026-08-28 · `develop` 分支 `5ce26b9` 后
