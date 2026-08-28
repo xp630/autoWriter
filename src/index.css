@@ -576,6 +576,17 @@ select:focus-visible {
 
 
 /* ===== ImageSlot（配图槽，两页共用）===== */
+/* 复制友好：配图槽的操作壳不参与选区复制，手选正文 Ctrl+C 只带走干净的 <img> */
+.img-slot-caption,
+.img-slot-repick,
+.img-slot-empty,
+.img-slot-empty-tip,
+.img-slot-menu,
+.img-slot-menu-backdrop,
+.img-slot-lib-overlay,
+.img-slot-generating { -webkit-user-select: none; user-select: none; }
+.img-slot-img { user-select: text; }
+
 
 .img-slot-generating { display: flex; flex-direction: column; gap: 8px; padding: 20px 22px; background: var(--line-light); border: 1px solid var(--line-soft); border-radius: 12px; }
 .img-slot-gen-head { display: flex; align-items: center; gap: 8px; color: var(--line-2); font-weight: 600; font-size: 13px; }
