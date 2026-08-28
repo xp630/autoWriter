@@ -558,23 +558,24 @@ function registerIpc() {
     }
 
     // 获取使用的 Provider 配置
-    let currentProvider = providerId;
-    let currentModel = modelId || 'flux';
-    
+    let currentProvider = providerId || '';
+    let currentModel = modelId || '';
+
     if (!currentProvider) {
-      // 获取默认启用的 Provider
+      // 没指定 provider：按 priority 取默认启用的 provider + 其默认模型
       const providers = db.prepare(`SELECT * FROM image_providers WHERE enabled=1 ORDER BY priority ASC`).all();
       if (providers.length > 0) {
         const p = providers[0];
         currentProvider = p.provider_id;
-        // 获取该 Provider 的默认模型
         const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(p.provider_id);
-        if (defaultModel) {
-          currentModel = defaultModel.model_id;
-        }
+        if (defaultModel) currentModel = defaultModel.model_id;
       } else {
         currentProvider = 'pollinations';
       }
+    } else if (!currentModel) {
+      // 指定了 provider 但没指定 model：取该 provider 自己的默认模型（不能硬套 'flux'）
+      const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(currentProvider);
+      currentModel = defaultModel?.model_id || (currentProvider === 'pollinations' ? 'flux' : '');
     }
 
 

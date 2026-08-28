@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Sparkles, Upload, Image as ImageIcon, RefreshCw, X } from 'lucide-react';
 import { showToast } from '../toast';
+import { getImageSettings, getAgentSettings } from '../utils/storage';
 import { ImageLibraryGrid } from './ImageLibraryGrid';
 
 interface Props {
@@ -42,11 +43,16 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
     setMenuOpen(false);
     setBusy('generate');
     try {
+      // 读「图片生图设置」里选的当前 provider/模型；没选则交给 IPC 默认（priority）
+      const img = getImageSettings();
       const r = await window.electronAPI.generateImageFor({
         articleId, placeholderId, prompt: desc, useCraft: true,
+        providerId: img.provider || undefined,
+        modelId: img.model || undefined,
+        craftCli: getAgentSettings().cli,
       });
       onUpdated?.(placeholderId, r.url);
-      showToast(`✅ 配图已生成并入库（${r.provider}）`);
+      showToast(`✅ 配图已生成并入库（${r.provider} / ${r.model}）`);
     } catch (e: any) {
       showToast('❌ 生成失败：' + (e.message || e));
     } finally {
