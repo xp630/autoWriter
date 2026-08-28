@@ -1288,6 +1288,150 @@ select:focus-visible {
   max-width: 300px;
 }
 
+/* ===== Scheduler Card ===== */
+.scheduler-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.scheduler-stat {
+  background: var(--bg-soft);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scheduler-stat-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.scheduler-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.scheduler-stat-value.on  { color: var(--line); }
+.scheduler-stat-value.off { color: var(--muted); }
+
+.scheduler-actions {
+  margin-bottom: 16px;
+}
+
+.scheduler-tasks {
+  margin-top: 4px;
+}
+
+.scheduler-section-title {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.scheduler-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-bottom: 6px;
+  background: var(--card);
+  transition: border-color var(--t-fast) var(--ease);
+}
+
+.scheduler-task-row:hover {
+  border-color: var(--line-soft);
+}
+
+.scheduler-task-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.scheduler-task-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.scheduler-task-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.scheduler-task-status.ok  { color: var(--line); }
+.scheduler-task-status.err { color: var(--danger); }
+
+.scheduler-history {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.scheduler-history summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.scheduler-history summary:hover {
+  color: var(--ink);
+}
+
+.scheduler-history-list {
+  margin-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.scheduler-history-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 50px 14px;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.scheduler-history-row.ok  { color: var(--line-2); }
+.scheduler-history-row.err { color: var(--danger); }
+
+.scheduler-history-time {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.scheduler-history-name {
+  font-family: var(--font-mono);
+}
+
+.scheduler-history-dur {
+  font-family: var(--font-mono);
+  text-align: right;
+  font-size: 10px;
+  color: var(--muted);
+}
+
 /* ===== Skeleton Loading ===== */
 .skeleton {
   background: linear-gradient(90deg, var(--bg-soft) 0%, var(--bg2) 50%, var(--bg-soft) 100%);

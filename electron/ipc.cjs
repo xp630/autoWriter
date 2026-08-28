@@ -796,6 +796,23 @@ function registerIpc() {
     emitQueueState();
     return { ok: true };
   });
+
+  // ===== Scheduler =====
+  ipcMain.handle('scheduler:snapshot', () => global.scheduler?.snapshot() ?? null);
+  ipcMain.handle('scheduler:enable', () => { global.scheduler?.setEnabled(true); return global.scheduler?.snapshot(); });
+  ipcMain.handle('scheduler:disable', () => { global.scheduler?.setEnabled(false); return global.scheduler?.snapshot(); });
+  ipcMain.handle('scheduler:run-now', async (_e, name) => {
+    const { getDb } = require('./db.cjs');
+    return await global.scheduler?.runNow(String(name || ''), getDb());
+  });
+  ipcMain.handle('scheduler:set-interval', (_e, ms) => {
+    try {
+      global.scheduler?.setIntervalMs(Number(ms));
+      return { ok: true, snapshot: global.scheduler?.snapshot() };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
 }
 
 module.exports = { registerIpc };

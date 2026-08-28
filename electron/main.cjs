@@ -5,6 +5,7 @@ const { app, BrowserWindow, ipcMain, shell, protocol, net } = require('electron'
 const path = require('node:path');
 const fs = require('node:fs');
 const { registerIpc } = require('./ipc.cjs');
+const { Scheduler, registerBuiltinTasks } = require('./scheduler.cjs');
 
 const isDev = process.env.NODE_ENV === 'development';
 const isTestMode = process.env.AUTOWRITER_TEST_MODE === '1';
@@ -155,11 +156,20 @@ ipcMain.handle('app:get-version', () => app.getVersion());
 app.whenReady().then(() => {
   createWindow();
 
+  // ===== 启动调度器 =====
+  const { getDb } = require('./db.cjs');
+  const db = getDb();
+  global.scheduler = new Scheduler({ interval: 60_000 });
+  registerBuiltinTasks(global.scheduler, db);
+  global.scheduler.start();
+  console.log('[main] Scheduler started (interval=60s, tasks=' + global.scheduler.listTasks().join(',') + ')');
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on('window-all-closed', () => {
+  global.scheduler?.stop();
   if (process.platform !== 'darwin') app.quit();
 });

@@ -54,6 +54,13 @@ declare global {
       queueCancel: (taskId: string) => Promise<{ ok: boolean; reason?: string }>;
       queueClearCompleted: () => Promise<{ ok: boolean }>;
       onQueueState: (cb: (snapshot: QueueSnapshot) => void) => () => void;
+
+      /** Scheduler */
+      schedulerSnapshot: () => Promise<SchedulerSnapshot | null>;
+      schedulerEnable: () => Promise<SchedulerSnapshot | null>;
+      schedulerDisable: () => Promise<SchedulerSnapshot | null>;
+      schedulerRunNow: (name: string) => Promise<{ ok: boolean; reason?: string; error?: string; detail?: any; durationMs?: number }>;
+      schedulerSetInterval: (ms: number) => Promise<{ ok: boolean; error?: string; snapshot?: SchedulerSnapshot }>;
     };
   }
 }
@@ -118,6 +125,27 @@ export interface QueueSnapshot {
   pending: number;
   completed: number;
   tasks: QueueTask[];
+}
+
+/** Scheduler 调度器快照 */
+export interface SchedulerHistoryEntry {
+  name: string;
+  at: number;
+  ok: boolean;
+  durationMs: number;
+  detail?: any;
+  error?: string;
+  manual?: boolean;
+}
+
+export interface SchedulerSnapshot {
+  enabled: boolean;
+  running: boolean;
+  interval: number;
+  lastTick: number | null;
+  activeTasks: string[];
+  registeredTasks: string[];
+  history: SchedulerHistoryEntry[];
 }
 
 export interface ArticleImage {

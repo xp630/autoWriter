@@ -68,6 +68,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('queue:state', listener);
   },
 
+  // 调度器
+  schedulerSnapshot: () => ipcRenderer.invoke('scheduler:snapshot'),
+  schedulerEnable: () => ipcRenderer.invoke('scheduler:enable'),
+  schedulerDisable: () => ipcRenderer.invoke('scheduler:disable'),
+  schedulerRunNow: (name) => ipcRenderer.invoke('scheduler:run-now', name),
+  schedulerSetInterval: (ms) => ipcRenderer.invoke('scheduler:set-interval', ms),
+
   // 测试钩子 —— main.cjs 在 AUTOWRITER_TEST_MODE=1 时注册对应的 test:* handler
   // preload 始终暴露这些方法（不检查 env，避免 preload process.env 不可靠的问题）
   // 在生产模式下，main.cjs 不会注册 test:* handler，这里调用会得到"未注册"错误

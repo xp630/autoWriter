@@ -1,6 +1,7 @@
 // SettingsPage — Agent CLI + Model + 图片 Provider + 提示词模板 配置
 import { useEffect, useState } from 'react';
-import { Bot, Brain, Image as ImageIcon, Layers, Database, Star, RefreshCw, Save, Settings as SettingsIcon, CheckCircle2, XCircle, Loader2, Globe, Palette, Package } from 'lucide-react';
+import { Bot, Brain, Image as ImageIcon, Layers, Database, Star, RefreshCw, Save, Settings as SettingsIcon, CheckCircle2, XCircle, Loader2, Globe, Palette, Package, Clock, Play, Pause } from 'lucide-react';
+import type { SchedulerSnapshot } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
@@ -636,6 +637,9 @@ export function SettingsPage() {
         />
       </Card>
 
+      {/* 调度器状态 */}
+      <SchedulerCard />
+
       {/* 数据存储 */}
       <Card title="数据存储" icon={Database} accent="system">
         <div className="muted" style={{ fontSize: 12 }}>
@@ -646,5 +650,109 @@ export function SettingsPage() {
         </div>
       </Card>
     </>
+  );
+}
+
+// ===== SchedulerCard =====
+function SchedulerCard() {
+  const [snap, setSnap] = useState<SchedulerSnapshot | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const refresh = async () => {
+    if (!window.electronAPI?.schedulerSnapshot) return;
+    const s = await window.electronAPI.schedulerSnapshot();
+    setSnap(s);
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  const toggle = async () => {
+    setBusy('toggle');
+    if (snap?.enabled) await window.electronAPI.schedulerDisable();
+    else await window.electronAPI.schedulerEnable();
+    await refresh();
+    setBusy(null);
+  };
+
+  const runNow = async (name: string) => {
+    setBusy(name);
+    const r = await window.electronAPI.schedulerRunNow(name);
+    showToast(r.ok ? `✅ ${name} 跑完` : `❌ ${r.reason || r.error}`);
+    await refresh();
+    setBusy(null);
+  };
+
+  if (!snap) return (
+    <Card title="后台调度器" icon={Clock} accent="system">
+      <div style={{ padding: 12, color: 'var(--muted)', fontSize: 13 }}>未启动（应用未就绪）</div>
+    </Card>
+  );
+
+  const tickAgo = snap.lastTick ? `${Math.max(0, Math.floor((Date.now() - snap.lastTick) / 1000))} 秒前` : '尚未运行';
+  const intervalSec = Math.round(snap.interval / 1000);
+
+  return (
+    <Card title="后台调度器" icon={Clock} accent="system">
+      <div className="scheduler-meta">
+        <div className="scheduler-stat">
+          <span className="scheduler-stat-label">状态</span>
+          <span className={'scheduler-stat-value ' + (snap.enabled ? 'on' : 'off')}>
+            {snap.enabled ? '● 运行中' : '○ 已停用'}
+          </span>
+        </div>
+        <div className="scheduler-stat">
+          <span className="scheduler-stat-label">间隔</span>
+          <span className="scheduler-stat-value mono">{intervalSec}s</span>
+        </div>
+        <div className="scheduler-stat">
+          <span className="scheduler-stat-label">上次 tick</span>
+          <span className="scheduler-stat-value">{tickAgo}</span>
+        </div>
+      </div>
+
+      <div className="scheduler-actions">
+        <button type="button" className="btn btn-outline btn-sm" onClick={toggle} disabled={busy !== null}>
+          {snap.enabled ? <><Pause size={12} /> 停用</> : <><Play size={12} /> 启用</>}
+        </button>
+      </div>
+
+      <div className="scheduler-tasks">
+        <div className="scheduler-section-title">已注册任务</div>
+        {snap.registeredTasks.map((name) => {
+          const lastRun = snap.history.find((h) => h.name === name);
+          return (
+            <div key={name} className="scheduler-task-row">
+              <div className="scheduler-task-main">
+                <span className="scheduler-task-name">{name}</span>
+                {lastRun && (
+                  <span className={'scheduler-task-status ' + (lastRun.ok ? 'ok' : 'err')}>
+                    {lastRun.ok ? <><CheckCircle2 size={11} /> {lastRun.durationMs}ms</> : <><XCircle size={11} /> {lastRun.error}</>}
+                  </span>
+                )}
+              </div>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => runNow(name)} disabled={busy !== null}>
+                {busy === name ? <Loader2 size={11} className="spin" /> : <Play size={11} />} 立即跑
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {snap.history.length > 0 && (
+        <details className="scheduler-history">
+          <summary>历史 ({snap.history.length})</summary>
+          <div className="scheduler-history-list">
+            {snap.history.slice(0, 10).map((h, i) => (
+              <div key={i} className={'scheduler-history-row ' + (h.ok ? 'ok' : 'err')}>
+                <span className="mono scheduler-history-time">{new Date(h.at).toLocaleTimeString('zh-CN')}</span>
+                <span className="scheduler-history-name">{h.name}</span>
+                <span className="scheduler-history-dur">{h.durationMs}ms</span>
+                {h.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </Card>
   );
 }
