@@ -1,0 +1,44 @@
+# CODEOWNERS — 自动指定 PR 评审人
+# 文件格式: <pattern>  <owner1> [<owner2> ...]
+# 顺序重要：后出现的规则会覆盖前面的
+# 详细语法: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ===== 兜底 =====
+# 任何 PR 改动都会通知 @xp630
+*                          @xp630
+
+# ===== 主进程（关键基础设施）=====
+# agent runner / queue / IPC / DB 都是核心，改动必须人工 review
+/electron/                 @xp630
+/electron/queue.cjs        @xp630
+/electron/agent.cjs        @xp630
+/electron/ipc.cjs          @xp630
+/electron/main.cjs         @xp630
+/electron/preload.cjs      @xp630
+/electron/db.cjs           @xp630
+/electron/schema.sql       @xp630
+
+# ===== 渲染进程 =====
+/src/                      @xp630
+
+# ===== 测试 =====
+/tests/                    @xp630
+/playwright.config.ts      @xp630
+/vitest.config.ts          @xp630
+
+# ===== 依赖 / 构建 / 发布 =====
+/package.json              @xp630
+/package-lock.json         @xp630
+/electron-builder.json     @xp630
+/vite.config.ts            @xp630
+/tsconfig.json             @xp630
+/tsconfig.node.json        @xp630
+
+# ===== CI / 工作流（关键：CI 改动必须有 review）=====
+# 整段 .github/ 都让 @xp630 关注（覆盖默认规则）
+/.github/                  @xp630
+
+# ===== 设计系统（视觉/品牌决策需要 review）=====
+/DESIGN.md                 @xp630
+/DESIGN.tokens.json        @xp630
+/build/icon-source.svg     @xp630
