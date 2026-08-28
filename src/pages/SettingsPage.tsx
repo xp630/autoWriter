@@ -1,7 +1,8 @@
 // SettingsPage — Agent CLI + Model + 图片 Provider + 提示词模板 配置
 import { useEffect, useState } from 'react';
-import { Bot, Brain, Image as ImageIcon, Layers, Database, Star, RefreshCw, Save, Settings as SettingsIcon, CheckCircle2, XCircle, Loader2, Globe, Palette, Package, Clock, Play, Pause } from 'lucide-react';
+import { Bot, Brain, Image as ImageIcon, Layers, Database, Star, RefreshCw, Save, Settings as SettingsIcon, CheckCircle2, XCircle, Loader2, Globe, Palette, Package, Clock, Play, Pause, Compass, Smile } from 'lucide-react';
 import type { SchedulerSnapshot } from '../types';
+import { IdentitySettingsCard } from '../components/IdentitySettingsCard';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
@@ -17,6 +18,8 @@ interface CliStatus {
 interface AgentSettings {
   cli: 'pi' | 'claude' | 'opencode' | 'codex';
   model: string;
+  track: string;
+  persona: string;
 }
 
 interface ImageProvider {
@@ -39,7 +42,7 @@ interface ImageModel {
   extra_params: Record<string, any>;
 }
 
-const DEFAULT_SETTINGS: AgentSettings = { cli: 'claude', model: '' };
+const DEFAULT_SETTINGS: AgentSettings = { cli: 'claude', model: '', track: '', persona: '' };
 
 const CLI_INFO = [
   { key: 'claude' as const, label: 'Claude Code', desc: 'Anthropic 官方 coding agent（推荐）', defaultModel: 'claude-sonnet-4-5' },
@@ -201,7 +204,7 @@ export function SettingsPage() {
   }, []);
 
   const selectCli = (cli: AgentSettings['cli']) => {
-    setSettings({ cli, model: '' });
+    setSettings({ ...settings, cli, model: '' });
     setSaved(false);
   };
 
@@ -236,7 +239,10 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="设置" subtitle="Agent CLI / Model / 图片 Provider / 提示词模板" />
+      <PageHeader title="设置" subtitle="创作身份 / Agent CLI / Model / 图片 Provider / 提示词模板" />
+
+      {/* 创作身份（赛道 + 人设 + 默认风格/渠道，多身份切换）*/}
+      <IdentitySettingsCard />
 
       {/* Agent CLI 选择 */}
       <Card title="Agent CLI（全局）" icon={Bot} accent="action">

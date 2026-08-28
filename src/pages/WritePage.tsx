@@ -13,7 +13,8 @@ import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
 import type { ContentAnalysisResult } from '../types';
-import { getAgentSettings, getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
+import { getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
+import { useActiveProfile } from '../hooks/useActiveProfile';
 // (FileEdit already imported for Card icon usage)
 
 
@@ -43,18 +44,15 @@ function smartSplitKeywords(text: string): string[] {
 interface Settings {
   cli: 'pi' | 'claude' | 'opencode' | 'codex';
   model: string;
+  track: string;    // 账号级赛道
+  persona: string;  // 账号级人设（IP 口吻）
 }
 
-const DEFAULT_SETTINGS: Settings = { cli: 'claude', model: '' };
-
-function loadSettings(): Settings {
-  return getAgentSettings() as Settings;
-}
 
 export function WritePage() {
   // ===== Agent 设置（从 localStorage 读，不再页面内选）=====
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  useEffect(() => { setSettings(loadSettings()); }, []);
+  const profile = useActiveProfile();
+  const settings: Settings = { cli: profile.cli, model: profile.model, track: profile.track, persona: profile.persona };
 
   // ===== 流程 state =====
   const [step, setStep] = useState(0);
@@ -67,15 +65,21 @@ export function WritePage() {
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [analysisError, setAnalysisError] = useState<string>('');
-  const [analysisDomain, setAnalysisDomain] = useState<string>('');  // P0 §11 用户选择领域
+  const analysisDomain = settings.track;   // 账号级赛道（设置页配）
   const [referenceText, setReferenceText] = useState('');
   const [fetching, setFetching] = useState(false);
 
   // ===== 每次生成可变的参数（保留写文章页）=====
-  const [persona, setPersona] = useState('');
-  const [channel, setChannel] = useState('wechat');
-  const [style, setStyle] = useState('tech');
+  const persona = settings.persona;   // 账号级人设（设置页配）
+  const [channel, setChannel] = useState(profile.defaultChannel || 'wechat');
+  const [style, setStyle] = useState(profile.defaultStyle || 'tech');
   const [length, setLength] = useState('medium');
+  // 切换身份时同步默认风格/渠道（除非用户本篇手改过——简单起见每次切身份都重置）
+  useEffect(() => {
+    setChannel(profile.defaultChannel || 'wechat');
+    setStyle(profile.defaultStyle || 'tech');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.id]);
   const [needImage, setNeedImage] = useState(true);  // 生成正文时是否插入 [[配图]] 占位
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -175,6 +179,7 @@ export function WritePage() {
         length,
         channel,
         persona,
+        track: analysisDomain || undefined,
         reference_text: text,
         reference_urls: referenceUrl ? [referenceUrl] : [],
       });
@@ -214,6 +219,7 @@ export function WritePage() {
         length,
         channel,
         persona,
+        track: analysisDomain || undefined,
         reference_text: referenceText,
         reference_urls: referenceUrl ? [referenceUrl] : [],
         analysis: analysis || undefined,
@@ -264,6 +270,7 @@ export function WritePage() {
         length,
         channel,
         persona,
+        track: analysisDomain || undefined,
         reference_text: referenceText,
         reference_urls: referenceUrl ? [referenceUrl] : [],
         outline: outlineDirty ? outline : outline,
@@ -325,6 +332,7 @@ export function WritePage() {
         instruction,
         channel,
         persona,
+        track: analysisDomain || undefined,
         analysis: analysis || undefined,
       });
       currentTaskIdRef.current = r.taskId;
@@ -393,6 +401,7 @@ export function WritePage() {
         length,
         channel,
         persona,
+        track: analysisDomain || undefined,
         reference_text: referenceText,
         reference_urls: referenceUrl ? [referenceUrl] : [],
         outline: outlineDirty ? outline : outline,
@@ -494,7 +503,6 @@ export function WritePage() {
     setOutline(draft.outline || '');
     setOutlineDirty(!!draft.outlineDirty);
     setChannel(draft.channel || 'wechat');
-    setPersona(draft.persona || '');
     setStyle(draft.style || 'tech');
     setLength(draft.length || 'medium');
     setNeedImage(draft.needImage !== false);
@@ -510,12 +518,12 @@ export function WritePage() {
     const timer = setTimeout(() => {
       const draft: DraftState = {
         query, referenceUrl, referenceText, outline, outlineDirty,
-        channel, persona, style, length, needImage,
+        channel, style, length, needImage,
       };
       setDraft(draft);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, persona, style, length, needImage]);
+  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, style, length, needImage]);
 
   // ===== 解析配图占位符 =====
   const parseImagePlaceholders = (content: string): { id: string; desc: string }[] => {
@@ -579,36 +587,19 @@ export function WritePage() {
 
           <div className="row" style={{ marginTop: 12 }}>
             <input
-              className="input"
+              className="input url-input"
               type="url"
               placeholder="📎 参考文章 URL（后续接 MCP 自动抓）"
               value={referenceUrl}
               onChange={(e) => setReferenceUrl(e.target.value)}
-              style={{ flex: 1 }}
             />
             <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
               {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
             </button>
-            <select
-              className="input"
-              value={analysisDomain}
-              onChange={(e) => setAnalysisDomain(e.target.value)}
-              title="PRD §11：用户专注领域，帮助 AI 判断分析偏好"
-              style={{ minWidth: 110 }}
-            >
-              <option value="">领域(默认)</option>
-              <option value="情感">情感</option>
-              <option value="职场">职场</option>
-              <option value="育儿">育儿</option>
-              <option value="生活方式">生活方式</option>
-              <option value="财经">财经</option>
-              <option value="科技">科技</option>
-              <option value="美食">美食</option>
-              <option value="旅游">旅游</option>
-              <option value="美妆">美妆</option>
-              <option value="其他">其他</option>
-            </select>
-            <button
+          </div>
+
+          <div className="analysis-row">
+                        <button
               className="write-analysis-trigger"
               disabled={!referenceText || analysisStatus === 'running'}
               onClick={runAnalysis}
@@ -689,13 +680,8 @@ export function WritePage() {
                     </select>
                   </div>
                   <div className="row">
-                    <label style={{ minWidth: 80, fontSize: 12, color: 'var(--muted)' }}>人设</label>
-                    <select className="input" value={persona} onChange={(e) => setPersona(e.target.value)} style={{ flex: 1 }}>
-                      <option value="">— 默认 —</option>
-                      {skills.personas.map((p) => (
-                        <option key={p.name} value={p.name}>{p.displayName || p.name}</option>
-                      ))}
-                    </select>
+                    <label style={{ minWidth: 80, fontSize: 12, color: 'var(--muted)' }}>赛道/人设</label>
+                    <IdentityChip skills={skills} track={analysisDomain} persona={persona} />
                   </div>
                   <div className="row">
                     <label style={{ minWidth: 80, fontSize: 12, color: 'var(--muted)' }}>风格</label>
@@ -788,13 +774,8 @@ export function WritePage() {
                 </select>
               </div>
               <div className="col" style={{ gap: 4 }}>
-                <label style={{ fontSize: 11, color: 'var(--muted)' }}>人设</label>
-                <select className="input" value={persona} onChange={(e) => setPersona(e.target.value)} style={{ padding: '5px 8px', fontSize: 12 }}>
-                  <option value="">— 默认 —</option>
-                  {skills.personas.map((p) => (
-                    <option key={p.name} value={p.name}>{p.displayName || p.name}</option>
-                  ))}
-                </select>
+                <label style={{ fontSize: 11, color: 'var(--muted)' }}>赛道/人设</label>
+                <IdentityChip skills={skills} track={analysisDomain} persona={persona} compact />
               </div>
               <div className="col" style={{ gap: 4, justifyContent: 'flex-end' }}>
                 <label className="row" style={{ gap: 6, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer' }}>
@@ -1104,5 +1085,24 @@ export function WritePage() {
         </div>
       )}
     </>
+  );
+}
+
+
+// 身份 chip：只读显示账号级「赛道 + 人设」，去设置页改
+function IdentityChip({ skills, track, persona, compact }: {
+  skills: { channels: ChannelSkill[]; personas: PersonaSkill[] };
+  track: string; persona: string; compact?: boolean;
+}) {
+  const trackLabel = track || '未设赛道';
+  const p = skills.personas.find(x => x.name === persona);
+  const personaLabel = p ? (p.displayName || p.name) : '未设人设';
+  return (
+    <span className={compact ? 'identity-chip identity-chip-compact' : 'identity-chip'}
+          title="赛道与人设在「设置 → 我的赛道与人设」里配置（账号级，设一次）">
+      <span className="identity-track">{trackLabel}</span>
+      <span className="identity-sep">·</span>
+      <span className="identity-persona">{personaLabel}</span>
+    </span>
   );
 }

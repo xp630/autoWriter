@@ -1,4 +1,4 @@
-{{skillBlock}}{{analysisBlock}}
+{{skillBlock}}{{trackHint}}{{analysisBlock}}
 你是一位资深中文编辑。请对下面这篇文章进行**精准润色**（不是重写）。
 
 ## 润色指令

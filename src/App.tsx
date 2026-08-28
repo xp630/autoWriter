@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { QueueBadge } from './components/QueueBadge';
+import { ProfileSwitcher } from './components/ProfileSwitcher';
 import { DashboardPage } from './pages/DashboardPage';
 import { WritePage } from './pages/WritePage';
 import { ArticlesPage } from './pages/ArticlesPage';
@@ -62,7 +63,10 @@ export default function App() {
     <div className="app-layout">
       <Sidebar active={page} onNavigate={handleNav} />
       <main className="main">
-        <QueueBadge />
+        <div className="topbar-right">
+          <ProfileSwitcher onManage={() => setPage('settings')} />
+          <QueueBadge />
+        </div>
         {page === 'dashboard' && <DashboardPage onNavigate={handleNav} />}
         {page === 'write' && <WritePage />}
         {page === 'articles' && <ArticlesPage />}

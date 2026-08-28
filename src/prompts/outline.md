@@ -5,7 +5,7 @@
 {{titleHint}}关键词：{{keywords}}
 风格：{{styleDesc}}
 目标字数：{{lengthDesc}}
-{{personaHint}}{{channelHint}}
+{{personaHint}}{{channelHint}}{{trackHint}}
 {{referenceBlock}}
 {{analysisBlock}}
 {{inferHint}}

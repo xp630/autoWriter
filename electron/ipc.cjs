@@ -179,13 +179,21 @@ function registerIpc() {
 
   // ===== 文章生成（两步：先大纲，后正文）=====
 
-  function buildPromptContext({ keywords, style, length, channel, persona, title, reference_text } = {}) {
+  function buildPromptContext({ keywords, style, length, channel, persona, title, reference_text, track } = {}) {
     const skillBlock = buildSkillInjection({ channel, persona });
     const lengthMap = { short: '800-1200字', medium: '1500-2500字', long: '3000+字' };
     const styleMap = { tech: '技术分享', news: '新闻报道', opinion: '观点评论', story: '故事叙述', knowledge: '知识科普' };
     const personaHint = persona ? `写作人设：${persona}（见下方 Skill 文件）\n` : '';
     const channelHint = channel ? `发布渠道：${channel}（见下方 Skill 文件）\n` : '';
     const titleHint = title ? `标题：${title}\n` : '';
+    // 赛道 = 选题视角 + 受众 + 案例方向（与风格/人设/渠道正交）
+    const trackHint = track
+      ? `【创作赛道】你是「${track}」赛道的创作者。同一个素材必须从「${track}」的视角切入：
+- 选题角度：从${track}领域的核心矛盾/痛点出发，不要写成泛泛的通用文
+- 目标读者：${track}领域的典型受众，用他们关心的语言和例子
+- 案例选择：优先用${track}领域的真实场景/案例
+`
+      : '';
     const refBlock = reference_text
       ? `\n## 参考文章（作为写作模板，决定本文骨架）\n${reference_text.slice(0, 6000)}\n`
       : '';
@@ -193,7 +201,7 @@ function registerIpc() {
       skillBlock: skillBlock ? skillBlock + '\n\n---\n\n' : '',
       styleDesc: styleMap[style] || style,
       lengthDesc: lengthMap[length] || lengthMap.medium,
-      personaHint, channelHint, titleHint,
+      personaHint, channelHint, titleHint, trackHint,
       keywordsStr: (keywords || []).join('、'),
       refBlock,
     };
@@ -201,12 +209,12 @@ function registerIpc() {
 
   // Step 1: 生成大纲
   ipcMain.handle('article:outline', async (_e, params) => {
-    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, reference_text, analysis } = params;
+    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     // keywords 可为空：有参考文时由 AI 从参考文推断主题
     if ((!keywords || !keywords.length) && !reference_text) throw new Error('关键词或参考文至少要有一个');
 
-    const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text });
+    const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text, track });
     const analysisBlock = buildAnalysisContextBlock(analysis);
 
     const prompt = renderPrompt('outline', {
@@ -217,6 +225,7 @@ function registerIpc() {
       lengthDesc: ctx.lengthDesc,
       personaHint: ctx.personaHint,
       channelHint: ctx.channelHint,
+      trackHint: ctx.trackHint,
       referenceBlock: ctx.refBlock,
       analysisBlock: analysisBlock || '',
       inferHint: (keywords && keywords.length) ? '' :
@@ -234,12 +243,12 @@ function registerIpc() {
 
   // Step 2: 基于大纲生成正文
   ipcMain.handle('article:article', async (_e, params) => {
-    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, reference_text, outline, need_image, analysis } = params;
+    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, outline, need_image, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     if (!keywords || !keywords.length) throw new Error('关键词不能为空');
     if (!outline) throw new Error('缺少大纲，请先生成大纲');
 
-    const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text });
+    const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text, track });
     const analysisBlock = buildAnalysisContextBlock(analysis);
 
     // 检测用户是否修改了大纲（加了 [已修订] 标记）
@@ -253,6 +262,7 @@ function registerIpc() {
       lengthDesc: ctx.lengthDesc,
       personaHint: ctx.personaHint,
       channelHint: ctx.channelHint,
+      trackHint: ctx.trackHint,
       referenceBlock: ctx.refBlock,
       analysisBlock: analysisBlock || '',
       editWarning: hasUserEdit
@@ -395,16 +405,19 @@ function registerIpc() {
 
   // 二次润色：拿现有正文 + 润色指令，再生成一次
   ipcMain.handle('article:polish', async (_e, params) => {
-    const { cli, model, content, instruction, channel, persona, analysis } = params;
+    const { cli, model, content, instruction, channel, persona, track, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     if (!content) throw new Error('缺少原文');
     if (!instruction) throw new Error('缺少润色指令');
 
     const skillBlock = buildSkillInjection({ channel, persona });
     const analysisBlock = buildAnalysisContextBlock(analysis);
+    const trackHint = track ? `【创作赛道】本文服务于「${track}」赛道，润色时保持${track}领域的用词与读者视角。
+` : '';
 
     const prompt = renderPrompt('polish', {
       skillBlock: skillBlock ? skillBlock + '\n\n---\n\n' : '',
+      trackHint,
       analysisBlock: analysisBlock || '',
       instruction,
       content,
