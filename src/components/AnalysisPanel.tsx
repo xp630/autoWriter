@@ -3,7 +3,13 @@ import {
   FileText, Globe, Hash, Lightbulb, MessageSquare,
   Sparkles, Target, Users, Wand2, XCircle, CheckCircle2, AlertTriangle, Loader2, BookmarkPlus, Star,
 } from 'lucide-react';
-import type { ContentAnalysisResult, Angle, StrategyMode, StrategyValue } from '../types';
+import type {
+  ContentAnalysisResult, Angle, StrategyMode, TrackFit,
+  DifferentiatorType, Strategy,
+} from '../types';
+import { DIFFERENTIATOR_LABEL, DIFFICULTY_LABEL } from '../types';
+
+const FEAS_CLASS: Record<string, string> = { easy: 'easy', medium: 'mid', hard: 'hard' };
 
 interface Props {
   analysis: ContentAnalysisResult;
@@ -14,15 +20,14 @@ interface Props {
   angles?: Angle[] | null;
   anglesStatus?: 'idle' | 'running' | 'completed' | 'failed';
   anglesError?: string;
-  trackFit?: { matches?: boolean; article_track?: string; user_track?: string; note?: string } | null;
+  /** A 专属：素材与当前赛道的适配度（V2: score/reason/adapt_direction） */
+  trackFit?: TrackFit | null;
   onSaveTopic?: (angle: Angle) => void;
-  onStartWithAngle?: (angle: Angle) => void;
-  /** 已采纳的角度下标（-1 = 未采纳），用于卡片上的“已采纳”标记 */
-  adoptedIndex?: number;
-  /** 策略模式：reference 展示分析结果 + track_fit；topic 只展示 value + 角度卡 */
+  onStartWithAngle?: (angle: Strategy) => void;
+  /** 已采纳的策略 id（V2 一行=一策略，不再用批次下标） */
+  adoptedId?: number | null;
+  /** 策略模式：reference 展示分析结果 + track_fit；topic 不展示 7 个分析卡片 */
   mode?: StrategyMode;
-  /** B 命题策划的题面价值评估 */
-  value?: StrategyValue | null;
 }
 
 const SECTIONS = [
@@ -44,7 +49,7 @@ function kvList(arr?: string[]) {
   );
 }
 
-export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedIndex = -1, mode = 'reference', value }: Props) {
+export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedId = null, mode = 'reference' }: Props) {
   const isTopic = mode === 'topic';
   if (status === 'failed') {
     return (
@@ -187,25 +192,10 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
       )}
 
       {trackFit && (
-        <div className={`track-fit-banner ${trackFit.matches ? 'fit' : 'mismatch'}`}>
-          {trackFit.matches
-            ? <><CheckCircle2 size={16} /> 本文与「{trackFit.user_track || '当前'}」赛道匹配：{trackFit.note}</>
-            : <><AlertTriangle size={16} /> 本文偏「{trackFit.article_track || '?'}」，与你的「{trackFit.user_track || '当前'}」赛道不匹配：{trackFit.note}</>}
-        </div>
-      )}
-
-      {value && (
-        <div className={`value-banner ${value.worth === false ? 'mismatch' : 'fit'}`}>
-          <div className="value-banner-head">
-            <Target size={14} />
-            <span>题目价值{typeof value.score === 'number' ? ` ${value.score.toFixed(1)}/10` : ''}</span>
-            {typeof value.worth === 'boolean' && (
-              <span className="value-verdict">{value.worth ? '建议写' : '不建议写'}</span>
-            )}
-          </div>
-          {value.audience_need && <div className="value-line"><b>人群为何关心</b>{value.audience_need}</div>}
-          {value.competition && <div className="value-line"><b>竞争情况</b>{value.competition}</div>}
-          {value.advice && <div className="value-line"><b>结论</b>{value.advice}</div>}
+        <div className={`track-fit-banner ${(trackFit.score ?? 0) >= 6 ? 'fit' : 'mismatch'}`}>
+          {(trackFit.score ?? 0) >= 6
+            ? <><CheckCircle2 size={16} /> 素材适配度 {trackFit.score?.toFixed(1)}/10：{trackFit.reason}</>
+            : <><AlertTriangle size={16} /> 适配度偏低{typeof trackFit.score === 'number' ? ` ${trackFit.score.toFixed(1)}/10` : ''}：{trackFit.reason}{trackFit.adapt_direction ? `　建议：${trackFit.adapt_direction}` : ''}</>}
         </div>
       )}
 
@@ -226,7 +216,12 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                     <Star size={11} /> {a.value_score.toFixed(1)}
                   </span>
                 )}
-                {adoptedIndex === i && (
+                {a.fact_risk && a.fact_risk !== 'low' && (
+                  <span className={`angle-risk risk-${a.fact_risk}`} title="这个角度让 AI 编造事实的风险">
+                    事实风险 · {a.fact_risk === 'high' ? '高' : '中'}
+                  </span>
+                )}
+                {adoptedId != null && adoptedId === a.id && (
                   <span className="angle-adopted"><CheckCircle2 size={11} /> 已采纳</span>
                 )}
                 {onStartWithAngle && (
@@ -247,7 +242,15 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                 {a.differentiator && (
                   <div className="angle-row">
                     <span className="viral-label">差异锚点</span>
-                    <span className="angle-diff">{a.differentiator}</span>
+                    <span className="angle-diff">
+                      {a.differentiator.type
+                        ? <>({DIFFERENTIATOR_LABEL[a.differentiator.type as DifferentiatorType] || a.differentiator.type}) </>
+                        : null}
+                      {a.differentiator.description}
+                      {a.differentiator.instruction && (
+                        <em className="angle-diff-instr">　→ {a.differentiator.instruction}</em>
+                      )}
+                    </span>
                   </div>
                 )}
                 {a.target_user && <div className="angle-row"><span className="viral-label">目标用户</span><span>{a.target_user}</span></div>}
@@ -261,9 +264,15 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                 {(a.feasibility || (a.evidence_needed && a.evidence_needed.length > 0)) && (
                   <div className="angle-evidence">
                     {a.feasibility && (
-                      <span className={`angle-feas feas-${a.feasibility === '易' ? 'easy' : a.feasibility === '中' ? 'mid' : 'hard'}`}>
-                        可写性 · {a.feasibility}
+                      <span className={`angle-feas feas-${FEAS_CLASS[a.feasibility.difficulty || 'medium'] || 'mid'}`}>
+                        {a.feasibility.difficulty
+                          ? `可写性 · ${DIFFICULTY_LABEL[a.feasibility.difficulty] || a.feasibility.difficulty}`
+                          : '题目价值'}
+                        {typeof a.feasibility.score === 'number' ? ` ${a.feasibility.score.toFixed(1)}/10` : ''}
                       </span>
+                    )}
+                    {a.feasibility?.reason && (
+                      <div className="angle-feas-reason">{a.feasibility.reason}</div>
                     )}
                     {a.evidence_needed && a.evidence_needed.length > 0 && (
                       <>

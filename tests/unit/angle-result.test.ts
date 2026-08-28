@@ -11,12 +11,12 @@ describe('parseAngleResult', () => {
         { angle_type: '数据深度视角', title: '标题4', core_point: '观点4' },
         { angle_type: '社会观察视角', title: '标题5', core_point: '观点5' },
       ],
-      track_fit: { matches: true, article_track: '情感随笔', user_track: '情感随笔', note: '一致' },
+      track_fit: { score: 8, reason: '赛道一致' },
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.angles.length).toBe(5);
-      expect(r.track_fit?.user_track).toBe('情感随笔');
+      expect(r.strategies.length).toBe(5);
+      expect(r.track_fit?.score).toBe(8);   // V2：track_fit 从 matches/note 换成 score/reason
     }
   });
 
@@ -30,7 +30,7 @@ describe('parseAngleResult', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.angles.length).toBe(3);
+      expect(r.strategies.length).toBe(3);
       expect(r.track_fit).toBeNull();
     }
   });
@@ -57,8 +57,9 @@ describe('parseAngleResult', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.angles.length).toBe(5);
-      expect(r.track_fit?.matches).toBe(false);
+      expect(r.strategies.length).toBe(5);
+      // 旧形状 matches:false 会被折算成低分，而不是丢字段
+      expect(r.track_fit?.score).toBe(3);
     }
   });
 });

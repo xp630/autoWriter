@@ -2392,6 +2392,16 @@ select:focus-visible {
 .value-line { color: var(--ink-2); }
 .value-line b { color: var(--muted); font-size: 11px; margin-right: 6px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
 
+/* V2 字段：事实风险徽章 + 可写性理由 + 差异指令 */
+.angle-risk {
+  font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 7px;
+  border: 1px solid transparent;
+}
+.angle-risk.risk-medium { color: #92400e; background: var(--accent-soft); border-color: #fde68a; }
+.angle-risk.risk-high   { color: #b91c1c; background: var(--danger-soft); border-color: #fecaca; }
+.angle-feas-reason { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.angle-diff-instr { font-style: normal; color: var(--ink-3); }
+
 /* A 借势拆解：差异锚点（对抗同质化的正向抓手，所以给足视觉权重） */
 .angle-diff {
   display: block; font-size: 13px; color: var(--ink); line-height: 1.6;

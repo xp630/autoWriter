@@ -128,6 +128,10 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['strategy:list', '策略列表（可按 mode/profile 筛）'],
   ['strategy:get', '取单条策略（含解析后 body 与采纳记录）'],
   ['strategy:delete', '删除策略'],
+  ['strategy:setStatus', '改策略状态（candidate/adopted/archived）'],
+  ['strategy:recordResult', '效果回填（写入阅读/评论/涨粉等指标）'],
+  ['strategy:stats', '策略战绩聚合'],
+  ['article:strategyFor', '从文章反查所用策略'],
   // 测试钩子（自身）
   ['test:list-channels', '测试用：列 channels'],
   ['test:invoke', '测试用：调 handler'],
@@ -170,6 +174,10 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   // 以下两个空入参应走守卫分支，快速返回结构化错误（不触达 LLM）
   ['strategy:generate', [{}]],
   ['strategy:adopt', [{}]],
+  ['strategy:setStatus', [{ id: 999999, status: 'archived' }]],
+  ['strategy:recordResult', [{ adoptionId: 999999, metrics: { views: 1 } }]],
+  ['strategy:stats', [[]]],
+  ['article:strategyFor', [999999], true],
   // angles:adopt 入参不合法时应返回结构化错误（不碰 AI），用于验证守卫分支
   ['angles:adopt', [{}]],
   ['angles:adopt', [{ id: 999999, index: 0 }]],

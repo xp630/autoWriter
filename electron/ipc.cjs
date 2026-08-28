@@ -9,7 +9,7 @@ const { TaskQueue } = require('./queue.cjs');
 const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
-  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, saveAnalysis,
+  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint, saveAnalysis,
 } = require('./analysis.cjs');
 
 /** 把 agent 流式 chunk 推到所有 renderer 窗口 */
@@ -50,6 +50,30 @@ function enqueueAgentRun(type, label, cfg, prompt, meta = {}) {
 
 function registerIpc() {
   const db = getDb();
+
+  /**
+   * 策略反查口：从 articleId 拿到当时采纳的那个角度（含 mode / strategyId / adoptionId）。
+   * Strategy-Driven Workflow 的根基：润色、配图、导出、发布、效果回填都发生在
+   * renderer 状态之外（文章已入库、或在另一个页面），所以必须能从 DB 读回决策。
+   */
+  function strategyForArticle(articleId) {
+    const id = Number(articleId);
+    if (!id) return null;
+    const row = db.prepare(`
+      SELECT cs.*, sa.id AS adoption_id, sa.article_id AS linked_article_id
+      FROM strategy_articles sa
+      JOIN content_strategies cs ON cs.id = sa.strategy_id
+      WHERE sa.article_id = ?
+      ORDER BY sa.adopted_at DESC, sa.id DESC
+      LIMIT 1
+    `).get(id);
+    if (!row) return null;
+    return {
+      ...shapeStrategyRow(row),
+      adoptionId: row.adoption_id,
+      articleId: row.linked_article_id,
+    };
+  }
 
   // ===== 图片 Provider 配置 =====
   ipcMain.handle('image:provider:list', () => {
@@ -314,18 +338,21 @@ function registerIpc() {
       channel || 'wechat',
     );
 
-    // 策略→文章闭环（1:N）：正文入库后回填本次采纳记录的文章 id。
-    // renderer 采纳时已拿到 adoptionId；没有则新建一条 adoption。
+    // 策略→文章闭环（V2 §八 1:N）：正文入库后回填这次执行记录的 article_id。
+    // renderer 采纳时已拿到 adoptionId；没带过来则按 strategyId 新建一条执行记录。
     const stg = strategy && typeof strategy === 'object' ? strategy : null;
-    const stgId = stg ? Number(stg.adoptionId ? stg.strategyId : (stg.strategyId || stg.anglesId)) : 0;
-    if (stg && (stg.adoptionId || (stgId && Number.isInteger(stg.index)))) {
+    const adoptionId = stg ? Number(stg.adoptionId) : 0;
+    const strategyId = stg ? Number(stg.strategyId || stg.anglesId || 0) : 0;
+    if (stg && (adoptionId || strategyId)) {
       try {
-        if (stg.adoptionId) {
-          db.prepare(`UPDATE strategy_adoptions SET article_id = ? WHERE id = ?`)
-            .run(result.lastInsertRowid, Number(stg.adoptionId));
+        if (adoptionId) {
+          db.prepare(`UPDATE strategy_articles SET article_id = ? WHERE id = ?`)
+            .run(result.lastInsertRowid, adoptionId);
         } else {
-          db.prepare(`INSERT INTO strategy_adoptions (strategy_id, article_id, angle_index) VALUES (?, ?, ?)`)
-            .run(stgId, result.lastInsertRowid, stg.index);
+          db.prepare(`INSERT INTO strategy_articles (strategy_id, article_id) VALUES (?, ?)`)
+            .run(strategyId, result.lastInsertRowid);
+          db.prepare(`UPDATE content_strategies SET status = 'adopted', updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+            .run(strategyId);
         }
       } catch (linkErr) {
         console.warn('[article:article] 策略关联写入失败:', linkErr.message);
@@ -364,6 +391,10 @@ function registerIpc() {
   ipcMain.handle('article:get', (_e, id) => {
     return db.prepare('SELECT * FROM article_drafts WHERE id=?').get(id);
   });
+
+  // 策略反查口：文章详情页 / 导出 / 发布 / 效果回填 都从这里拿“当时定了什么策略”，
+  // 不依赖 renderer状态（跨页面、跨时间时它是唯一可靠来源）。
+  ipcMain.handle('article:strategyFor', (_e, articleId) => strategyForArticle(articleId));
 
   // 更新文章（用于保存润色结果）
   ipcMain.handle('article:update', (_e, { id, content }) => {
@@ -426,10 +457,14 @@ function registerIpc() {
 
   // 二次润色：拿现有正文 + 润色指令，再生成一次
   ipcMain.handle('article:polish', async (_e, params) => {
-    const { cli, model, content, instruction, channel, persona, track, analysis } = params;
+    const { cli, model, content, instruction, channel, persona, track, analysis, strategy, articleId } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     if (!content) throw new Error('缺少原文');
     if (!instruction) throw new Error('缺少润色指令');
+
+    // 润色以前只带 analysis（素材）不带 strategy（决策），结果一次润色就把
+    // 立意/情绪杠杆/差异锚点冲平。没传 strategy 时从 DB 反查，不让策略可丢。
+    const stg = strategy || strategyForArticle(articleId);
 
     const skillBlock = buildSkillInjection({ channel, persona });
     const analysisBlock = buildAnalysisContextBlock(analysis);
@@ -440,6 +475,7 @@ function registerIpc() {
       skillBlock: skillBlock ? skillBlock + '\n\n---\n\n' : '',
       trackHint,
       analysisBlock: analysisBlock || '',
+      strategyBlock: buildStrategyBlock(stg),
       instruction,
       content,
     });
@@ -564,11 +600,16 @@ function registerIpc() {
     const dir = path.join(app.getPath('userData'), 'uploads');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+    // 策略驱动配图：情绪定画面气质、目标定图像作用。
+    // 从 articleId 反查策略（图库里手动新建的图无 articleId → 自然不加约束）。
+    // 拼在 AI 扩写之前，让扩写模型把风格约一并在内，而不是事后追加互相矛盾。
+    const imgHint = buildImageStrategyHint(strategyForArticle(articleId));
+
     // 可选：用 AI 双层扩写（standard + 模型优化）
-    let finalPrompt = prompt;
-    if (useCraft && prompt) {
+    let finalPrompt = (prompt || '') + imgHint;
+    if (useCraft && finalPrompt) {
       try {
-        finalPrompt = await craftImagePrompt(prompt, craftCli, modelId || 'flux');
+        finalPrompt = await craftImagePrompt(finalPrompt, craftCli, modelId || 'flux');
 
       } catch (err) {
         // 扩写失败，用原文
@@ -964,9 +1005,56 @@ function registerIpc() {
     return { ...row, analysis: parsed };
   });
 
-  // ===== 内容策略层（独立创作决策层，双模式）=====
-  // mode='reference' A 借势拆解：挂在一条 content_analysis 上，核心能力是「迁移」，核心风险是「同质化」
-  // mode='topic'     B 命题策划：只有一个题目，不产生也不依赖分析记录；核心能力是「规划」，核心风险是「幻觉」
+  // ===== 内容策略系统 V2：Strategy-Driven Workflow =====
+  // 一行 = 一个策略。生成一次产出 5 行（同 batch_id）；采纳 = 建一条 strategy_articles（1:N）。
+  const parseCol = (s, d) => {
+    if (s === null || s === undefined || s === '') return d;
+    try { const v = JSON.parse(s); return v === null || v === undefined ? d : v; } catch { return d; }
+  };
+
+  /** DB 行 → 给 renderer 的策略对象（JSON 列解析回结构） */
+  function shapeStrategyRow(r) {
+    return {
+      id: r.id,
+      mode: r.mode,
+      source_type: r.source_type,
+      analysis_id: r.analysis_id ?? null,
+      batch_id: r.batch_id || '',
+      topic: r.topic || '',
+      profile_id: r.profile_id || '',
+      track: r.track || '',
+      persona: r.persona || '',
+      angle_type: r.angle_type || '',
+      title: r.title || '',
+      core_point: r.core_point || '',
+      target_user: r.target_user || '',
+      structure: parseCol(r.structure, []),
+      emotion: r.emotion || '',
+      goal: r.goal || '',
+      value_score: r.value_score ?? null,
+      differentiator: parseCol(r.differentiator, null),
+      track_fit: parseCol(r.track_fit, null),
+      feasibility: parseCol(r.feasibility, null),
+      evidence_needed: parseCol(r.evidence_needed, []),
+      fact_risk: r.fact_risk || 'low',
+      status: r.status || 'candidate',
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      adoption_count: r.adoption_count,   // list 查询才带；get 不带
+    };
+  }
+
+  const newBatchId = () =>
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const INS_S = db.prepare(`
+    INSERT INTO content_strategies
+    (mode, source_type, analysis_id, batch_id, topic, profile_id, track, persona,
+     angle_type, title, core_point, target_user, structure, emotion, goal, value_score,
+     differentiator, track_fit, feasibility, evidence_needed, fact_risk, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate')
+  `);
+
   async function runStrategyGenerate(params) {
     const mode = (params && params.mode === 'topic') ? 'topic' : 'reference';
     const track     = String((params && params.track)     || '');
@@ -985,7 +1073,7 @@ function registerIpc() {
       if (!analysisId) return { ok: false, error: '缺少 analysisId' };
       const row = db.prepare('SELECT id, title, content, analysis_json, status FROM content_analysis WHERE id = ?').get(analysisId);
       if (!row) return { ok: false, error: '分析记录不存在' };
-      if (row.status !== 'completed') return { ok: false, error: '分析未完成，无法生成方向' };
+      if (row.status !== 'completed') return { ok: false, error: '分析未完成，无法生成策略' };
 
       let analysisObj = {};
       try { analysisObj = JSON.parse(row.analysis_json || '{}'); } catch {}
@@ -998,20 +1086,14 @@ function registerIpc() {
       };
       if (!topic) topic = row.title || '';
       skillBody = loadAngleSkill();
-      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作方向。\n每个方向必须给：锐度标题、一句话核心观点、目标读者、3-5 步推荐结构、**与原文的差异锚点 differentiator**、推荐指数 value_score、情绪策略 emotion、内容目标 goal、推荐理由。\ndifferentiator 是本模式最重要的字段：必须讲清本稿比原文多给什么（新立场/新证据/新人群/新结论），禁止"换个说法"这种空话。\n最后给 track_fit 块：本文与当前赛道是否值得写 + 一句话说明（如果不匹配，给拉回角度建议）。\n\n输出严格合法 JSON（不要 markdown 代码块包裹，字符串引号/逗号/括号都不能错）。`;
+      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作策略。\n每个策略必须给：angle_type、锐度 title、core_point、target_user、3-5 步 structure、value_score、emotion、goal、reason。\n**differentiator 是本模式最重要的字段**，必须给结构化对象：\n  {"type":"new_position|new_evidence|new_audience|new_scenario|new_conclusion|new_experience 选一个","description":"本稿比原文具体多给什么","instruction":"全文必须怎么落这条差异"}\n禁止 type 空着、禁止 description 写"换个说法/更深入浅出"这类空话。\n另给批次级 track_fit：{"score":0-10,"reason":"为什么适合/不适合当前账号","adapt_direction":"不适合时怎么改角度"}。\n\n输出严格合法 JSON（不要 markdown 代码块包裹）。`;
     } else {
       if (!topic.trim()) return { ok: false, error: '请填写主题' };
       skillBody = loadTopicSkill();
-      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 主题（唯一实质输入，**没有参考文章**）\n${topic}\n\n## 任务\n在没有任何参考素材的前提下做推演，输出两部分：\n1. value 块：这个题目在当前赛道**值不值得写**（worth / score / competition / audience_need / advice）。\n2. 5 个互斥创作角度，每个必须给：title、core_point（判断句、不依赖未证实数据）、target_user、structure、differentiator（相对同类写法新在哪）、feasibility（易|中|难）、evidence_needed（**至少 2 条用户能去获取的具体素材**）、value_score、emotion、goal、reason。\n\n铁律：不得编造具体数字、日期、人名、机构、研究结论、案例细节、第一手经历；不确定的内容一律以「待核实」写进 evidence_needed。feasibility 要敢说不乐观，不要全标「易」。\n\n输出严格合法 JSON（不要 markdown 代码块包裹，字符串引号/逗号/括号都不能错）。`;
+      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 主题（唯一实质输入，**没有参考文章**）\n${topic}\n\n## 任务\n在没有任何参考素材的前提下推演，生成 5 个互斥的创作策略。\n每个策略必须给：angle_type、title、core_point（判断句、不依赖未证实数据）、target_user、structure、\n**feasibility**：{"score":0-10 这个题目在当前赛道值不值得写,"difficulty":"easy|medium|hard 用户没有一手素材时写得动的程度","reason":"把竞争情况、目标人群为何关心、结论建议合进这一句"}、\n**evidence_needed**：至少 2 条用户能去获取的具体素材（不是"需要更多资料"这种废话），\n**fact_risk**："low|medium|high"——这个角度最容易让 AI 编造事实的程度（要数据/案例/人物的越高），\n以及 value_score、emotion、goal、reason、differentiator（相对同类写法新在哪，同样用结构化对象）。\n\n铁律：不得编造具体数字、日期、人名、机构、研究结论、案例细节、第一手经历；不确定的内容一律进 evidence_needed 并标「待核实」。difficulty 要敢给 hard，不要全给 easy 讨好用户。\n\n输出严格合法 JSON（不要 markdown 代码块包裹）。`;
     }
 
     const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
-    const emptyJson = JSON.stringify({ mode, angles: [], track_fit: null, value: null });
-    const strategyId = db.prepare(`
-      INSERT INTO content_strategies (mode, analysis_id, topic, profile_id, track, persona, strategy_json, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'running')
-    `).run(mode, analysisId, topic, profileId, track, persona, emptyJson).lastInsertRowid;
-
     const start = Date.now();
     try {
       const { taskId, promise } = enqueueAgentRun('strategy',
@@ -1019,90 +1101,98 @@ function registerIpc() {
         { cli, model }, fullPrompt);
       const { content: raw, elapsedMs } = await promise;
       const parsed = parseAnalysisJson(raw);
-      const dur = elapsedMs || (Date.now() - start);
-      const fail = (msg, rawData) => {
-        db.prepare(`UPDATE content_strategies SET status='failed', error=?, duration_ms=?, strategy_json=? WHERE id=?`)
-          .run(msg, dur, JSON.stringify({ mode, angles: [], track_fit: null, value: null, raw: rawData }), strategyId);
-      };
-      if (!parsed.ok) { fail(parsed.error, parsed.raw); return { ok: false, id: strategyId, error: parsed.error, taskId }; }
+      if (!parsed.ok) return { ok: false, error: parsed.error, taskId, durationMs: elapsedMs || (Date.now() - start) };
       const shaped = parseStrategyResult(parsed.data, mode);
-      if (!shaped.ok) { fail(shaped.error, parsed.data); return { ok: false, id: strategyId, error: shaped.error, taskId }; }
+      if (!shaped.ok) return { ok: false, error: shaped.error, taskId, durationMs: elapsedMs || (Date.now() - start) };
 
-      const stored = { mode: shaped.mode, angles: shaped.angles, track_fit: shaped.track_fit, value: shaped.value };
-      db.prepare(`UPDATE content_strategies SET status='completed', duration_ms=?, strategy_json=? WHERE id=?`)
-        .run(dur, JSON.stringify(stored), strategyId);
+      // 一次生成 = 一个批次，产出 N 行独立策略（V2 的核心：策略可单独复用）
+      const batchId = newBatchId();
+      const tfJson = shaped.track_fit ? JSON.stringify(shaped.track_fit) : null;
+      const ids = db.transaction(() => shaped.strategies.map((s) =>
+        INS_S.run(
+          shaped.mode, shaped.mode === 'topic' ? 'topic' : 'analysis', analysisId, batchId,
+          topic, profileId, track, persona,
+          s.angle_type, s.title, s.core_point, s.target_user || '',
+          JSON.stringify(s.structure || []), s.emotion || '', s.goal || '',
+          s.value_score ?? null,
+          s.differentiator ? JSON.stringify(s.differentiator) : null,
+          tfJson,
+          s.feasibility ? JSON.stringify(s.feasibility) : null,
+          s.evidence_needed ? JSON.stringify(s.evidence_needed) : null,
+          s.fact_risk || (shaped.mode === 'topic' ? 'medium' : 'low'),
+        ).lastInsertRowid,
+      ))();
+
+      const rows = db.prepare(
+        `SELECT *, (SELECT COUNT(*) FROM strategy_articles sa WHERE sa.strategy_id = content_strategies.id) AS adoption_count
+         FROM content_strategies WHERE batch_id = ? ORDER BY id`,
+      ).all(batchId);
+
       return {
-        ok: true, id: strategyId, taskId, mode: shaped.mode,
-        angles: shaped.angles, track_fit: shaped.track_fit, value: shaped.value,
+        ok: true, taskId, batchId, mode: shaped.mode,
+        strategies: rows.map(shapeStrategyRow),
+        track_fit: shaped.track_fit,
+        durationMs: elapsedMs || (Date.now() - start),
       };
     } catch (err) {
-      const dur = Date.now() - start;
-      db.prepare(`UPDATE content_strategies SET status='failed', error=?, duration_ms=? WHERE id=?`)
-        .run(err.message || String(err), dur, strategyId);
-      return { ok: false, id: strategyId, error: err.message || String(err), taskId: null };
+      return { ok: false, error: err.message || String(err), taskId: null, durationMs: Date.now() - start };
     }
   }
 
   ipcMain.handle('strategy:generate', (_e, params) => runStrategyGenerate(params));
-  // 兼容别名：P0-1 时期的调用名（旧 renderer / e2e 仍在用）
+  // 兼容别名：P0-1 时期 renderer 调的名字
   ipcMain.handle('analysis:angles', (_e, params) => runStrategyGenerate({ ...(params || {}), mode: 'reference' }));
 
-  /**
-   * 采纳一个角度 → 写一条 strategy_adoptions（策略:文章 = 1:N）。
-   * 同一策略可被反复采纳给不同文章；article_id 先留空，正文入库后由 article:article 回填。
-   */
-  function adoptStrategy(strategyId, index, articleId) {
+  /** 采纳一条策略 → 建 strategy_articles（1:N：同一策略可反复采纳给不同渠道的文章） */
+  function adoptStrategy(strategyId, articleId) {
     const id = Number(strategyId);
-    if (!id || !Number.isInteger(index)) return { ok: false, error: '缺少 strategyId 或 angleIndex' };
-    const row = db.prepare('SELECT id, mode, strategy_json, status FROM content_strategies WHERE id = ?').get(id);
-    if (!row) return { ok: false, error: '策略记录不存在' };
-    if (row.status !== 'completed') return { ok: false, error: '策略未生成完成，无法采纳' };
-    let list = [];
-    try { list = JSON.parse(row.strategy_json || '{}').angles || []; } catch {}
-    if (index < 0 || index >= list.length) return { ok: false, error: `角度下标越界（${index} / 共 ${list.length} 个）` };
-    const res = db.prepare(`
-      INSERT INTO strategy_adoptions (strategy_id, article_id, angle_index) VALUES (?, ?, ?)
-    `).run(id, articleId ? Number(articleId) : null, index);
-    return { ok: true, adoptionId: res.lastInsertRowid, strategyId: id, mode: row.mode, index, angle: list[index] };
+    if (!id) return { ok: false, error: '缺少 strategyId' };
+    const row = db.prepare('SELECT id, mode, status FROM content_strategies WHERE id = ?').get(id);
+    if (!row) return { ok: false, error: '策略不存在' };
+    const res = db.prepare(`INSERT INTO strategy_articles (strategy_id, article_id) VALUES (?, ?)`)
+      .run(id, articleId ? Number(articleId) : null);
+    db.prepare(`UPDATE content_strategies SET status = 'adopted', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+    return { ok: true, adoptionId: res.lastInsertRowid, strategyId: id, mode: row.mode };
   }
 
-  ipcMain.handle('strategy:adopt', (_e, params) => adoptStrategy(
-    params && params.strategyId, params && params.angleIndex, params && params.articleId,
-  ));
-  // 兼容别名（旧名 angles:adopt，入参 { id, index }）
-  ipcMain.handle('angles:adopt', (_e, params) => adoptStrategy(
-    params && params.id, params && params.index, params && params.articleId,
-  ));
+  ipcMain.handle('strategy:adopt', (_e, params) =>
+    adoptStrategy(params && params.strategyId, params && params.articleId));
+  // 兼容旧签名（P0-2 用 {id,index} 指向批次里的第 index 个角度；V2 里策略本身就是行）
+  ipcMain.handle('angles:adopt', (_e, params) => {
+    const legacyId = params && (params.strategyId ?? params.id);
+    return adoptStrategy(legacyId, params && params.articleId);
+  });
 
   ipcMain.handle('strategy:list', (_e, params) => {
-    const { profileId, mode, limit = 30 } = params || {};
-    const pid = String(profileId || '');
-    const m = mode === 'topic' || mode === 'reference' ? mode : '';
+    const { profileId, mode, status, track, search, limit = 50 } = params || {};
     const where = [], vals = [];
-    // 身份隔离：传 profileId 则只看本身份 + 旧数据（profile_id='' 的历史记录不隐身）
+    const pid = String(profileId || '');
+    // 身份隔离：传 profileId 则只看本身份 + 历史空身份记录
     if (pid) { where.push(`(profile_id = ? OR profile_id = '' OR profile_id IS NULL)`); vals.push(pid); }
-    if (m)   { where.push(`mode = ?`); vals.push(m); }
-    vals.push(Number(limit) || 30);
-    const sql = `
-      SELECT id, mode, analysis_id, topic, profile_id, track, persona, status, error, duration_ms, created_at,
-             json_array_length(json_extract(strategy_json, '$.angles')) AS angle_count
+    if (mode === 'topic' || mode === 'reference') { where.push(`mode = ?`); vals.push(mode); }
+    if (status === 'candidate' || status === 'adopted' || status === 'archived') { where.push(`status = ?`); vals.push(status); }
+    if (track) { where.push(`track = ?`); vals.push(String(track)); }
+    const q = String(search || '').trim();
+    if (q) { where.push(`(title LIKE ? OR topic LIKE ? OR angle_type LIKE ? OR core_point LIKE ?)`); vals.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`); }
+    vals.push(Number(limit) || 50);
+    const rows = db.prepare(`
+      SELECT *, (SELECT COUNT(*) FROM strategy_articles sa WHERE sa.strategy_id = content_strategies.id) AS adoption_count
       FROM content_strategies
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT ?
-    `;
-    return db.prepare(sql).all(...vals);
+    `).all(...vals);
+    return rows.map(shapeStrategyRow);
   });
 
   ipcMain.handle('strategy:get', (_e, id) => {
     const row = db.prepare('SELECT * FROM content_strategies WHERE id = ?').get(Number(id));
     if (!row) return null;
-    let parsed = {};
-    try { parsed = JSON.parse(row.strategy_json || '{}'); } catch {}
-    const adoptions = db.prepare(
-      `SELECT id, article_id, angle_index, adopted_at FROM strategy_adoptions WHERE strategy_id = ? ORDER BY adopted_at DESC`,
-    ).all(row.id);
-    return { ...row, strategy: parsed, adoptions };
+    const links = db.prepare(`
+      SELECT id, article_id, adopted_at, views, likes, favorites, comments, followers, manual_score, note
+      FROM strategy_articles WHERE strategy_id = ? ORDER BY adopted_at DESC
+    `).all(row.id);
+    return { ...shapeStrategyRow(row), links };
   });
 
   ipcMain.handle('strategy:delete', (_e, id) => {
@@ -1110,6 +1200,64 @@ function registerIpc() {
     return { ok: true, changes: res.changes };
   });
 
+  ipcMain.handle('strategy:setStatus', (_e, params) => {
+    const { id, status } = params || {};
+    if (!['candidate', 'adopted', 'archived'].includes(status)) return { ok: false, error: 'status 非法' };
+    const res = db.prepare(`UPDATE content_strategies SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(status, Number(id));
+    return { ok: res.changes > 0, changes: res.changes };
+  });
+
+  /**
+   * 效果回填（§十三）：把发布后的真实数据写回那条「策略×文章」执行记录。
+   * 没有这一环，策略只是提示词片段；有了它，策略才会被真实结果校正。
+   */
+  ipcMain.handle('strategy:recordResult', (_e, params) => {
+    const p = params || {};
+    const metrics = p.metrics || {};
+    const cols = ['views', 'likes', 'favorites', 'comments', 'followers', 'manual_score'];
+    const sets = [], vals = [];
+    for (const c of cols) {
+      if (metrics[c] === undefined) continue;
+      if (metrics[c] === null || metrics[c] === '') { sets.push(`${c} = NULL`); continue; }
+      const n = Number(metrics[c]);
+      if (!Number.isFinite(n)) return { ok: false, error: `${c} 不是数字` };
+      sets.push(`${c} = ?`); vals.push(n);
+    }
+    if (typeof metrics.note === 'string') { sets.push(`note = ?`); vals.push(metrics.note); }
+    if (!sets.length) return { ok: false, error: '没有任何要写入的指标' };
+
+    let linkId = Number(p.adoptionId ?? p.linkId);
+    if (!linkId && p.articleId) {
+      const link = db.prepare(`SELECT id FROM strategy_articles WHERE article_id = ? ORDER BY adopted_at DESC, id DESC LIMIT 1`)
+        .get(Number(p.articleId));
+      if (link) linkId = link.id;
+    }
+    if (!linkId) return { ok: false, error: '找不到对应的策略执行记录（strategy_articles）' };
+    const exists = db.prepare(`SELECT id FROM strategy_articles WHERE id = ?`).get(linkId);
+    if (!exists) return { ok: false, error: '策略执行记录不存在' };
+    vals.push(linkId);
+    db.prepare(`UPDATE strategy_articles SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+    return { ok: true, adoptionId: linkId };
+  });
+
+  /** 策略战绩聚合：哪条策略真的有效（§十二 策略库要排序用） */
+  ipcMain.handle('strategy:stats', (_e, ids) => {
+    const list = Array.isArray(ids) ? ids.map(Number).filter(Boolean) : [];
+    if (!list.length) return [];
+    const ph = list.map(() => '?').join(',');
+    return db.prepare(`
+      SELECT strategy_id,
+             COUNT(*) AS times_adopted,
+             SUM(CASE WHEN views IS NOT NULL THEN 1 ELSE 0 END) AS reported,
+             AVG(views) AS avg_views, AVG(comments) AS avg_comments,
+             AVG(favorites) AS avg_favorites, AVG(followers) AS avg_followers,
+             AVG(manual_score) AS avg_manual_score
+      FROM strategy_articles
+      WHERE strategy_id IN (${ph})
+      GROUP BY strategy_id
+    `).all(...list);
+  });
     ipcMain.handle('analysis:list', (_e, { limit = 20, profileId } = {}) => {
   // 身份隔离：传 profileId 则只看本身份 + 旧数据（profile_id='' 的历史记录不隐身）
   const pid = String(profileId || '');

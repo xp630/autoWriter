@@ -146,42 +146,68 @@ CREATE INDEX IF NOT EXISTS idx_content_analysis_created ON content_analysis(crea
 -- 注：idx_content_analysis_profile 必须在 db.cjs 迁移之后建（旧库可能还没 profile_id 列）
 
 -- ============================================================================
--- 内容策略层（独立创作决策层）
+-- 内容策略系统 V2：Strategy-Driven Workflow
 -- ============================================================================
 
--- 策略记录。注意它不隶属分析也不隶属文章：
---   mode='reference' → A 借势拆解，挂在一条 content_analysis 上（analysis_id 有值）
---   mode='topic'     → B 命题策划，无参考文（analysis_id 为 NULL），只凭主题推演
--- strategy_json 里是 N 个候选角度 + 模式专属决策块（track_fit / value）
+-- 一行 = 一个策略（= 一个可执行的创作决策），不是一行装一批候选。
+-- 理由：策略是资产，要能单独检索 / 复用 / 回填战绩（§八、§十二）。
+-- 一次生成的 5 个角度 = 5 行，用 batch_id 归组。
+-- 生成失败不再入库（没有“不完整的策略”），错误直接返回给 renderer 展示。
 CREATE TABLE IF NOT EXISTS content_strategies (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  mode            TEXT NOT NULL DEFAULT 'reference',  -- reference | topic
-  analysis_id     INTEGER,                             -- A 模式挂靠；B 模式 NULL
+  mode            TEXT NOT NULL DEFAULT 'reference',   -- reference(A 借势拆解) | topic(B 命题策划)
+  source_type     TEXT DEFAULT 'analysis',             -- analysis | topic | manual
+  analysis_id     INTEGER,                             -- A 模式挂靠；B 模式 NULL（不依赖分析）
+  batch_id        TEXT DEFAULT '',                     -- 同一次生成的多个策略归组
   topic           TEXT DEFAULT '',                     -- B 模式的输入主题；A 模式冷存原文标题
-  profile_id      TEXT DEFAULT '',
-  track           TEXT DEFAULT '',
+  profile_id      TEXT DEFAULT '',                     -- 身份隔离
+  track           TEXT DEFAULT '',                     -- 生成时所用赛道
   persona         TEXT DEFAULT '',
-  strategy_json   TEXT NOT NULL DEFAULT '{"mode":"reference","angles":[],"track_fit":null,"value":null}',
-  status          TEXT DEFAULT 'running',              -- running | completed | failed
-  error           TEXT DEFAULT '',
-  duration_ms     INTEGER DEFAULT 0,
+  -- ▲ 统一策略模型的决策内容（§四）
+  angle_type      TEXT DEFAULT '',
+  title           TEXT DEFAULT '',
+  core_point      TEXT DEFAULT '',                     -- 文章立意
+  target_user     TEXT DEFAULT '',
+  structure       TEXT DEFAULT '[]',                   -- JSON 数组
+  emotion         TEXT DEFAULT '',                     -- 情绪策略
+  goal            TEXT DEFAULT '',                     -- 内容目标
+  value_score     REAL,                                -- 0-10 推荐指数
+  -- ▲ 模式专属字段（§五 / §六），结构化存储而不是自由文本
+  differentiator  TEXT,                                -- A: {type,description,instruction} 抗同质化
+  track_fit       TEXT,                                -- A: {score,reason,adapt_direction}
+  feasibility     TEXT,                                -- B: {score,difficulty,reason}
+  evidence_needed TEXT,                                -- B: ["..."] 素材缺口
+  fact_risk       TEXT DEFAULT 'low',                  -- low|medium|high：AI 编造事实的风险
+  -- ▲ 生命周期
+  status          TEXT DEFAULT 'candidate',            -- candidate | adopted | archived
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (analysis_id) REFERENCES content_analysis(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_content_strategies_mode ON content_strategies(mode, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_content_strategies_profile ON content_strategies(profile_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_content_strategies_analysis ON content_strategies(analysis_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategies_mode ON content_strategies(mode, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategies_profile ON content_strategies(profile_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategies_status ON content_strategies(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategies_batch ON content_strategies(batch_id);
+CREATE INDEX IF NOT EXISTS idx_strategies_track ON content_strategies(track, status);
+CREATE INDEX IF NOT EXISTS idx_strategies_analysis ON content_strategies(analysis_id, created_at DESC);
 
--- 采纳记录：策略 : 文章 = 1:N
--- 一条策略可以躺在策略库里反复采纳给多篇文章；一条 adoption = 一次采纳。
--- article_id 可空：用户可能“先采纳、还没生成文章”（采纳时还未入库）。
-CREATE TABLE IF NOT EXISTS strategy_adoptions (
+-- 策略 : 文章 = 1:N。同一策略可复用到公众号/小红书/知乎/头条多篇执行结果。
+-- article_id 可空 = “已采纳、文章还没生成”。
+-- 效果回填字段直接挂在执行关系上（§十三）：这篇用这条策略跑出了什么结果。
+CREATE TABLE IF NOT EXISTS strategy_articles (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   strategy_id   INTEGER NOT NULL,
   article_id    INTEGER,
-  angle_index   INTEGER NOT NULL,
   adopted_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  views         INTEGER,
+  likes         INTEGER,
+  favorites     INTEGER,
+  comments      INTEGER,
+  followers     INTEGER,
+  manual_score  REAL,                                  -- 用户主观分 0-10，用于修正策略评分
+  note          TEXT DEFAULT '',
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (strategy_id) REFERENCES content_strategies(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_adoptions_strategy ON strategy_adoptions(strategy_id, adopted_at DESC);
-CREATE INDEX IF NOT EXISTS idx_adoptions_article ON strategy_adoptions(article_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_articles_strategy ON strategy_articles(strategy_id, adopted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategy_articles_article ON strategy_articles(article_id);

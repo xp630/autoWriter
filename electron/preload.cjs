@@ -89,6 +89,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listStrategies: (params) => ipcRenderer.invoke('strategy:list', params),
   getStrategy: (id) => ipcRenderer.invoke('strategy:get', id),
   deleteStrategy: (id) => ipcRenderer.invoke('strategy:delete', id),
+  setStrategyStatus: (params) => ipcRenderer.invoke('strategy:setStatus', params),
+  recordStrategyResult: (params) => ipcRenderer.invoke('strategy:recordResult', params),
+  strategyStats: (ids) => ipcRenderer.invoke('strategy:stats', ids),
+  articleStrategy: (articleId) => ipcRenderer.invoke('article:strategyFor', articleId),
 
   // 测试钩子 —— main.cjs 在 AUTOWRITER_TEST_MODE=1 时注册对应的 test:* handler
   // preload 始终暴露这些方法（不检查 env，避免 preload process.env 不可靠的问题）

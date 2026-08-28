@@ -63,22 +63,18 @@ function parseAngleResult(data, mode = 'reference') {
 }
 
 /**
- * 策略生成结果解析（双模式）。
- * A reference：靠 track_fit 回答“这个素材值不值得写”
- * B topic    ：靠 value 回答“这个题目值不值得写”，并且无参考文→必须带 evidence_needed
+ * 策略生成结果解析（双模式）。返回平铺的策略数组（V2：一条 = 一行）。
+ * A reference：附带批次级 track_fit（素材与赛道适配度）
+ * B topic    ：每条自带 feasibility / evidence_needed / fact_risk
  */
 function parseStrategyResult(data, mode = 'reference') {
   const isTopic = mode === 'topic';
   if (!data || typeof data !== "object") return { ok: false, error: "缺少 JSON 对象" };
   const raw = Array.isArray(data.angles) ? data.angles.filter(a => a && (a.title || a.angle_type)) : [];
-  const angles = raw.map(a => normalizeAngle(a, mode));
-  if (angles.length < 3) return { ok: false, error: `angles 不足（${angles.length} 个，至少要 3 个）` };
-  if (isTopic) {
-    const v = data.value && typeof data.value === "object" ? normalizeStrategyValue(data.value) : null;
-    return { ok: true, mode: 'topic', angles, track_fit: null, value: v };
-  }
-  const tf = data.track_fit && typeof data.track_fit === "object" ? data.track_fit : null;
-  return { ok: true, mode: 'reference', angles, track_fit: tf, value: null };
+  const strategies = raw.map(a => normalizeStrategy(a, mode));
+  if (strategies.length < 3) return { ok: false, error: `angles 不足（${strategies.length} 个，至少要 3 个）` };
+  if (isTopic) return { ok: true, mode: 'topic', strategies, track_fit: null };
+  return { ok: true, mode: 'reference', strategies, track_fit: normalizeTrackFit(data.track_fit) };
 }
 
 /** B 模式的题目价值评估块 */
@@ -93,35 +89,121 @@ function normalizeStrategyValue(v) {
   return Object.keys(out).length ? out : null;
 }
 
+// ===== V2 统一策略模型的字段归一化 =====
+const DIFF_TYPES = ['new_position', 'new_evidence', 'new_audience', 'new_scenario', 'new_conclusion', 'new_experience'];
+const DIFFICULTIES = ['easy', 'medium', 'hard'];
+const FACT_RISKS = ['low', 'medium', 'high'];
+const DIFF_LABEL = {
+  new_position: '新立场', new_evidence: '新证据', new_audience: '新人群',
+  new_scenario: '新场景', new_conclusion: '新结论', new_experience: '新经历',
+};
+const FEAS_LABEL = { easy: '易', medium: '中', hard: '难' };
+
+const clamp10 = (n) => Math.max(0, Math.min(10, Math.round(n * 10) / 10));
+const toScore = (v) => {
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(n) ? clamp10(n) : undefined;
+};
+const str = (v) => String(v == null ? '' : v).trim();
+
+/** A 模式核心字段：差异锚点（结构化，便于正文提示词把 instruction 当硬约束用） */
+function normalizeDifferentiator(d) {
+  if (!d) return null;
+  if (typeof d === 'string') {
+    const description = str(d);
+    return description ? { type: '', description, instruction: '' } : null;
+  }
+  const description = str(d.description || d.text || d.diff);
+  if (!description) return null;
+  const type = DIFF_TYPES.includes(d.type) ? d.type : '';
+  return { type, description, instruction: str(d.instruction) };
+}
+
+/** A 模式：素材与赛道适配度 */
+function normalizeTrackFit(t) {
+  if (!t || typeof t !== 'object') return null;
+  const out = {};
+  const score = toScore(t.score);
+  // 兼容旧形状 {matches, note}
+  if (score !== undefined) out.score = score;
+  else if (typeof t.matches === 'boolean') out.score = t.matches ? 8 : 3;
+  const reason = str(t.reason || t.note);
+  if (reason) out.reason = reason;
+  const adapt = str(t.adapt_direction || (typeof t.matches === 'boolean' && !t.matches ? reason : ''));
+  if (adapt) out.adapt_direction = adapt;
+  return Object.keys(out).length ? out : null;
+}
+
+/** B 模式：可写性与题目价值 */
+function normalizeFeasibility(f) {
+  if (!f) return null;
+  if (typeof f === 'string') {
+    const v = str(f);
+    if (!v) return null;
+    const map = { '易': 'easy', '中': 'medium', '难': 'hard' };
+    return { score: undefined, difficulty: DIFFICULTIES.includes(v) ? v : (map[v] || ''), reason: '' };
+  }
+  if (typeof f !== 'object') return null;
+  const out = {};
+  const score = toScore(f.score);
+  if (score !== undefined) out.score = score;
+  const diff = str(f.difficulty || f.level);
+  out.difficulty = DIFFICULTIES.includes(diff) ? diff : ({ '易': 'easy', '中': 'medium', '难': 'hard' }[diff] || '');
+  const reason = str(f.reason);
+  if (reason) out.reason = reason;
+  return (out.score !== undefined || out.difficulty || out.reason) ? out : null;
+}
+
+function normalizeEvidence(list) {
+  if (!Array.isArray(list)) return undefined;
+  const ev = list.map(str).filter(Boolean);
+  return ev.length ? ev : undefined;
+}
+
 /**
- * 单个角度字段归一化。
- * 宽容处理：value_score 容忍字符串/越界；emotion/goal 不强校枚举（模型可能换说法），
- * 保留原文交给 UI 展示。老数据（没有这三个字段）不会因为缺字段而报错。
+ * 单个角度归一成一个平铺策略（V2：一行 = 一个策略）。
+ * 宽容处理：缺字段不报错，旧数据（字符串型 differentiator/feasibility）自动包装。
  */
-function normalizeAngle(a, mode = 'reference') {
+function normalizeStrategy(a, mode = 'reference') {
   const out = {
-    angle_type: String(a.angle_type || '').trim(),
-    title: String(a.title || '').trim(),
-    core_point: String(a.core_point || '').trim(),
+    angle_type: str(a.angle_type),
+    title: str(a.title),
+    core_point: str(a.core_point),
   };
-  if (a.target_user) out.target_user = String(a.target_user).trim();
+  if (a.target_user) out.target_user = str(a.target_user);
   if (Array.isArray(a.structure)) {
-    const st = a.structure.map(s => String(s == null ? '' : s).trim()).filter(Boolean);
+    const st = a.structure.map(str).filter(Boolean);
     if (st.length) out.structure = st;
   }
-  if (a.reason) out.reason = String(a.reason).trim();
-  const n = typeof a.value_score === 'number' ? a.value_score : parseFloat(a.value_score);
-  if (Number.isFinite(n)) out.value_score = Math.max(0, Math.min(10, Math.round(n * 10) / 10));
-  if (a.emotion) out.emotion = String(a.emotion).trim();
-  if (a.goal) out.goal = String(a.goal).trim();
-  if (a.differentiator) out.differentiator = String(a.differentiator).trim();
-  if (a.feasibility) out.feasibility = String(a.feasibility).trim();
-  if (Array.isArray(a.evidence_needed)) {
-    const ev = a.evidence_needed.map(s => String(s == null ? '' : s).trim()).filter(Boolean);
-    if (ev.length) out.evidence_needed = ev;
+  if (a.reason) out.reason = str(a.reason);
+  const vs = toScore(a.value_score);
+  if (vs !== undefined) out.value_score = vs;
+  if (a.emotion) out.emotion = str(a.emotion);
+  if (a.goal) out.goal = str(a.goal);
+
+  const diff = normalizeDifferentiator(a.differentiator);
+  if (diff) out.differentiator = diff;
+  const feas = normalizeFeasibility(a.feasibility);
+  if (feas) out.feasibility = feas;
+  const ev = normalizeEvidence(a.evidence_needed);
+  if (ev) out.evidence_needed = ev;
+
+  // fact_risk：B 模式默认 medium（无参考素材，天然有编造风险），并受素材缺口影响
+  let fr = str(a.fact_risk).toLowerCase();
+  if (!FACT_RISKS.includes(fr)) {
+    if (mode === 'topic') fr = (ev && ev.length >= 3) ? 'high' : 'medium';
+    else fr = 'low';
   }
-  void mode;   // 模式不影响字段保留（均宽容），只为后续可能的差异化校验留位
+  out.fact_risk = fr;
+  void mode;
   return out;
+}
+
+/** 向后兼容：旧名 normalizeAngle 仍是单条归一化 */
+function normalizeAngle(a, mode = 'reference') {
+  const s = normalizeStrategy(a, mode);
+  // 旧调用者期待“缺字段则键不存在”，归一化后的不同iator/feasibility 在旧测试里不存在也没关系
+  return s;
 }
 
 // 情绪锦点→写法约束（策略能指影响标题/开头/结尾，而不是只当一个标签）
@@ -156,7 +238,11 @@ function buildStrategyBlock(strategy) {
   if (strategy.core_point) lines.push(`- **文章立意**: ${strategy.core_point}`);
   if (strategy.title) lines.push(`- **标题方向**: ${strategy.title}`);
   if (strategy.target_user) lines.push(`- **目标读者**: ${strategy.target_user}`);
-  if (strategy.differentiator) lines.push(`- **差异锚点**: ${strategy.differentiator}`);
+  const diff = normalizeDifferentiator(strategy.differentiator);
+  if (diff) {
+    const label = diff.type ? `${DIFF_LABEL[diff.type] || diff.type}｜${diff.description}` : diff.description;
+    lines.push(`- **差异锚点**: ${label}`);
+  }
   if (strategy.emotion) {
     const g = EMOTION_GUIDE[strategy.emotion];
     lines.push(`- **情绪策略**: 读完后的主导情绪 = ${strategy.emotion}${g ? ' —— ' + g : ''}`);
@@ -178,13 +264,17 @@ function buildStrategyBlock(strategy) {
   const body = [head, ...lines, ''];
 
   const ev = Array.isArray(strategy.evidence_needed) ? strategy.evidence_needed.filter(Boolean) : [];
+  const factRisk = String(strategy.fact_risk || (isTopic ? 'medium' : 'low')).toLowerCase();
   if (isTopic) {
     // B 模式核心风险 = 幻觉。无参考文时模型最爱编数据/人名/案例。
-    body.push('⚠️ **事实约束（本次无参考素材，硬要求）**：');
+    body.push(`⚠️ **事实约束（本次无参考素材，事实风险=${factRisk}，硬要求）**：`);
     body.push('- 禁止编造具体数字、百分比、日期、研究结论、人名、机构名、书名、引语、他人经历。');
     body.push('- 需要数据/案例支撑处，若用户未提供则写「待补充」占位，不得自行臆造。');
     body.push('- 不得替用户编造第一手经历（“我有个朋友…”、“去年我…”）。');
-    body.push('- 允许用普遍观察式表述（“不少人有这种体会…”），但不得伪装成统计结论。');
+    body.push('- 允许用普遍观察式表述（“部分用户”、“很多人”、“一些情况下”、“普遍存在”），但不得伪装成统计结论。');
+    if (factRisk === 'high') {
+      body.push('- 本角度事实风险高：全文以观点与推理为主，所有定量表述一律占位，不得为了可读性补“看起来真”的数字。');
+    }
     if (ev.length) {
       body.push('');
       body.push('- **本角度需要用户补充的素材（写之前先看用户有没有给；缺就保留占位并在结尾提醒）**：');
@@ -197,8 +287,8 @@ function buildStrategyBlock(strategy) {
   } else {
     // A 模式核心风险 = 同质化。负向约束不够，还要正向差异锚点。
     body.push('⚠️ 上面的「参考内容分析」只是素材与市场参照，**不得沿用原文的观点、例子与结构**；');
-    body.push(strategy.differentiator
-      ? `本文必须把下面这条差异锦成文实：**${strategy.differentiator}**。凡是与原文可能重合的表述、案例、结论，一律重写或删除。`
+    body.push(diff
+      ? `本文必须把这条差异真正写进内容里，而不是喊口号：**${diff.description}${diff.instruction ? '（' + diff.instruction + '）' : ''}**。凡是与原文可能重合的表述、案例、结论，一律重写或删除。`
       : '本文必须按上面指定的角度、情绪、目标重写，不得只改标题与措辞。');
     if (strategy.core_point) {
       body.push(`全文要围绕上面这条「文章立意」展开。`);
@@ -317,6 +407,22 @@ function buildAnalysisContextBlock(analysis) {
   return parts.join('\n');
 }
 
+/**
+ * 策略→配图提示词（情绪定画面气质，目标定图的作用）。
+ * 放在 analysis.cjs 是为了能单测；主进程只负责拼到生图 prompt 上。
+ * @returns {string} 追加到原 prompt 后面的风格后缀（无策略时返回空串）
+ */
+function buildImageStrategyHint(strategy) {
+  if (!strategy || typeof strategy !== 'object') return '';
+  const tone = strategy.emotion ? EMOTION_IMAGE_TONE[strategy.emotion] : '';
+  const use = strategy.goal ? GOAL_IMAGE_USE[strategy.goal] : '';
+  if (!tone && !use) return '';
+  const bits = [];
+  if (tone) bits.push(`情绪基调：${tone}`);
+  if (use) bits.push(`图像作用：${use}`);
+  return `\n\n【创作策略约束】${bits.join('；')}。不要给出与这基调相反的观感。`;
+}
+
 function saveAnalysis(db, { source_url, title, platform, author, content, analysis_json, duration_ms, status = 'completed', error = '' }) {
   const stmt = db.prepare(`
     INSERT INTO content_analysis
@@ -337,8 +443,30 @@ function saveAnalysis(db, { source_url, title, platform, author, content, analys
   return result.lastInsertRowid;
 }
 
+// 情绪策略 → 画面气质（同样是策略选择，不是描述原文）
+const EMOTION_IMAGE_TONE = {
+  '共鸣': '生活化真实场景、自然光、可代入的具体细节，避免摆拍与商业图库感',
+  '愤怒': '高对比、硬光、压迫性构图，冷色调与不对等空间关系',
+  '焦虑': '暗调、紧迫感、都市夜景/时间元素，画面留白少',
+  '治愈': '柔光、大留白、自然材质与低饱和暖色',
+  '反转': '同一画面内并置两个矛盾元素，强反差构图',
+  '鼓励': '明亮高调、上升视线、行动中的普通人',
+};
+
+// 内容目标 → 图应该干什么
+const GOAL_IMAGE_USE = {
+  '涨粉': '要有人物与场景叙事、有记忆点，能让人记住“这个账号”',
+  '评论': '呈现对立/二选一关系，让读者看了就想站队',
+  '收藏': '偏信息图：清单化/步骤化/结构清晰，能单独看懂',
+  '建立IP': '真实工作/生活现场感，带人的痕迹，不用通用美图',
+  '商业转化': '需求场景 + 解决后的对比，不要产品硬图',
+};
+
 module.exports = {
-  parseAnalysisJson, parseAngleResult, parseStrategyResult, normalizeAngle, normalizeStrategyValue,
+  parseAnalysisJson, parseAngleResult, parseStrategyResult,
+  normalizeStrategy, normalizeAngle, normalizeStrategyValue,
+  normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
+  DIFF_TYPES, DIFF_LABEL, DIFFICULTIES, FACT_RISKS,
   loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
-  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, saveAnalysis,
+  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint, saveAnalysis,
 };

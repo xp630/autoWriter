@@ -32,6 +32,24 @@ function getDb(opts = {}) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
+  // ===== 预迁移：先把旧版策略表改名让路 =====
+  // 必须在 exec(schema.sql) 之前做：新表名与旧表名相同，而 schema 用的是
+  // CREATE TABLE IF NOT EXISTS —— 不让路的话 V2 的列根本建不出来。
+  const tableCols = (t) => {
+    try { return db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name); } catch { return []; }
+  };
+  const tableExists = (t) => !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+  const renameAside = (from, to) => {
+    try { db.exec(`ALTER TABLE ${from} RENAME TO ${to}`); } catch (e) { console.warn(`[db] ${from} 改名失败:`, e.message); }
+  };
+  const LEGACY_ANGLES = '_legacy_content_angles';
+  const LEGACY_STRAT_V1 = '_legacy_strategies_v1';
+  const LEGACY_ADOPT = '_legacy_strategy_adoptions';
+  const stratCols = tableCols('content_strategies');
+  if (stratCols.includes('strategy_json')) renameAside('content_strategies', LEGACY_STRAT_V1);   // V1：一行装一批 angles
+  if (tableExists('content_angles')) renameAside('content_angles', LEGACY_ANGLES);                // P0-1a/P0-2 中间态
+  if (tableExists('strategy_adoptions')) renameAside('strategy_adoptions', LEGACY_ADOPT);
+
   // 自动建表（执行 schema.sql）
   const schemaPath = path.join(__dirname, 'schema.sql');
   if (fs.existsSync(schemaPath)) {
@@ -78,65 +96,139 @@ function getDb(opts = {}) {
       if (ensureCols('content_analysis', [['profile_id', "TEXT DEFAULT ''"]])) {
         ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_analysis_profile ON content_analysis(profile_id, created_at DESC)`);
       }
-      // 一次性重构迁移：content_angles（分析附属能力）→ content_strategies（独立决策层）
-      // schema 已先建好新表，这里只负责搬数据、补建 adoption，然后 DROP 旧表。
-      const hasOld = db.prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='content_angles'`,
-      ).get();
-      if (hasOld) {
-        // 旧库的 content_angles 可能连 P0-2 那三列都没有（P0-1a 版本），先补齐再读
-        const oldCols = db.prepare(`PRAGMA table_info(content_angles)`).all().map(c => c.name);
-        for (const [n, t] of [
-          ['adopted_index', 'INTEGER DEFAULT -1'], ['adopted_at', 'DATETIME'], ['article_id', 'INTEGER'],
-        ]) {
-          if (!oldCols.includes(n)) { try { db.exec(`ALTER TABLE content_angles ADD COLUMN ${n} ${t}`); } catch {} }
+      // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
+      // 兼容两代旧结构：
+      //   _legacy_content_angles （P0-1a/P0-2 中间态：angles_json + adopted_index + article_id）
+      //   _legacy_strategies_v1  （V1：strategy_json 装一批 angles + track_fit/value）
+      // 旧表的 id 不保留（一行变多行，无法一一对应），改用 batch_id 保留批次溯源；
+      // 旧的采纳关系按 (旧id, angle_index) 重新映射到炸开后的新行。
+      const parseJson = (s, fallback) => {
+        try { const v = JSON.parse(s || ''); return (v === undefined || v === null) ? fallback : v; } catch { return fallback; }
+      };
+      const dumpJson = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
+      // 复用主进程的归一化，让迁移完的库里只有一种形状（不留 matches/note 这种旧字段）。
+      // analysis.cjs 不依赖 db.cjs，无循环引用风险。
+      const { normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility } = require('./analysis.cjs');
+
+      const INS_STRATEGY = db.prepare(`
+        INSERT INTO content_strategies
+        (mode, source_type, analysis_id, batch_id, topic, profile_id, track, persona,
+         angle_type, title, core_point, target_user, structure, emotion, goal, value_score,
+         differentiator, track_fit, feasibility, evidence_needed, fact_risk, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const INS_LINK = db.prepare(`
+        INSERT INTO strategy_articles (strategy_id, article_id, adopted_at) VALUES (?, ?, ?)
+      `);
+      const linkExists = db.prepare(`SELECT COUNT(*) c FROM strategy_articles WHERE strategy_id = ?`);
+
+      /** 把一个 angle 对象写成一行策略；返回新行 id */
+      function explodeAngle(base, angle, createdAt) {
+        const mode = base.mode || 'reference';
+        const struct = Array.isArray(angle.structure) ? JSON.stringify(angle.structure) : '[]';
+        const ev = Array.isArray(angle.evidence_needed) ? JSON.stringify(angle.evidence_needed) : null;
+        // differentiator：旧数据是自由文本，经归一化统一成 {type,description,instruction}
+        const diff = dumpJson(normalizeDifferentiator(angle.differentiator));
+        // feasibility：旧数据是「易/中/难」字符串，同样归一成 {score,difficulty,reason}
+        let feas = dumpJson(normalizeFeasibility(angle.feasibility));
+        // B 模式旧库只有批次级的 value 块 → 下沉成每个策略的 feasibility（V2 没有批次级字段）
+        if (!feas && mode === 'topic' && base.value) {
+          feas = JSON.stringify({ score: base.value.score ?? null, difficulty: null, reason: base.value.advice || '' });
         }
-
-        const rows = db.prepare(`SELECT * FROM content_angles ORDER BY id`).all();
-        const insStrategy = db.prepare(`
-          INSERT OR IGNORE INTO content_strategies
-          (id, mode, analysis_id, topic, profile_id, track, persona, strategy_json, status, error, duration_ms, created_at)
-          VALUES (?, 'reference', ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
-        `);
-        const insAdoption = db.prepare(`
-          INSERT INTO strategy_adoptions (strategy_id, article_id, angle_index, adopted_at)
-          VALUES (?, ?, ?, ?)
-        `);
-        const existingAdopt = db.prepare(`SELECT COUNT(*) c FROM strategy_adoptions WHERE strategy_id = ?`);
-        const moved = db.transaction(() => {
-          let n = 0;
-          for (const r of rows) {
-            let obj = {};
-            try { obj = JSON.parse(r.angles_json || '{}'); } catch {}
-            const json = JSON.stringify({
-              mode: 'reference',
-              angles: Array.isArray(obj.angles) ? obj.angles : [],
-              track_fit: obj.track_fit || null,
-              value: null,
-            });
-            insStrategy.run(
-              r.id, r.analysis_id ?? null, r.title || '', r.profile_id || '', r.track || '',
-              json, r.status || 'completed', r.error || '', r.duration_ms || 0, r.created_at,
-            );
-            // 旧模型的采纳信息（adopted_index / article_id）转成一条 adoption，保持 1:N 语义下的历史不丢
-            const hadAdopt = (r.article_id != null) || ((r.adopted_index ?? -1) >= 0);
-            if (hadAdopt && existingAdopt.get(r.id).c === 0) {
-              insAdoption.run(r.id, r.article_id ?? null, Math.max(0, (r.adopted_index ?? -1)), r.adopted_at || r.created_at);
-            }
-            n++;
-          }
-          return n;
-        });
-        const movedCount = moved();
-        // 显式插了 id，要把自增序列顶上去，否则下一条新记录会 id 冲突
-        const seqRow = db.prepare(`SELECT seq FROM sqlite_sequence WHERE name = 'content_strategies'`).get();
-        const maxId = db.prepare(`SELECT COALESCE(MAX(id), 0) m FROM content_strategies`).get().m;
-        if (seqRow) db.prepare(`UPDATE sqlite_sequence SET seq = ? WHERE name = 'content_strategies'`).run(Math.max(seqRow.seq || 0, maxId));
-        else if (maxId > 0) db.prepare(`INSERT INTO sqlite_sequence (name, seq) VALUES ('content_strategies', ?)`).run(maxId);
-
-        db.exec(`DROP TABLE content_angles`);
-        console.log(`[db] 迁移：content_angles → content_strategies，共搬运 ${movedCount} 条策略记录（旧表已删除）`);
+        const factRisk = angle.fact_risk || (mode === 'topic' ? 'medium' : 'low');
+        return INS_STRATEGY.run(
+          mode,
+          base.source_type || (mode === 'topic' ? 'topic' : 'analysis'),
+          base.analysis_id ?? null,
+          base.batch_id || '',
+          base.topic || '',
+          base.profile_id || '',
+          base.track || '',
+          base.persona || '',
+          angle.angle_type || '',
+          angle.title || '',
+          angle.core_point || '',
+          angle.target_user || '',
+          struct,
+          angle.emotion || '',
+          angle.goal || '',
+          typeof angle.value_score === 'number' ? angle.value_score : null,
+          diff,
+          dumpJson(normalizeTrackFit(base.track_fit)),
+          feas,
+          ev,
+          factRisk,
+          'candidate',
+          createdAt,
+          createdAt,
+        ).lastInsertRowid;
       }
+
+      // --- V1（strategy_json 装一批 angles）---
+      if (tableExists(LEGACY_STRAT_V1)) {
+        const v1Rows = db.prepare(`SELECT * FROM ${LEGACY_STRAT_V1} ORDER BY id`).all();
+        const oldAdopt = tableExists(LEGACY_ADOPT)
+          ? db.prepare(`SELECT * FROM ${LEGACY_ADOPT} ORDER BY id`).all() : [];
+        const n = db.transaction(() => {
+          let count = 0;
+          for (const r of v1Rows) {
+            const body = parseJson(r.strategy_json, {});
+            const angles = Array.isArray(body.angles) ? body.angles : [];
+            const base = {
+              mode: r.mode || body.mode || 'reference',
+              analysis_id: r.analysis_id, batch_id: `v1-${r.id}`, topic: r.topic || '',
+              profile_id: r.profile_id, track: r.track, persona: r.persona,
+              track_fit: body.track_fit, value: body.value,
+            };
+            const newIds = [];
+            angles.forEach((a, i) => { newIds[i] = explodeAngle(base, a, r.created_at); count++; });
+            // 采纳关系重映射：旧 angle_index → 新行 id
+            for (const ad of oldAdopt.filter(x => x.strategy_id === r.id)) {
+              const mapped = newIds[ad.angle_index];
+              if (!mapped) continue;
+              if (linkExists.get(mapped).c > 0) continue;
+              INS_LINK.run(mapped, ad.article_id ?? null, ad.adopted_at || r.created_at);
+              try { db.prepare(`UPDATE content_strategies SET status='adopted' WHERE id=?`).run(mapped); } catch {}
+            }
+          }
+          return count;
+        })();
+        db.exec(`DROP TABLE ${LEGACY_STRAT_V1}`);
+        console.log(`[db] 迁移：V1 批次表 → V2 单策略行，共 ${n} 条`);
+      }
+
+      // --- 更老的 content_angles（批次状态可能还是 running/failed）---
+      if (tableExists(LEGACY_ANGLES)) {
+        const oldRows = db.prepare(`SELECT * FROM ${LEGACY_ANGLES} ORDER BY id`).all();
+        const n = db.transaction(() => {
+          let count = 0;
+          for (const r of oldRows) {
+            if (r.status && r.status !== 'completed') continue;   // 生成中/失败的批次没有可用策略
+            const body = parseJson(r.angles_json, {});
+            const angles = Array.isArray(body.angles) ? body.angles : [];
+            const base = {
+              mode: 'reference', analysis_id: r.analysis_id, batch_id: `angles-${r.id}`,
+              topic: '', profile_id: r.profile_id, track: r.track, persona: '',
+              track_fit: body.track_fit, value: null, source_type: 'analysis',
+            };
+            const newIds = [];
+            angles.forEach((a, i) => { newIds[i] = explodeAngle(base, a, r.created_at); count++; });
+            const hadAdopt = (r.article_id != null) || ((r.adopted_index ?? -1) >= 0);
+            if (hadAdopt) {
+              const mapped = newIds[Math.max(0, r.adopted_index ?? 0)];
+              if (mapped && linkExists.get(mapped).c === 0) {
+                INS_LINK.run(mapped, r.article_id ?? null, r.adopted_at || r.created_at);
+                try { db.prepare(`UPDATE content_strategies SET status='adopted' WHERE id=?`).run(mapped); } catch {}
+              }
+            }
+          }
+          return count;
+        })();
+        db.exec(`DROP TABLE ${LEGACY_ANGLES}`);
+        console.log(`[db] 迁移：content_angles → content_strategies，共 ${n} 条策略`);
+      }
+
+      if (tableExists(LEGACY_ADOPT)) db.exec(`DROP TABLE ${LEGACY_ADOPT}`);
     }
   } catch (e) { console.warn('[db] migration skipped:', e.message); }
 

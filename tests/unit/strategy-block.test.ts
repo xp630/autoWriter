@@ -1,263 +1,270 @@
-// P0-2 策略进入写作：角度归一化（推荐指数/情绪/目标）+ strategyBlock 渲染
+// 内容策略系统 V2：字段归一化 + strategyBlock 渲染 + 配图策略提示
 import { describe, it, expect } from 'vitest';
-import { parseAngleResult, parseStrategyResult, normalizeAngle, buildStrategyBlock } from '../../electron/analysis.cjs';
+import {
+  parseStrategyResult, parseAngleResult, normalizeStrategy,
+  normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
+  buildStrategyBlock, buildImageStrategyHint,
+} from '../../electron/analysis.cjs';
 
-describe('normalizeAngle · 策略字段归一化', () => {
-  it('保留 value_score / emotion / goal', () => {
-    const a = normalizeAngle({
-      angle_type: '女性成长视角', title: 'T', core_point: 'P',
-      value_score: 8.5, emotion: '共鸣', goal: '涨粉',
+describe('normalizeDifferentiator · A 模式核心字段', () => {
+  it('结构化对象被保留，type 命中枚举', () => {
+    const d = normalizeDifferentiator({
+      type: 'new_audience', description: '用男性视角解释女性婚恋选择', instruction: '全文以男友视角展开',
     });
-    expect(a.value_score).toBe(8.5);
-    expect(a.emotion).toBe('共鸣');
-    expect(a.goal).toBe('涨粉');
+    expect(d).toEqual({ type: 'new_audience', description: '用男性视角解释女性婚恋选择', instruction: '全文以男友视角展开' });
   });
 
-  it('字符串分数可解析并保留一位小数', () => {
-    expect(normalizeAngle({ title: 'T', value_score: '7.28' }).value_score).toBe(7.3);
+  it('非法 type 被清空，但描述保住（不因为枚举写错就丢字段）', () => {
+    const d = normalizeDifferentiator({ type: '新视角', description: 'x' });
+    expect(d?.type).toBe('');
+    expect(d?.description).toBe('x');
   });
 
-  it('越界分数夹到 0-10', () => {
-    expect(normalizeAngle({ title: 'T', value_score: 42 }).value_score).toBe(10);
-    expect(normalizeAngle({ title: 'T', value_score: -3 }).value_score).toBe(0);
+  it('旧数据（纯字符串）自动包装成对象', () => {
+    expect(normalizeDifferentiator('给出可算的现金流账')).toEqual({
+      type: '', description: '给出可算的现金流账', instruction: '',
+    });
   });
 
-  it('非数字分数 → 字段缺席（不是 0，UI 才能隐藏）', () => {
-    const a = normalizeAngle({ title: 'T', value_score: '很高' });
-    expect('value_score' in a).toBe(false);
-  });
-
-  it('老数据（无新字段）不报错、字段缺席', () => {
-    const a = normalizeAngle({ angle_type: 'x', title: 'T', core_point: 'P' });
-    expect(a.emotion).toBeUndefined();
-    expect(a.goal).toBeUndefined();
-    expect('value_score' in a).toBe(false);
-  });
-
-  it('structure 去掉空白项，全空则字段缺席', () => {
-    expect(normalizeAngle({ title: 'T', structure: ['a', '', '  ', 'b'] }).structure).toEqual(['a', 'b']);
-    expect('structure' in normalizeAngle({ title: 'T', structure: ['', ' '] })).toBe(false);
-  });
-
-  it('emotion/goal 不强校枚举，原样保留（模型可能换说法）', () => {
-    const a = normalizeAngle({ title: 'T', emotion: '扎心', goal: '私域引流' });
-    expect(a.emotion).toBe('扎心');
-    expect(a.goal).toBe('私域引流');
+  it('空描述 / null / 空对象 → null', () => {
+    expect(normalizeDifferentiator(null)).toBeNull();
+    expect(normalizeDifferentiator({})).toBeNull();
+    expect(normalizeDifferentiator('   ')).toBeNull();
   });
 });
 
-describe('parseAngleResult · 归一化已接入', () => {
-  it('5 个角度的策略字段被规范化', () => {
-    const r = parseAngleResult({
-      angles: [
-        { angle_type: 'a', title: 't1', core_point: 'p1', value_score: '9.4', emotion: '反转', goal: '评论' },
-        { angle_type: 'b', title: 't2', core_point: 'p2', value_score: 6 },
-        { angle_type: 'c', title: 't3', core_point: 'p3' },
-        { angle_type: 'd', title: 't4', core_point: 'p4' },
-        { angle_type: 'e', title: 't5', core_point: 'p5' },
-      ],
-    });
+describe('normalizeTrackFit · 批次适配度', () => {
+  it('V2 形状 score/reason/adapt_direction', () => {
+    const t = normalizeTrackFit({ score: '3.2', reason: '偏财经', adapt_direction: '改成职场切口' });
+    expect(t).toEqual({ score: 3.2, reason: '偏财经', adapt_direction: '改成职场切口' });
+  });
+
+  it('兼容旧形状 matches/note → 折算成分数', () => {
+    expect(normalizeTrackFit({ matches: true, note: '很贴' })?.score).toBe(8);
+    expect(normalizeTrackFit({ matches: false, note: '不贴' })?.score).toBe(3);
+    expect(normalizeTrackFit({ matches: false, note: '不贴' })?.adapt_direction).toBe('不贴');
+  });
+
+  it('score 越界被夹到 0-10；非数字丢弃', () => {
+    expect(normalizeTrackFit({ score: 42 })?.score).toBe(10);
+    expect(normalizeTrackFit({ score: '很高' })?.score).toBeUndefined();
+  });
+
+  it('空对象/null → null', () => {
+    expect(normalizeTrackFit({})).toBeNull();
+    expect(normalizeTrackFit(null)).toBeNull();
+  });
+});
+
+describe('normalizeFeasibility · B 模式可写性', () => {
+  it('V2 形状 score/difficulty/reason', () => {
+    expect(normalizeFeasibility({ score: 7.5, difficulty: 'hard', reason: '缺一手案例' }))
+      .toEqual({ score: 7.5, difficulty: 'hard', reason: '缺一手案例' });
+  });
+
+  it('中文「易/中/难」映射到 easy/medium/hard', () => {
+    expect(normalizeFeasibility('难')?.difficulty).toBe('hard');
+    expect(normalizeFeasibility('易')?.difficulty).toBe('easy');
+  });
+
+  it('对象里 difficulty 用中文也映射', () => {
+    expect(normalizeFeasibility({ difficulty: '中' })?.difficulty).toBe('medium');
+  });
+
+  it('完全空的对象不算 feasibility', () => {
+    expect(normalizeFeasibility({})).toBeNull();
+    expect(normalizeFeasibility('')).toBeNull();
+  });
+});
+
+describe('normalizeStrategy · 一行 = 一个策略', () => {
+  it('B 模式默认 fact_risk=medium，素材缺口 ≥3 条时升为 high', () => {
+    const low = normalizeStrategy({ title: 't', core_point: 'p' }, 'topic');
+    expect(low.fact_risk).toBe('medium');
+    const high = normalizeStrategy({
+      title: 't', core_point: 'p',
+      evidence_needed: ['数据A', '案例B', '判决C'],
+    }, 'topic');
+    expect(high.fact_risk).toBe('high');
+  });
+
+  it('A 模式默认 fact_risk=low', () => {
+    expect(normalizeStrategy({ title: 't', core_point: 'p' }, 'reference').fact_risk).toBe('low');
+  });
+
+  it('模型显式给的 fact_risk 优先于默认值', () => {
+    expect(normalizeStrategy({ title: 't', fact_risk: 'HIGH' }, 'topic').fact_risk).toBe('high');
+  });
+
+  it('非数字 value_score 不落 0，而是缺席', () => {
+    expect('value_score' in normalizeStrategy({ title: 't', value_score: '很高' })).toBe(false);
+  });
+
+  it('structure 去空项，全空则字段缺席', () => {
+    expect(normalizeStrategy({ title: 't', structure: ['a', '', ' ', 'b'] }).structure).toEqual(['a', 'b']);
+    expect('structure' in normalizeStrategy({ title: 't', structure: ['', ' '] })).toBe(false);
+  });
+});
+
+describe('parseStrategyResult · 双模式返回平铺策略', () => {
+  const mk = (n: number) => Array.from({ length: n }, (_, i) => ({ angle_type: `a${i}`, title: `t${i}`, core_point: `p${i}` }));
+
+  it('A：返回 strategies（不再是 angles），并带批次 track_fit', () => {
+    const r = parseStrategyResult({ angles: mk(3), track_fit: { score: 8, reason: '贴' } }, 'reference');
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.angles[0].value_score).toBe(9.4);
-      expect(r.angles[0].emotion).toBe('反转');
-      expect(r.angles[1].value_score).toBe(6);
-      expect(r.angles[2].value_score).toBeUndefined();
+      expect(r.strategies).toHaveLength(3);
+      expect(r.angles).toBeUndefined();
+      expect(r.track_fit.score).toBe(8);
     }
+  });
+
+  it('B：track_fit 强制为 null，每条策略自带 feasibility/fact_risk', () => {
+    const r = parseStrategyResult({
+      angles: [
+        { title: 't1', core_point: 'p', feasibility: { score: 8, difficulty: 'easy', reason: '写得动' }, evidence_needed: ['要一个公开处罚文号', '要一组读者案例'] },
+        ...mk(2),
+      ],
+    }, 'topic');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.track_fit).toBeNull();
+      expect(r.strategies[0].feasibility.difficulty).toBe('easy');
+      expect(r.strategies[0].fact_risk).toBe('medium');
+    }
+  });
+
+  it('少于 3 条失败（两模式一致）', () => {
+    expect(parseStrategyResult({ angles: mk(2) }, 'reference').ok).toBe(false);
+    expect(parseStrategyResult({ angles: mk(2) }, 'topic').ok).toBe(false);
+  });
+
+  it('parseAngleResult 仍可用（旧调用兼容），返回同一形状', () => {
+    const r = parseAngleResult({ angles: mk(3), track_fit: { score: 5 } });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.strategies).toHaveLength(3);
   });
 });
 
-describe('buildStrategyBlock · 提示词渲染', () => {
-  const full = {
+describe('buildStrategyBlock · A 模式（抗同质化）', () => {
+  const a = {
+    mode: 'reference',
     angle_type: '女性 30+ 单身经济账视角',
-    title: '为什么越来越多女生宁愿单身，也不愿将就',
+    title: '为什么越来越多女生宁愿单身',
     core_point: '年轻人不是拒绝婚姻，而是不愿进入低质量关系',
     target_user: '25-35 岁一线城市职场女性',
-    structure: ['钩子：账单数字', '论点：三笔经济账', '案例：35 岁独居', '行动：先富自己'],
+    structure: ['钩子：一张账单', '论点：三笔经济账', '结论：不必'],
     emotion: '共鸣',
     goal: '涨粉',
+    differentiator: { type: 'new_audience', description: '用男性视角重新解释', instruction: '全文以丈夫视角展开' },
   };
 
-  it('六项齐全时全部渲染，并按序号输出结构', () => {
-    const b = buildStrategyBlock(full);
-    expect(b).toContain('本次创作策略');
-    expect(b).toContain('女性 30+ 单身经济账视角');
-    expect(b).toContain('文章立意');
-    expect(b).toContain('不愿进入低质量关系');
-    expect(b).toContain('目标读者');
-    expect(b).toContain('情绪策略');
-    expect(b).toContain('内容目标');
-    expect(b).toContain('1. 钩子：账单数字');
-    expect(b).toContain('4. 行动：先富自己');
-  });
-
-  it('情绪/目标命中枚举时附带写法约束', () => {
-    const b = buildStrategyBlock(full);
-    expect(b).toContain('你是不是也');      // 共鸣 → 场景指认
-    expect(b).toContain('关注动机');        // 涨粉 → 结尾关注动机
-  });
-
-  it('情绪/目标不在枚举时仍原样输出，不编造约束', () => {
-    const b = buildStrategyBlock({ title: 'T', emotion: '扎心', goal: '私域引流' });
-    expect(b).toContain('扎心');
-    expect(b).toContain('私域引流');
-    expect(b).not.toContain('你是不是也');
-  });
-
-  it('显式禁止沿用原文观点与结构（解决与原文重复）', () => {
-    expect(buildStrategyBlock(full)).toContain('不得沿用原文的观点、例子与结构');
-  });
-
-  it('缺 core_point 时降级措辞，不提「文章立意」', () => {
-    const b = buildStrategyBlock({ title: 'T', emotion: '治愈' });
-    expect(b).toContain('按上面指定的角度、情绪、目标重写');
-    expect(b).not.toContain('文章立意');
-  });
-
-  it('A 模式：differentiator 被当作正向指令输出（治同质化不能只靠负向禁止）', () => {
-    const b = buildStrategyBlock({
-      title: 'T',
-      differentiator: '原文止于同情个体选择，本稿给出单身十年现金流账',
-    });
+  it('差异锚点带 type 中文名 + instruction 一起下发', () => {
+    const b = buildStrategyBlock(a);
     expect(b).toContain('差异锚点');
-    expect(b).toContain('单身十年现金流账');
+    expect(b).toContain('新人群｜');          // type 翻成中文并用「｜」分隔
+    expect(b).toContain('用男性视角重新解释');
+    expect(b).toContain('全文以丈夫视角展开');
+  });
+
+  it('把差异写成硬指令，而不是一句"不得沿用"', () => {
+    const b = buildStrategyBlock(a);
+    expect(b).toContain('本文必须把这条差异真正写进内容里，而不是喊口号');
     expect(b).toContain('凡是与原文可能重合的表述、案例、结论，一律重写或删除');
   });
 
-  it('A 模式无 differentiator 时仍给“不得只改标题”底线要求', () => {
-    const b = buildStrategyBlock({ title: 'T' });
-    expect(b).toContain('不得只改标题与措辞');
+  it('缺 differentiator 时仍有底线要求', () => {
+    const { differentiator, ...rest } = a;
+    void differentiator;
+    expect(buildStrategyBlock(rest)).toContain('不得只改标题与措辞');
+  });
+
+  it('A 模式不出现 B 的事实约束块', () => {
+    expect(buildStrategyBlock(a)).not.toContain('事实约束');
   });
 });
 
-describe('buildStrategyBlock · B 命题策划模式', () => {
-  const bAngle = {
+describe('buildStrategyBlock · B 模式（抗幻觉）', () => {
+  const b = {
     mode: 'topic',
     angle_type: '个体账本视角',
     title: '不结婚的十年，我算了一笔账',
-    core_point: '年轻人不是拒绝婚姻，而是不愿进入低质量关系',
-    target_user: '25-35 岁一线城市职场女性',
-    structure: ['开头：一张账单', '归因：风险而非观念', '结尾：抛问题'],
-    feasibility: '中',
-    evidence_needed: ['待核实：目标城市十年居住成本区间', '一个可检索的行政处罚文号作同类参照'],
-    emotion: '共鸣',
+    core_point: '不愿进入低质量关系',
+    evidence_needed: ['待核实：十年居住成本区间', '一个可检索的处罚文号'],
+    fact_risk: 'high',
+    emotion: '反转',
     goal: '评论',
   };
 
-  it('标题行声明为命题策划、无参考素材', () => {
-    const b = buildStrategyBlock(bAngle);
-    expect(b).toContain('命题策划，无参考素材');
+  it('标题行标明命题策划、无参考素材', () => {
+    expect(buildStrategyBlock(b)).toContain('命题策划，无参考素材');
   });
 
-  it('输出硬事实约束（禁编造数字/日期/人名/案例/第一手经历）', () => {
-    const b = buildStrategyBlock(bAngle);
-    expect(b).toContain('事实约束');
-    expect(b).toContain('禁止编造具体数字、百分比、日期、研究结论、人名、机构名、书名、引语、他人经历');
-    expect(b).toContain('不得替用户编造第一手经历');
-    expect(b).toContain('待补充');
-    expect(b).toContain('普遍观察式表述');
+  it('事实约束里带上了 fact_risk 等级', () => {
+    const out = buildStrategyBlock(b);
+    expect(out).toContain('事实风险=high');
+    expect(out).toContain('禁止编造具体数字、百分比、日期、研究结论、人名、机构名、书名、引语、他人经历');
+    expect(out).toContain('部分用户');   // 允许的普遍观察措辞
+  });
+
+  it('high 风险追加更强的约束', () => {
+    expect(buildStrategyBlock(b)).toContain('本角度事实风险高');
+    expect(buildStrategyBlock({ ...b, fact_risk: 'low' })).not.toContain('本角度事实风险高');
   });
 
   it('列出 evidence_needed 待补清单', () => {
-    const b = buildStrategyBlock(bAngle);
-    expect(b).toContain('本角度需要用户补充的素材');
-    expect(b).toContain('1. 待核实：目标城市十年居住成本区间');
-    expect(b).toContain('2. 一个可检索的行政处罚文号作同类参照');
+    const out = buildStrategyBlock(b);
+    expect(out).toContain('1. 待核实：十年居住成本区间');
+    expect(out).toContain('2. 一个可检索的处罚文号');
   });
 
-  it('B 模式不提“不得沿用原文”（根本没有原文）', () => {
-    expect(buildStrategyBlock(bAngle)).not.toContain('不得沿用原文');
+  it('B 模式不提"不得沿用原文"（根本没有原文）', () => {
+    expect(buildStrategyBlock(b)).not.toContain('不得沿用原文');
   });
 
-  it('B 模式仍注入立意/结构/情绪/目标', () => {
-    const b = buildStrategyBlock(bAngle);
-    expect(b).toContain('不愿进入低质量关系');
-    expect(b).toContain('1. 开头：一张账单');
-    expect(b).toContain('情绪策略');
-    expect(b).toContain('内容目标');
-  });
-
-  it('evidence_needed 缺失时不编造占位标题', () => {
-    const b = buildStrategyBlock({ mode: 'topic', title: 'T' });
-    expect(b).not.toContain('需要用户补充的素材');
+  it('无参考素材时也不该出现 A 的差异硬指令', () => {
+    expect(buildStrategyBlock(b)).not.toContain('本文必须把这条差异真正写进内容里');
   });
 });
 
-describe('parseStrategyResult · 双模式', () => {
-  const mk = (n: number) => Array(n).fill(0).map((_, i) => ({
-    angle_type: `a${i}`, title: `t${i}`, core_point: `p${i}`,
-  }));
-
-  it('A 模式取 track_fit、忽略 value', () => {
-    const r = parseStrategyResult({ angles: mk(3), track_fit: { matches: true, note: 'x' }, value: { worth: true } }, 'reference');
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.mode).toBe('reference');
-      expect(r.track_fit?.matches).toBe(true);
-      expect(r.value).toBeNull();
-    }
-  });
-
-  it('B 模式取 value、track_fit 强制为 null', () => {
-    const r = parseStrategyResult({ angles: mk(3), track_fit: { matches: true }, value: { worth: false, score: '4.5', advice: '换口子' } }, 'topic');
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.mode).toBe('topic');
-      expect(r.track_fit).toBeNull();
-      expect(r.value?.worth).toBe(false);
-      expect(r.value?.score).toBe(4.5);
-      expect(r.value?.advice).toBe('换口子');
-    }
-  });
-
-  it('B 模式 angles 里的 feasibility / evidence_needed / differentiator 被保留', () => {
-    const r = parseStrategyResult({
-      angles: [
-        { angle_type: 'a', title: 't', core_point: 'p', feasibility: '难', differentiator: '新在结论', evidence_needed: ['要一个文号', ' ', '要一段公开数据'] },
-        ...mk(2),
-      ],
-      value: { worth: true },
-    }, 'topic');
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      const a = r.angles[0];
-      expect(a.feasibility).toBe('难');
-      expect(a.differentiator).toBe('新在结论');
-      expect(a.evidence_needed).toEqual(['要一个文号', '要一段公开数据']);  // 去空项
-    }
-  });
-
-  it('evidence_needed 不是数组时丢弃而不是抛错', () => {
-    const r = parseStrategyResult({
-      angles: [{ title: 't', evidence_needed: '很多' }, ...mk(2)],
-      value: {},
-    }, 'topic');
-    expect(r.ok).toBe(true);
-    if (r.ok) expect('evidence_needed' in r.angles[0]).toBe(false);
-  });
-
-  it('默认 mode 为 reference（向后兼容旧调用）', () => {
-    const r = parseAngleResult({ angles: mk(3), track_fit: { matches: false } });
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.mode).toBe('reference');
-  });
-
-  it('B 模式不足 3 个角度仍然失败', () => {
-    expect(parseStrategyResult({ angles: mk(2), value: { worth: true } }, 'topic').ok).toBe(false);
-  });
-});
-
-describe('buildStrategyBlock · 空值与最小输入', () => {
-  it('只有 title 也能出块（最小可用）', () => {
-    const b = buildStrategyBlock({ title: 'T' });
-    expect(b).toContain('标题方向');
-    expect(b).toContain('T');
-  });
-
-  it('空对象 / null / 无任何字段 → 空串（不污染提示词）', () => {
+describe('buildStrategyBlock · 空值防御', () => {
+  it('null / undefined / 空对象 / 只有元数据 → 空串（不污染提示词）', () => {
     expect(buildStrategyBlock(null)).toBe('');
     expect(buildStrategyBlock(undefined)).toBe('');
     expect(buildStrategyBlock({})).toBe('');
-    expect(buildStrategyBlock({ anglesId: 3, index: 1 })).toBe('');  // 只有元数据不算策略
+    expect(buildStrategyBlock({ strategyId: 3, adoptionId: 9, index: 1 })).toBe('');
+  });
+
+  it('只有 title 也能出最小可用块', () => {
+    const out = buildStrategyBlock({ title: 'T' });
+    expect(out).toContain('标题方向');
+    expect(out).toContain('T');
+  });
+});
+
+describe('buildImageStrategyHint · 策略驱动配图（§十一）', () => {
+  it('emotion 定画面气质', () => {
+    const h = buildImageStrategyHint({ emotion: '愤怒' });
+    expect(h).toContain('创作策略约束');
+    expect(h).toContain('情绪基调');
+    expect(h).toContain('高对比');
+  });
+
+  it('goal 定图像作用：收藏→信息图、涨粉→人物记忆点、评论→对立', () => {
+    expect(buildImageStrategyHint({ goal: '收藏' })).toContain('信息图');
+    expect(buildImageStrategyHint({ goal: '涨粉' })).toContain('记忆点');
+    expect(buildImageStrategyHint({ goal: '评论' })).toContain('站队');
+  });
+
+  it('两者都有时一起给', () => {
+    const h = buildImageStrategyHint({ emotion: '治愈', goal: '建立IP' });
+    expect(h).toContain('柔光');
+    expect(h).toContain('真实工作');
+  });
+
+  it('无策略 / 无 emotion 无 goal / 枚举外措辞 → 空串（不乱加约束）', () => {
+    expect(buildImageStrategyHint(null)).toBe('');
+    expect(buildImageStrategyHint({})).toBe('');
+    expect(buildImageStrategyHint({ emotion: '扎心', goal: '私域引流' })).toBe('');
   });
 });

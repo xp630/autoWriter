@@ -46,37 +46,40 @@ A 有原文证据可以迁移；**B 什么都没有**。所以 B 的价值不在
       "core_point": "<核心观点，一句话；必须是判断句，不依赖未证实数据>",
       "target_user": "<目标读者画像>",
       "structure": ["<开头钩子>", "<论点/展开>", "<展开>", "<结尾行动或留悬念>"],
-      "differentiator": "<这个角度相对同类题目的常见写法新在哪，一句话，禁止空话>",
-      "feasibility": "<易|中|难，在用户只有一般常识、无一手素材的前提下>",
+      "differentiator": {
+        "type": "<new_position|new_evidence|new_audience|new_scenario|new_conclusion|new_experience 中选一个>",
+        "description": "<相对同类题目的常见写法，本稿新在哪里>",
+        "instruction": "<给正文的硬指令>"
+      },
+      "feasibility": {
+        "score": <0-10 的一位小数，**这个题目在当前赛道值不值得写**>,
+        "difficulty": "<easy|medium|hard：用户只有一般常识、无一手素材时写得动的程度>",
+        "reason": "<把三件事合进一句：竞争情况（是否被写烂）+ 目标人群为何关心 + 结论建议>"
+      },
       "evidence_needed": ["<用户需要去拿的具体素材1>", "<具体素材2>", "<具体素材3>"],
+      "fact_risk": "<low|medium|high：这个角度有多容易让 AI 编造事实——要具体数字/案例/人名才能成立的至少 medium，非 high 不可>",
       "value_score": <0-10 的一位小数，综合"值得写 × 写得动"，其中「写得动」权重更高>,
       "emotion": "<共鸣|愤怒|焦虑|治愈|反转|鼓励 中选一个>",
       "goal": "<涨粉|评论|收藏|建立IP|商业转化 中选一个>",
-      "reason": "<推荐/不推荐理由，若 feasibility=难 必须说明难在哪>"
+      "reason": "<推荐/不推荐理由，若 difficulty=hard 必须说明难在哪>"
     }
-  ],
-  "value": {
-    "worth": <true|false，这个题目在当前赛道整体是否值得写>,
-    "score": <0-10 的一位小数，题目本身的价值分，与单个角度的 value_score 分开给>,
-    "competition": "<这个题目是否已经被写烂，判断依据是什么（用普遍观察表述，不许引用具体统计数字）>",
-    "audience_need": "<目标人群为什么会关心，具体到什么处境>",
-    "advice": "<一句话结论：建议写/不建议写/建议换个口子写，并给最推荐的角度序号>"
-  }
+  ]
 }
 ```
 
 ## 质量要求
 
 1. **5 个角度互斥**：从人群、立场、归因方式、结构形态、证据类型各取一，不能是同一观点的五种措辞。
-2. **`value` 块必须给**：B 模式的独特价值就在这里——回答"要不要写"。`worth=false` 是允许且有用的答案，但 `advice` 必须给出可行的换口子方案。
-3. **`value_score` 拉开差距**：最高与最低至少差 1.5，且必须反映 `feasibility`：一个很难写成的角度不该拿 9 分。
+2. **`feasibility.score` 就是"题目值不值得写"**：B 模式的独特价值就在这里。认为不值得写就给低分，并在 `reason` 里给出可行的换口子方案；`difficulty=hard` 且没素材能补时，score 不该超过 5。
+3. **`value_score` 拉开差距**：最高与最低至少差 1.5，且必须反映 `difficulty`：一个很难写成的角度不该拿 9 分。
 4. **`evidence_needed` 具体可执行**：例："2024 年某行业从业者的实际收入区间（可用招聘平台公开岗位薪资页代替）"、"一个可公开检索的判例/行政处罚文号"、"你自己从 A 到 B 的决策时间线"。
 5. **标题可以有钩子但不许靠编数据造钩子**：不用"92% 的人不知道…"这类需要来源支撑的句式。
-6. **emotion / goal 是策略选择**：同一批角度尽量错开。
-7. **严格 JSON**：引号、逗号、括号都不能错；不要 markdown 围栏；JSON 外不得有任何解释文字。
+6. **fact_risk 要诚实且逐角度给**：同一个题目下，"观点推演型"角度可能 low，"需要行业数据型"角度必须 high。系统会按这个值向正文下发强度不同的事实约束，标低了等于绕过安全栏。
+7. **emotion / goal 是策略选择**：同一批角度尽量错开。
+8. **严格 JSON**：引号、逗号、括号都不能错；不要 markdown 围栏；JSON 外不得有任何解释文字。
 
 ## 输出去向
 
-存入 `content_strategies.strategy_json`（结构：`{"mode":"topic","angles":[...],"track_fit":null,"value":{...}}`），`analysis_id` 为 NULL——**B 模式不产生也不依赖任何 content_analysis 记录**。
+存入 `content_strategies`（**V2：一行一个策略** —— 5 个角度 = 5 行共享一个 `batch_id`；`feasibility` / `evidence_needed` / `fact_risk` / `differentiator` 存入各自的 JSON 列），`analysis_id` 为 NULL——**B 模式不产生也不依赖任何 content_analysis 记录**。
 
-被采纳的角度会渲染成 `{{strategyBlock}}` 注入大纲与正文提示词；因为是 B 模式，主进程还会额外附加**事实约束块**（禁止把未证实内容写成事实）与 `evidence_needed` 待补清单。所以 **title / core_point / target_user / structure / differentiator / feasibility / evidence_needed / emotion / goal 必须自成一体、可直接执行**。
+被采纳的策略会渲染成 `{{strategyBlock}}` 注入大纲、正文、润色与配图；因为是 B 模式，主进程会额外附加**事实约束块**（按 `fact_risk` 分级加严）与 `evidence_needed` 待补清单。所以 **title / core_point / target_user / structure / differentiator / feasibility / evidence_needed / fact_risk / emotion / goal 必须自成一体、可直接执行**。

@@ -36,19 +36,23 @@ tags: [strategy, angle, track_fit, differentiator, reference]
       "core_point": "<核心观点，一句话，15-30 字>",
       "target_user": "<目标读者画像，如'25-35 岁一线城市职场女性'>",
       "structure": ["<结构步骤1: 钩子/观点/案例...>", "<步骤2>", "<步骤3>", "<步骤4: 升华/行动/留悬念>"],
-      "differentiator": "<与原文的差异锚点，一句话讲清本稿比原文多给什么：新立场/新证据/新人群/新结论/新结构，必填且不许写“换种说法”>",
+      "differentiator": {
+        "type": "<new_position|new_evidence|new_audience|new_scenario|new_conclusion|new_experience 中选一个>",
+        "description": "<本稿比原文具体多给什么，一句话，禁止'换个说法/更深入浅出'这种空话>",
+        "instruction": "<给正文的硬指令，如'全文必须围绕男性视角展开'>"
+      },
       "value_score": <0-10 的一位小数，这个角度在当前赛道的推荐指数>,
       "emotion": "<共鸣|愤怒|焦虑|治愈|反转|鼓励 中选一个，读完后用户应产生的主导情绪>",
       "goal": "<涨粉|评论|收藏|建立IP|商业转化 中选一个，这篇发出去要拿到的主要结果>",
+      "fact_risk": "<low|medium|high：这个角度有多容易让 AI 编造事实——全靠数据/案例/人名支撑的给 high>",
       "reason": "<推荐理由，为什么这个角度对当前赛道好/能借势>"
     },
     ... 共 5 个 angles ...
   ],
   "track_fit": {
-    "matches": <true|false, 当前赛道下这篇是否值得写>,
-    "article_track": "<文章自身的领域，如'情感随笔'/'社会观察'>",
-    "user_track": "<当前创作身份的赛道>",
-    "note": "<如果 matches=false，说明如何调整角度以贴合 user_track；如果 matches=true，一句话总结为什么这个切角对当前赛道是好选题>"
+    "score": <0-10 的一位小数，这篇素材在当前赛道下的适配度>,
+    "reason": "<为什么适合/不适合当前账号，一句话>",
+    "adapt_direction": "<若 score 低：具体怎么改角度才能拉回当前赛道；score 高则给空字串>"
   }
 }
 ```
@@ -61,14 +65,15 @@ tags: [strategy, angle, track_fit, differentiator, reference]
 4. **结构 3-5 步**：从开头钩子到结尾行动，每步一句话。
 5. **value_score 必须拉开差距**：5 个角度不许全给一样的分数。结合赛道匹配度、新颖度、可写性、竞争情况给分；最高分与最低分至少差 1.5。低于 6 分的要在 reason 里说清为什么仍列入。
 6. **emotion / goal 是策略选择，不是描述原文**：回答的是"这篇要让用户产生什么感觉"、"这篇要拿到什么结果"，而不是原文本身的情绪。同一批 5 个角度的 emotion 应尽量错开（它们本就是不同切角）。
-7. **differentiator 必须具体到可校验**：这是本模式最重要的一项，用来对抗同质化。禁止"换角度叙述 / 更深入浅出"这类空话；必须能回答"读者把原文和本稿都看完后，具体多带走了哪一句"。例："原文止于同情个体选择，本稿给出可算的单身十年现金流账，并把结论从'理解'推到'不必'"。
+7. **differentiator 必须结构化且具体到可校验**：这是本模式最重要的字段，用来对抗同质化。`type` 六选一不得缺失；`description` 必须能回答"读者把原文和本稿都看完后，具体多带走了哪一句"；`instruction` 要能直接当正文约束用。例：`{"type":"new_audience","description":"用男性视角重新解释女性的婚恋选择","instruction":"全文以'如果你是他的男友/丈夫'为叙述位置展开"}`。
 8. **track_fit 必须给**：
-   - matches=true → note 说清"为什么这个切角对你赛道好"
-   - matches=false → note 给出**拉回角度的具体建议**（"原素材是 X，但你是 Y 赛道，可改成 Z 角度"）
-9. **严格 JSON**：字符串引号/逗号/括号都不能错；不要 markdown 围栏；不要在 JSON 外加任何解释文字。
+   - score ≥ 7 → reason 说清"为什么这个切角对你赛道好"
+   - score ≤ 5 → adapt_direction 给出**拉回角度的具体建议**（"原素材是 X，但你是 Y 赛道，可改成 Z 角度"）
+9. **fact_risk 要诚实**：某个角度必须靠数据/案例/人名才能成立、而你又没有来源时给 high；系统会据此向正文下发更强的事实约束。
+10. **严格 JSON**：字符串引号/逗号/括号都不能错；不要 markdown 围栏；不要在 JSON 外加任何解释文字。
 
 ## 输出去向
 
-存入 `content_strategies.strategy_json`（结构：`{"mode":"reference","angles":[...],"track_fit":{...},"value":null}`），供 UI 展示与策略库沉淀；用户可「采用策略并开始创作」。
+存入 `content_strategies`（**V2：一行一个策略** —— 同一次生成的 5 个角度 = 5 行共享一个 `batch_id`；`differentiator` / `track_fit` 按上面结构存入 JSON 列），供 UI 展示与策略库沉淀；用户可「采用策略并开始创作」，也可之后从策略库里重复采纳给其他渠道的文章。
 
-被采纳的角度会被渲染成 `{{strategyBlock}}` 注入大纲与正文提示词，所以 **title / core_point / target_user / structure / differentiator / emotion / goal 七项必须自成一体、可直接执行**，不能依赖上下文省略。
+被采纳的策略会被渲染成 `{{strategyBlock}}` 注入大纲、正文、润色与配图提示词，所以 **title / core_point / target_user / structure / differentiator / emotion / goal 七项必须自成一体、可直接执行**，不能依赖上下文省略。
