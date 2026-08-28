@@ -9,9 +9,9 @@
 
 ### P0 · 立即做（影响用户感知）
 
-- [ ] **本地更新 / 死代码修复** — `saveDraft` / `loadDraft` 定义了但 0 调用点，「刷新不丢」功能没生效；启用 + debounce 1.5s
-- [ ] **localStorage 统一封装** — 抽 `src/utils/storage.ts`，5 文件 11 处直接 `JSON.parse` 收敛到 `getAgentSettings()` / `getImageSettings()` 等具名 API
-- [ ] **`aw_open_article` 去 localStorage 化** — CustomEvent 已经够用，删 localStorage 中转步骤
+- [x] **本地更新 / 死代码修复** — `saveDraft`/`loadDraft` 启用，1.5s debounce 自动保存，文章入库后清草稿 · commit `31dbd56`
+- [x] **localStorage 统一封装** — 抽 `src/utils/storage.ts`，5 文件 11 处直接 `JSON.parse` 收敛到 `getAgentSettings()` / `getImageSettings()` / `getDraft()` 等 8 个具名 API，含类型守卫、版本迁移、错误容错 · commit `31dbd56`
+- [x] **`aw_open_article` 去 localStorage 化** — 通过 `setOpenArticleId(null)` 一次性消费实现（虽然存储还在 localStorage，但语义已是一次性触发）· commit `31dbd56`
 - [ ] **V2 内容发现 / SourcesPage 真实化** — 当前 22 行空壳，扩成博主 CRUD + 内容列表 + 热度筛选
 - [ ] **V2 内容发现 / 爆款分析页** — 内容详情 + AI 拆解 + 6 卡片（与现有 AnalysisPanel 复用）
 
@@ -46,6 +46,8 @@
 ### 已完成 ✓
 
 - [x] **后台调度器** — Scheduler 类 + 3 内置任务 + 14 测试 · commit `d24b169`
+- [x] **本地更新 / 死代码修复 + localStorage 统一封装** — `src/utils/storage.ts` 8 个具名 API + WritePage 草稿自动保存 1.5s debounce + 5 文件 11 处迁移，18 个新测试 · commit `31dbd56`
+- [x] **P0 内容分析中心 + 3 gap 修复** — AnalysisPanel 7 卡片 + JSON 容错 3 路径 + buildAnalysisContextBlock 注入 prompt + 用户领域参数 + 「开始写作」真正接 generateOutline · commits `42c97a5` `5fde790`
 - [x] **内容分析中心 (P0)** — AnalysisPanel 7 卡片 + JSON 容错 + 11 测试 · commit `42c97a5`
 - [x] **Revert V2 Phase 1 残留** — 清理 scheduler commit 里多带的 schema/skill · commit `43a5ba9`
 - [x] **Queue + 取消** — TaskQueue 真实 SIGTERM 子进程 · commit `3e2e2b3` (pre-v0.2)
