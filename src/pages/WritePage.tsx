@@ -13,16 +13,10 @@ import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
 import type { ContentAnalysisResult } from '../types';
+import { getAgentSettings, getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
 // (FileEdit already imported for Card icon usage)
 
-/** 本地草稿（刷新不丢）*/
-const DRAFT_KEY = 'aw_draft';
-function saveDraft(d: any) {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, savedAt: Date.now() })); } catch {}
-}
-function loadDraft(): any | null {
-  try { const r = localStorage.getItem(DRAFT_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
-}
+
 import type { ChannelSkill, PersonaSkill, GenerateResult } from '../types';
 
 /** 智能分词：中文按 Intl.Segmenter + 标点拆分 */
@@ -54,11 +48,7 @@ interface Settings {
 const DEFAULT_SETTINGS: Settings = { cli: 'claude', model: '' };
 
 function loadSettings(): Settings {
-  try {
-    const raw = localStorage.getItem('aw_settings');
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-  } catch { return DEFAULT_SETTINGS; }
+  return getAgentSettings() as Settings;
 }
 
 export function WritePage() {
@@ -71,6 +61,38 @@ export function WritePage() {
   const [query, setQuery] = useState('');
   const [savedQuery, setSavedQuery] = useState('');  // 保存原始关键词，大纲编辑时清空 query 也能生成
   const [referenceUrl, setReferenceUrl] = useState('');
+  // 从 localStorage 恢复草稿（如果有）
+  useEffect(() => {
+    const draft = getDraft();
+    if (!draft) return;
+    setQuery(draft.query || '');
+    setReferenceUrl(draft.referenceUrl || '');
+    setReferenceText(draft.referenceText || '');
+    setOutline(draft.outline || '');
+    setOutlineDirty(!!draft.outlineDirty);
+    setChannel(draft.channel || 'wechat');
+    setPersona(draft.persona || '');
+    setStyle(draft.style || 'tech');
+    setLength(draft.length || 'medium');
+    setNeedImage(draft.needImage !== false);
+    setLogs((prev) => [...prev, {
+      type: 'info',
+      text: `📝 恢复了${draft.savedAt ? ' ' + new Date(draft.savedAt).toLocaleTimeString('zh-CN') : ''}保存的草稿`,
+      at: Date.now(),
+    }]);
+  }, []);
+
+  // 自动保存（debounced 1.5s）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const draft: DraftState = {
+        query, referenceUrl, referenceText, outline, outlineDirty,
+        channel, persona, style, length, needImage,
+      };
+      setDraft(draft);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, persona, style, length, needImage]);
 
   // P0 内容分析
   const [analysis, setAnalysis] = useState<ContentAnalysisResult | null>(null);
@@ -282,6 +304,7 @@ export function WritePage() {
       });
       currentTaskIdRef.current = r.taskId;
       setResult(r);
+      clearDraft();  // 入库后清草稿
       setLogs((prev) => [...prev, { type: 'info', text: `✅ 正文生成完成（${(r.elapsedMs / 1000).toFixed(1)}s · ${r.wordCount} 字）`, at: Date.now() }]);
     } catch (err: any) {
       const cancelled = err?.code === 'ABORTED' || /cancelled/i.test(err?.message || '');

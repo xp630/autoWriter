@@ -8,6 +8,7 @@ import Image from '@tiptap/extension-image';
 import TurndownService from 'turndown';
 import { marked } from 'marked';
 import { useEffect, useState, useMemo } from 'react';
+import { getImageSettings } from '../utils/storage';
 
 const td = new TurndownService({
   headingStyle: 'atx',          // # ## ###
@@ -102,7 +103,7 @@ export function RichEditor({ initialMarkdown, onChange }: Props) {
     // 读取当前生图设置
     let provider = '', model = '';
     try {
-      const s = JSON.parse(localStorage.getItem('aw_image_settings') || '{}');
+      const s = getImageSettings();
       provider = s.provider || '';
       model = s.model || '';
     } catch {}

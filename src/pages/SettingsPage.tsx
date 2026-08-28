@@ -5,6 +5,7 @@ import type { SchedulerSnapshot } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
+import { setAgentSettings, setImageSettings } from '../utils/storage';
 
 interface CliStatus {
   pi: boolean;
@@ -163,23 +164,18 @@ export function SettingsPage() {
 
   // 加载图片生图设置
   const loadImageSettings = () => {
-    try {
-      const raw = localStorage.getItem('aw_image_settings');
-      if (raw) {
-        const imgSettings = JSON.parse(raw);
-        setActiveProvider(imgSettings.provider || '');
-        setActiveModel(imgSettings.model || '');
-      }
-    } catch {}
+    const imgSettings = getImageSettings();
+    setActiveProvider(imgSettings.provider);
+    setActiveModel(imgSettings.model);
   };
 
   const saveImageSettings = () => {
-    const settings = {
+    const imgSettings = {
       provider: activeProvider,
       model: activeModel,
     };
-    localStorage.setItem('aw_image_settings', JSON.stringify(settings));
-    showToast(`✅ 已保存: ${settings.provider || '自动'} / ${settings.model || '默认'}`);
+    setImageSettings(imgSettings);
+    showToast(`✅ 已保存: ${imgSettings.provider || '自动'} / ${imgSettings.model || '默认'}`);
   };
 
   useEffect(() => { loadPrompts(); loadImageProviders(); loadImageSettings(); }, []);
@@ -201,10 +197,7 @@ export function SettingsPage() {
     window.electronAPI.detectAgents().then((s) =>
       setStatus({ pi: !!s.pi, claude: !!s.claude, opencode: !!s.opencode, codex: !!s.codex })
     );
-    try {
-      const raw = localStorage.getItem('aw_settings');
-      if (raw) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
-    } catch {}
+    setSettings(prev => ({ ...prev, ...getAgentSettings() }));
   }, []);
 
   const selectCli = (cli: AgentSettings['cli']) => {
@@ -218,7 +211,7 @@ export function SettingsPage() {
   };
 
   const save = () => {
-    localStorage.setItem('aw_settings', JSON.stringify(settings));
+    setAgentSettings(settings);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

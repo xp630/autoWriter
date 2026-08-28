@@ -38,6 +38,7 @@ const mdComponents: Components = {
   img: (props) => <DataImg src={String(props.src || '')} alt={String(props.alt || '')} />,
 };
 import { showToast } from '../toast';
+import { getAgentSettings, getImageSettings, getOpenArticleId, setOpenArticleId } from '../utils/storage';
 import { adaptForPlatform, PLATFORMS } from '../utils/platform';
 import type { Article } from '../types';
 
@@ -113,12 +114,11 @@ export function ArticlesPage() {
 
   // 图库引用跳转：若 App 设置了待打开文章 id，加载列表后自动打开
   useEffect(() => {
-    const pendingId = localStorage.getItem('aw_open_article');
+    const pendingId = getOpenArticleId();
     if (!pendingId) return;
-    localStorage.removeItem('aw_open_article');
-    const id = Number(pendingId);
-    if (id && window.electronAPI?.getArticle) {
-      window.electronAPI.getArticle(id).then((a) => {
+    setOpenArticleId(null);  // 一次性消费
+    if (window.electronAPI?.getArticle) {
+      window.electronAPI.getArticle(pendingId).then((a) => {
         if (a) openArticle(a);
       }).catch(() => {});
     }
@@ -203,7 +203,7 @@ export function ArticlesPage() {
     if (!polishInstruction.trim()) { showToast('请输入润色指令'); return; }
     setPolishing(true);
     try {
-      const settings = JSON.parse(localStorage.getItem('aw_settings') || '{}');
+      const settings = getAgentSettings();
       const r = await window.electronAPI.polishArticle({
         cli: settings.cli || 'claude',
         model: settings.model || undefined,
@@ -228,7 +228,7 @@ export function ArticlesPage() {
     // 读取生图设置
     let providerId = '', modelId = '';
     try {
-      const s = JSON.parse(localStorage.getItem('aw_image_settings') || '{}');
+      const s = getImageSettings();
       providerId = s.provider || '';
       modelId = s.model || '';
     } catch {}
@@ -309,7 +309,7 @@ export function ArticlesPage() {
     try {
       let providerId = '', modelId = '';
       try {
-        const s = JSON.parse(localStorage.getItem('aw_image_settings') || '{}');
+        const s = getImageSettings();
         providerId = s.provider || '';
         modelId = s.model || '';
       } catch {}
@@ -439,7 +439,7 @@ export function ArticlesPage() {
     try {
       let providerId = '', modelId = '';
       try {
-        const s = JSON.parse(localStorage.getItem('aw_image_settings') || '{}');
+        const s = getImageSettings();
         providerId = s.provider || '';
         modelId = s.model || '';
       } catch {}

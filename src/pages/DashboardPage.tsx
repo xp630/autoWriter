@@ -5,6 +5,7 @@
 // - 队列实时状态（嵌入 QueueBadge 数据）
 // - 快速操作
 import { useEffect, useState } from 'react';
+import { getAgentSettings } from '../utils/storage';
 import {
   ArrowRight,
   Bot,
@@ -80,13 +81,7 @@ export function DashboardPage({ onNavigate }: Props) {
           if (!cancelled) setImageCount(Array.isArray(imgs) ? imgs.length : 0);
         }
         // 设置（从 localStorage 读）
-        try {
-          const raw = localStorage.getItem('aw_settings');
-          if (raw && !cancelled) {
-            const parsed = JSON.parse(raw);
-            setSettings({ cli: parsed.cli || 'claude', model: parsed.model || '' });
-          }
-        } catch { /* ignore */ }
+        if (!cancelled) setSettings(getAgentSettings());
       } finally {
         if (!cancelled) setLoading(false);
       }

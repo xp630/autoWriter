@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
 import { showToast } from '../toast';
 import type { ImageRecord } from '../types';
+import { getImageSettings } from '../utils/storage';
 
 /** 下载单张图片 */
 async function downloadImage(img: ImageRecord) {
@@ -578,7 +579,7 @@ export function ImagesPage() {
     setGenerating(true);
     let providerId = '', modelId = '';
     try {
-      const imgSettings = localStorage.getItem('aw_image_settings');
+      const imgSettings = getImageSettings();
       if (imgSettings) {
         const s = JSON.parse(imgSettings);
         providerId = s.provider || '';
@@ -652,7 +653,7 @@ export function ImagesPage() {
   const [currentModel, setCurrentModel] = useState('');
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('aw_image_settings');
+      const raw = getImageSettings();
       if (raw) {
         const s = JSON.parse(raw);
         setCurrentProvider(s.provider || '');
