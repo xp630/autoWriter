@@ -885,23 +885,23 @@ export function WritePage() {
                 >
                   <button
                     onClick={() => handleExport('docx')}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 4, border: 'none', background: 'transparent', color: 'var(--ink-2)', fontWeight: 500, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
+                    className="menu-item"
                   >📄 Word</button>
                   <button
                     onClick={() => handleExport('pdf')}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 4, border: 'none', background: 'transparent', color: 'var(--ink-2)', fontWeight: 500, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
+                    className="menu-item"
                   >📑 PDF</button>
                   <button
                     onClick={() => handleExport('md')}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 4, border: 'none', background: 'transparent', color: 'var(--ink-2)', fontWeight: 500, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
+                    className="menu-item"
                   >📝 Markdown</button>
                   <button
                     onClick={() => handleExport('html')}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 4, border: 'none', background: 'transparent', color: 'var(--ink-2)', fontWeight: 500, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
+                    className="menu-item"
                   >🌐 HTML</button>
                   <button
                     onClick={() => handleExport('png')}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 4, border: 'none', background: 'transparent', color: 'var(--ink-2)', fontWeight: 500, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
+                    className="menu-item"
                   >🖼️ 图片</button>
                 </div>
               )}
