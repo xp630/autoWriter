@@ -8,6 +8,7 @@ import { Empty } from '../components/Empty';
 import { FileText } from 'lucide-react';
 import { RichEditor } from '../components/RichEditor';
 import { ImageLibraryGrid } from '../components/ImageLibraryGrid';
+import { ArticleViewer } from '../components/ArticleViewer';
 import { exportWord } from '../utils/export';
 
 /** 渲染图片：本地路径走 IPC 读 dataUrl，绕开 aw-img 协议中文问题 */
@@ -133,7 +134,7 @@ export function ArticlesPage() {
       if (window.electronAPI?.listArticleImages) {
         const imgs = await window.electronAPI.listArticleImages(a.id);
         const map: Record<string, string> = {};
-        for (const img of imgs) { map[img.placeholder_id] = img.file_path; }  // 用相对路径（assets/x.jpg），markdown 可正常解析
+        for (const img of imgs) { map[img.placeholder_id] = img.url || img.file_path; }  // 优先 aw-img://，交给 ImageSlot/SlotAwareImg 解析
         setArticleImages(map);
       }
     } catch (err: any) { console.warn('[openArticle] 拉图片失败:', err.message); }
@@ -650,9 +651,12 @@ export function ArticlesPage() {
                   onChange={(md) => setSelected({ ...selected, content: md })}
                 />
               ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml={false} components={mdComponents}>
-                  {renderedContent || '_（无内容）_'}
-                </ReactMarkdown>
+                <ArticleViewer
+                  content={selected.content || ''}
+                  articleId={selected.id}
+                  imagesMap={articleImages}
+                  onImageUpdated={(pid, url) => setArticleImages((prev) => ({ ...prev, [pid]: url }))}
+                />
               )}
             </div>
 
