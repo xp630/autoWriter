@@ -1,6 +1,6 @@
 // Analysis 解析器单元测试
 import { describe, it, expect } from 'vitest';
-import { parseAnalysisJson, buildAnalysisPrompt } from '../../electron/analysis.cjs';
+import { parseAnalysisJson, buildAnalysisPrompt, buildAnalysisContextBlock } from '../../electron/analysis.cjs';
 
 describe('parseAnalysisJson', () => {
   it('解析直接合法 JSON', () => {
@@ -116,5 +116,58 @@ describe('buildAnalysisPrompt', () => {
     expect(p).toContain('未指定');  // platform / author / source 都用 未指定
     expect(p).toContain('t');
     expect(p).toContain('c');
+  });
+});
+
+describe('buildAnalysisContextBlock', () => {
+  it('空对象返回空字符串', () => {
+    expect(buildAnalysisContextBlock(undefined)).toBe('');
+    expect(buildAnalysisContextBlock({})).toBe('');
+    expect(buildAnalysisContextBlock(null as any)).toBe('');
+  });
+
+  it('完整分析渲染包含 主题/观点/爆点/用户/结构', () => {
+    const block = buildAnalysisContextBlock({
+      topic: { main_topic: '婚姻', category: '情感', summary: '年轻人重新审视婚姻' },
+      core_points: ['不是不想结婚', '是结不起'],
+      viral: { emotion: '焦虑', conflict: '理想 vs 现实', reason: ['命中焦虑', '强共鸣'] },
+      audience: { target_user: '25-35 岁女性', pain_points: ['经济压力'] },
+      structures: ['开头钩子', '案例', '观点', '升华'],
+    });
+    expect(block).toContain('婚姻');
+    expect(block).toContain('情感');
+    expect(block).toContain('年轻人重新审视婚姻');
+    expect(block).toContain('不是不想结婚');
+    expect(block).toContain('是结不起');
+    expect(block).toContain('焦虑');
+    expect(block).toContain('理想 vs 现实');
+    expect(block).toContain('命中焦虑');
+    expect(block).toContain('25-35 岁女性');
+    expect(block).toContain('经济压力');
+    expect(block).toContain('开头钩子');
+  });
+
+  it('只有 topic 也工作', () => {
+    const block = buildAnalysisContextBlock({ topic: { main_topic: 'X' } });
+    expect(block).toContain('主题');
+    expect(block).toContain('X');
+  });
+
+  it('core_points 空数组不渲染', () => {
+    const block = buildAnalysisContextBlock({ core_points: [] });
+    expect(block).not.toContain('核心观点');
+  });
+
+  it('structures 用 structures 字段名（对齐 PRD §7.5）', () => {
+    const block = buildAnalysisContextBlock({ structures: ['step1'] });
+    expect(block).toContain('结构参考');
+    expect(block).toContain('step1');
+  });
+
+  it('reason 字段名（对齐 PRD §7.4，复数 reason）', () => {
+    const block = buildAnalysisContextBlock({ viral: { reason: ['a', 'b'] } });
+    expect(block).toContain('传播原因');
+    expect(block).toContain('a');
+    expect(block).toContain('b');
   });
 });

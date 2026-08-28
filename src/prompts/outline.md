@@ -7,6 +7,7 @@
 目标字数：{{lengthDesc}}
 {{personaHint}}{{channelHint}}
 {{referenceBlock}}
+{{analysisBlock}}
 {{inferHint}}
 
 # 大纲要求（三段论）

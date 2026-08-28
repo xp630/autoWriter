@@ -21,7 +21,7 @@ declare global {
       // 文章生成（全部走队列，taskId 可用于取消）
       generateOutline: (params: GenerateParams) => Promise<{ taskId: string; outline: string; elapsedMs: number }>;
       generateArticle: (params: GenerateArticleParams) => Promise<GenerateResult>;
-      polishArticle: (params: { cli: 'pi' | 'claude' | 'opencode' | 'codex'; model?: string; content: string; instruction: string; channel?: string; persona?: string }) => Promise<{ taskId: string; content: string; elapsedMs: number }>;
+      polishArticle: (params: { cli: 'pi' | 'claude' | 'opencode' | 'codex'; model?: string; content: string; instruction: string; channel?: string; persona?: string; analysis?: ContentAnalysisResult }) => Promise<{ taskId: string; content: string; elapsedMs: number }>;
       saveMarkdownFile: (params: { filename?: string; content: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>;
       updateArticle: (params: { id: number; content: string }) => Promise<{ ok: boolean; wordCount: number }>;
       saveImageFile: (params: { dataUrl: string; filename?: string }) => Promise<{ ok: boolean; url: string; path: string }>;
@@ -63,7 +63,7 @@ declare global {
       schedulerSetInterval: (ms: number) => Promise<{ ok: boolean; error?: string; snapshot?: SchedulerSnapshot }>;
 
       /** 内容分析 */
-      runAnalysis: (params: { title?: string; content: string; platform?: string; author?: string; source_url?: string }) => Promise<{
+      runAnalysis: (params: { title?: string; content: string; platform?: string; author?: string; source_url?: string; domain?: string }) => Promise<{
         ok: boolean;
         id?: number;
         taskId?: string | null;
@@ -105,6 +105,8 @@ export interface GenerateParams {
   persona?: string;
   reference_text?: string;
   reference_urls?: string[];
+  /** AI 对参考内容的分析结果（如有），会注入到 prompt 作为上下文 */
+  analysis?: ContentAnalysisResult;
 }
 
 export interface GenerateArticleParams extends GenerateParams {
@@ -158,9 +160,9 @@ export interface ContentAnalysisResult {
   viral?: {
     emotion?: string;
     conflict?: string;
-    reasons?: string[];
+    reason?: string[];
   };
-  structure?: string[];
+  structures?: string[];
   audience?: {
     target_user?: string;
     pain_points?: string[];

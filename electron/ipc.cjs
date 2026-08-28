@@ -201,12 +201,13 @@ function registerIpc() {
 
   // Step 1: 生成大纲
   ipcMain.handle('article:outline', async (_e, params) => {
-    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, reference_text } = params;
+    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, reference_text, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     // keywords 可为空：有参考文时由 AI 从参考文推断主题
     if ((!keywords || !keywords.length) && !reference_text) throw new Error('关键词或参考文至少要有一个');
 
     const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text });
+    const analysisBlock = buildAnalysisContextBlock(analysis);
 
     const prompt = renderPrompt('outline', {
       skillBlock: ctx.skillBlock,
@@ -217,6 +218,7 @@ function registerIpc() {
       personaHint: ctx.personaHint,
       channelHint: ctx.channelHint,
       referenceBlock: ctx.refBlock,
+      analysisBlock: analysisBlock || '',
       inferHint: (keywords && keywords.length) ? '' :
         `\n📌 用户没有输入主题关键词。请先通读参考文章，**提炼出它的核心主题**作为本次大纲的主题，再按参考文的写作框架（标题/开头/段落/结尾）生成大纲。\n`,
     });
@@ -232,12 +234,13 @@ function registerIpc() {
 
   // Step 2: 基于大纲生成正文
   ipcMain.handle('article:article', async (_e, params) => {
-    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, reference_text, outline, need_image } = params;
+    const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, reference_text, outline, need_image, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     if (!keywords || !keywords.length) throw new Error('关键词不能为空');
     if (!outline) throw new Error('缺少大纲，请先生成大纲');
 
     const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text });
+    const analysisBlock = buildAnalysisContextBlock(analysis);
 
     // 检测用户是否修改了大纲（加了 [已修订] 标记）
     const hasUserEdit = /\[已修订\]|\[修改\]/i.test(outline);
@@ -251,6 +254,7 @@ function registerIpc() {
       personaHint: ctx.personaHint,
       channelHint: ctx.channelHint,
       referenceBlock: ctx.refBlock,
+      analysisBlock: analysisBlock || '',
       editWarning: hasUserEdit
         ? '已确认，含 [已修订] 标记的章节是用户调整后的，必须严格遵循'
         : '已确认',
@@ -391,15 +395,17 @@ function registerIpc() {
 
   // 二次润色：拿现有正文 + 润色指令，再生成一次
   ipcMain.handle('article:polish', async (_e, params) => {
-    const { cli, model, content, instruction, channel, persona } = params;
+    const { cli, model, content, instruction, channel, persona, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
     if (!content) throw new Error('缺少原文');
     if (!instruction) throw new Error('缺少润色指令');
 
     const skillBlock = buildSkillInjection({ channel, persona });
+    const analysisBlock = buildAnalysisContextBlock(analysis);
 
     const prompt = renderPrompt('polish', {
       skillBlock: skillBlock ? skillBlock + '\n\n---\n\n' : '',
+      analysisBlock: analysisBlock || '',
       instruction,
       content,
     });
@@ -822,7 +828,7 @@ function registerIpc() {
 
   // ===== Content Analysis (P0) =====
   ipcMain.handle('analysis:run', async (_e, params) => {
-    const { title, content, platform, author, source_url } = params || {};
+    const { title, content, platform, author, source_url, domain } = params || {};
     if (!content || !String(content).trim()) {
       throw new Error('缺少分析内容');
     }
@@ -842,7 +848,7 @@ function registerIpc() {
 
     // 构造 prompt + 跑 skill
     const skillBody = loadAnalysisSkill();
-    const userPrompt = buildAnalysisPrompt({ title, content, platform, author, source: source_url });
+    const userPrompt = buildAnalysisPrompt({ title, content, platform, author, source: source_url, domain });
     const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
 
     const start = Date.now();

@@ -7,6 +7,7 @@
 目标字数：{{lengthDesc}}
 {{personaHint}}{{channelHint}}
 {{referenceBlock}}
+{{analysisBlock}}
 
 # 用户大纲（{{editWarning}}）
 {{outline}}

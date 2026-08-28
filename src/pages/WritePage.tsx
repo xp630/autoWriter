@@ -77,6 +77,7 @@ export function WritePage() {
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [analysisError, setAnalysisError] = useState<string>('');
+  const [analysisDomain, setAnalysisDomain] = useState<string>('');  // P0 §11 用户选择领域
   const [referenceText, setReferenceText] = useState('');
   const [fetching, setFetching] = useState(false);
 
@@ -225,6 +226,7 @@ export function WritePage() {
         persona,
         reference_text: referenceText,
         reference_urls: referenceUrl ? [referenceUrl] : [],
+        analysis: analysis || undefined,
       });
       currentTaskIdRef.current = r.taskId;
       setOutline(r.outline);
@@ -276,6 +278,7 @@ export function WritePage() {
         reference_urls: referenceUrl ? [referenceUrl] : [],
         outline: outlineDirty ? outline : outline,
         need_image: needImage,
+        analysis: analysis || undefined,
       });
       currentTaskIdRef.current = r.taskId;
       setResult(r);
@@ -331,6 +334,7 @@ export function WritePage() {
         instruction,
         channel,
         persona,
+        analysis: analysis || undefined,
       });
       currentTaskIdRef.current = r.taskId;
       setResult({ ...result, content: r.content });
@@ -402,6 +406,7 @@ export function WritePage() {
         reference_urls: referenceUrl ? [referenceUrl] : [],
         outline: outlineDirty ? outline : outline,
         need_image: needImage,
+        analysis: analysis || undefined,
       });
       currentTaskIdRef.current = r.taskId;
       setResult(r);
@@ -468,6 +473,7 @@ export function WritePage() {
         platform: '公众号 / 用户输入',
         author: '',
         source_url: referenceUrl || '',
+        domain: analysisDomain || '',
       });
       if (!r.ok) {
         setAnalysisStatus('failed');
@@ -559,6 +565,25 @@ export function WritePage() {
             <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
               {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
             </button>
+            <select
+              className="input"
+              value={analysisDomain}
+              onChange={(e) => setAnalysisDomain(e.target.value)}
+              title="PRD §11：用户专注领域，帮助 AI 判断分析偏好"
+              style={{ minWidth: 110 }}
+            >
+              <option value="">领域(默认)</option>
+              <option value="情感">情感</option>
+              <option value="职场">职场</option>
+              <option value="育儿">育儿</option>
+              <option value="生活方式">生活方式</option>
+              <option value="财经">财经</option>
+              <option value="科技">科技</option>
+              <option value="美食">美食</option>
+              <option value="旅游">旅游</option>
+              <option value="美妆">美妆</option>
+              <option value="其他">其他</option>
+            </select>
             <button
               className="write-analysis-trigger"
               disabled={!referenceText || analysisStatus === 'running'}
@@ -611,8 +636,14 @@ export function WritePage() {
                 status={analysisStatus === 'failed' ? 'failed' : 'completed'}
                 error={analysisError}
                 onStartWriting={() => {
-                  showToast('请使用「生成大纲」按钮，结果会作为参考');
-                }}
+                  // P0 §9.3：点击「开始写作」直接触发大纲生成（会自动带上分析上下文）
+                  if (!query.trim()) {
+                    showToast('❌ 请先填写主题（Step 1 顶部输入框）');
+                    return;
+                  }
+                  setStep(1);
+                    void generateOutline();
+                  }}
               />
             )
           )}

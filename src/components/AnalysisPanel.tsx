@@ -122,7 +122,7 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                     )}
                     <div className="viral-reasons">
                       <span className="viral-label">传播原因</span>
-                      <ol className="analysis-list compact">{kvList(data.reasons)}</ol>
+                      <ol className="analysis-list compact">{kvList(data.reason)}</ol>
                     </div>
                   </div>
                 )}
