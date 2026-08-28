@@ -3,7 +3,7 @@ import {
   FileText, Globe, Hash, Lightbulb, MessageSquare,
   Sparkles, Target, Users, Wand2, XCircle, CheckCircle2, AlertTriangle, Loader2, BookmarkPlus, Star,
 } from 'lucide-react';
-import type { ContentAnalysisResult, Angle } from '../types';
+import type { ContentAnalysisResult, Angle, StrategyMode, StrategyValue } from '../types';
 
 interface Props {
   analysis: ContentAnalysisResult;
@@ -19,6 +19,10 @@ interface Props {
   onStartWithAngle?: (angle: Angle) => void;
   /** 已采纳的角度下标（-1 = 未采纳），用于卡片上的“已采纳”标记 */
   adoptedIndex?: number;
+  /** 策略模式：reference 展示分析结果 + track_fit；topic 只展示 value + 角度卡 */
+  mode?: StrategyMode;
+  /** B 命题策划的题面价值评估 */
+  value?: StrategyValue | null;
 }
 
 const SECTIONS = [
@@ -40,7 +44,8 @@ function kvList(arr?: string[]) {
   );
 }
 
-export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedIndex = -1 }: Props) {
+export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedIndex = -1, mode = 'reference', value }: Props) {
+  const isTopic = mode === 'topic';
   if (status === 'failed') {
     return (
       <div className="analysis-panel analysis-failed">
@@ -58,17 +63,17 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
       <div className="analysis-header">
         <div className="analysis-header-left">
           <Sparkles size={18} className="analysis-header-icon" />
-          <span className="analysis-header-title">内容分析结果</span>
+          <span className="analysis-header-title">{isTopic ? '创作策略 · 命题策划' : '内容分析结果'}</span>
         </div>
         <div className="analysis-actions">
           {onGenerateAngles && (
-            <button type="button" className="btn btn-outline btn-sm" disabled={anglesStatus === 'running'} onClick={onGenerateAngles} title="基于分析结果，从当前创作身份赛道生成 5 个互斥角度">
+            <button type="button" className="btn btn-outline btn-sm" disabled={anglesStatus === 'running'} onClick={onGenerateAngles} title={isTopic ? '只有一个题目：推演它值不值得写 + 5 个互斥角度 + 你需要补什么素材' : '基于分析结果，从当前创作身份赛道生成 5 个互斥角度'}>
               {anglesStatus === 'running'
                 ? <><Loader2 size={12} className="spin" /> 生成中…</>
-                : <><Wand2 size={12} /> 生成创作方向</>}
+                : <><Wand2 size={12} /> {isTopic ? '生成创作策略' : '生成创作方向'}</>}
             </button>
           )}
-          {onStartWriting && (
+          {onStartWriting && !isTopic && (
             <button type="button" className="btn btn-primary btn-sm" onClick={onStartWriting}>
               开始写作 <Wand2 size={12} />
             </button>
@@ -76,6 +81,7 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
         </div>
       </div>
 
+      {!isTopic && (
       <div className="analysis-grid">
         {SECTIONS.map(({ key, label, icon: Icon, accent }) => {
           const data = (analysis as any)[key];
@@ -170,6 +176,7 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
           );
         })}
       </div>
+      )}
 
       {/* ===== 创作方向（P0-1b）===== */}
       {(anglesStatus === 'running') && (
@@ -184,6 +191,21 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
           {trackFit.matches
             ? <><CheckCircle2 size={16} /> 本文与「{trackFit.user_track || '当前'}」赛道匹配：{trackFit.note}</>
             : <><AlertTriangle size={16} /> 本文偏「{trackFit.article_track || '?'}」，与你的「{trackFit.user_track || '当前'}」赛道不匹配：{trackFit.note}</>}
+        </div>
+      )}
+
+      {value && (
+        <div className={`value-banner ${value.worth === false ? 'mismatch' : 'fit'}`}>
+          <div className="value-banner-head">
+            <Target size={14} />
+            <span>题目价值{typeof value.score === 'number' ? ` ${value.score.toFixed(1)}/10` : ''}</span>
+            {typeof value.worth === 'boolean' && (
+              <span className="value-verdict">{value.worth ? '建议写' : '不建议写'}</span>
+            )}
+          </div>
+          {value.audience_need && <div className="value-line"><b>人群为何关心</b>{value.audience_need}</div>}
+          {value.competition && <div className="value-line"><b>竞争情况</b>{value.competition}</div>}
+          {value.advice && <div className="value-line"><b>结论</b>{value.advice}</div>}
         </div>
       )}
 

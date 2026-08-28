@@ -184,6 +184,35 @@ test('「Step 2 按钮」被禁用时（无 query）显示正确状态', async (
   expect(isDisabled).toBe(true);
 });
 
+test('策略入口可发现：默认就有模式切换，切到命题策划后不再要求参考文', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+
+  // 1) 两个模式必须一眼看到（此前完全没有入口，用户只会看到“生成大纲”）
+  const pills = ctx.window.locator('.mode-pill');
+  expect(await pills.count()).toBe(2);
+  await expect(pills.nth(0)).toContainText('借势拆解');
+  await expect(pills.nth(1)).toContainText('命题策划');
+
+  // 2) 主按钮默认就是“生成创作策略”，而不是“生成大纲”
+  await expect(ctx.window.locator('button:has-text("生成创作策略")').first()).toBeVisible();
+  await expect(ctx.window.locator('button:has-text("跳过策略")').first()).toBeVisible();
+
+  // 3) 切到命题策划：参考文相关的控件必须消失（否则用户仍以为要先分析）
+  await pills.nth(1).click();
+  await expect(pills.nth(1)).toHaveClass(/active/);
+  await expect(ctx.window.locator('.url-input')).toHaveCount(0);
+  await expect(ctx.window.locator('.write-analysis-trigger')).toHaveCount(0);
+
+  // 4) B 模式只需题目：填主题后策略面板应可用
+  await ctx.window.locator('textarea').first().fill('为什么年轻人越来越不想结婚');
+  await expect(ctx.window.locator('button:has-text("生成创作策略")').first()).toBeEnabled();
+
+  // 切回 A，避免影响后面的用例
+  await pills.nth(0).click();
+  await expect(ctx.window.locator('.write-analysis-trigger')).toBeVisible();
+});
+
 test('OnAgentChunk 事件订阅能收到推送', async () => {
   // 直接测试 IPC 层：通过 onAgentChunk 订阅 + 模拟 chunk 事件
   const received = await ctx.window.evaluate(async () => {

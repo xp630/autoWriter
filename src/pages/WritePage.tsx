@@ -10,10 +10,10 @@ import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
 import { showToast } from '../toast';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
-import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
+import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3, Layers, Compass } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
 import { ArticleViewer } from '../components/ArticleViewer';
-import type { ContentAnalysisResult, Angle, StrategySelection, StrategyMode } from '../types';
+import type { ContentAnalysisResult, Angle, StrategySelection, StrategyMode, StrategyValue } from '../types';
 import { getAgentSettings } from '../utils/storage';
 import { getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
 import { useActiveProfile } from '../hooks/useActiveProfile';
@@ -75,6 +75,8 @@ export function WritePage() {
   // 已采纳的创作策略：strategyId = content_strategies 行 id，strategy = 采纳的那个角度
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [strategyMode, setStrategyMode] = useState<StrategyMode>('reference');
+  const isTopic = strategyMode === 'topic';
+  const [strategyValue, setStrategyValue] = useState<StrategyValue | null>(null);
   const [strategy, setStrategy] = useState<StrategySelection | null>(null);
   // 发给主进程的策略负载：拍平角度字段 + 模式 + 来源定位
   // （主进程据此渲染 strategyBlock，并在正文入库后回填那条 adoption 的 article_id）
@@ -551,20 +553,34 @@ export function WritePage() {
 
   // ===== P0-1b：生成创作方向（走队列，复用 parseAnalysisJson）=====
   const handleGenerateAngles = async () => {
-    if (!analysisId) { showToast('❌ 请先点「分析内容」生成分析结果'); return; }
+    if (!query.trim()) { showToast('❌ 请先填写主题'); return; }
+    if (!isTopic) {
+      // A 借势拆解：没分析就生成不了方向。不隐逆自动跑分析，因为那会多花一次 AI 调用，让用户知道。A
+      if (!analysisId) {
+        showToast(referenceText
+          ? '❌ 借势拆解需先点「分析内容」拆完原文，再生成策略'
+          : '❌ 借势拆解需要参考文（抓取或粘贴正文）；只有一个题目请切到「命题策划」');
+        return;
+      }
+    }
     setAnglesStatus('running');
     setAnglesError('');
     setTrackFit(null);
+    setStrategyValue(null);
     try {
       const cfg = getAgentSettings();
       const r = await window.electronAPI.generateStrategy({
-        mode: strategyMode, analysisId, track: analysisDomain || '',
+        mode: strategyMode,
+        topic: isTopic ? query : undefined,
+        analysisId: isTopic ? undefined : (analysisId || undefined),
+        track: analysisDomain || '',
         persona,
         profileId: profile.id,
         cli: cfg.cli, model: cfg.model || undefined,
       });
       if (!r.ok) { setAnglesStatus('failed'); setAnglesError(r.error || '生成失败'); showToast('❌ ' + (r.error || '生成失败')); return; }
       setAngles(r.angles || []);
+      setStrategyValue(r.value || null);
       setStrategyId(typeof r.id === 'number' ? r.id : null);
       setStrategy(null);   // 新一次生成→清除上次采纳，避免用旧角度
       setTrackFit(r.track_fit || null);
@@ -675,30 +691,63 @@ export function WritePage() {
             </div>
           )}
 
-          <div className="row" style={{ marginTop: 12 }}>
-            <input
-              className="input url-input"
-              type="url"
-              placeholder="📎 参考文章 URL（后续接 MCP 自动抓）"
-              value={referenceUrl}
-              onChange={(e) => setReferenceUrl(e.target.value)}
-            />
-            <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
-              {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
+          {/* 创作模式：策略是大纲的前置闸门，不是侧边可选功能 */}
+          <div className="mode-switch" role="tablist" aria-label="创作策略模式">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={strategyMode === 'reference'}
+              className={`mode-pill ${strategyMode === 'reference' ? 'active' : ''}`}
+              onClick={() => setStrategyMode('reference')}
+              title="已有一篇被验证过的内容：拆它的爆点，迁移成你的角度"
+            >
+              <Layers size={13} /> 借势拆解
+              <span className="mode-pill-hint">有参考文</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={strategyMode === 'topic'}
+              className={`mode-pill ${strategyMode === 'topic' ? 'active' : ''}`}
+              onClick={() => setStrategyMode('topic')}
+              title="只有一个题目：推演它值不值得写、从哪个角度写、你需要补什么料"
+            >
+              <Compass size={13} /> 命题策划
+              <span className="mode-pill-hint">只有题目</span>
             </button>
           </div>
 
-          <div className="analysis-row">
-                        <button
-              className="write-analysis-trigger"
-              disabled={!referenceText || analysisStatus === 'running'}
-              onClick={runAnalysis}
-              title="用 AI 拆解参考内容（主题/观点/爆点/结构/用户画像/可借鉴）"
-            >
-              {analysisStatus === 'running' ? <Loader2 size={12} className="spin" /> : <BarChart3 size={12} />}
-              {analysisStatus === 'running' ? '分析中…' : '分析内容'}
-            </button>
-          </div>
+          {!isTopic && (
+            <>
+              <div className="row" style={{ marginTop: 12 }}>
+                <input
+                  className="input url-input"
+                  type="url"
+                  placeholder="📎 参考文章 URL（后续接 MCP 自动抓）"
+                  value={referenceUrl}
+                  onChange={(e) => setReferenceUrl(e.target.value)}
+                />
+                <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
+                  {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
+                </button>
+              </div>
+
+              <div className="analysis-row">
+                <button
+                  className="write-analysis-trigger"
+                  disabled={!referenceText || analysisStatus === 'running'}
+                  onClick={runAnalysis}
+                  title="用 AI 拆解参考内容（主题/观点/爆点/结构/用户画像/可借鉴）"
+                >
+                  {analysisStatus === 'running' ? <Loader2 size={12} className="spin" /> : <BarChart3 size={12} />}
+                  {analysisStatus === 'running' ? '分析中…' : '分析内容'}
+                </button>
+                {analysisStatus === 'idle' && !referenceText && (
+                  <span className="analysis-hint">借势拆解需先抓取或粘贴参考文；只有一个题目请切到「命题策划」</span>
+                )}
+              </div>
+            </>
+          )}
 
           {referenceText && (
             <div className="card" style={{ marginTop: 12, padding: 12, background: 'var(--bg-soft)', fontSize: 12 }}>
@@ -729,16 +778,18 @@ export function WritePage() {
           )}
 
           {/* P0：内容分析结果 */}
-          {(analysisStatus === 'running' || analysisStatus === 'completed' || analysisStatus === 'failed') && (
-            analysisStatus === 'running' ? (
+          {(isTopic || analysisStatus !== 'idle') && (
+            analysisStatus === 'running' && !isTopic ? (
               <div className="analysis-loading">
                 <Loader2 size={20} className="spin" />
                 <span>正在拆解这篇内容的主题、观点、爆点、结构、用户画像…</span>
               </div>
             ) : (
               <AnalysisPanel
+                mode={strategyMode}
+                value={strategyValue}
                 analysis={analysis || {}}
-                status={analysisStatus === 'failed' ? 'failed' : 'completed'}
+                status={isTopic || analysisStatus !== 'failed' ? 'completed' : 'failed'}
                 error={analysisError}
                 angles={angles}
                 anglesStatus={anglesStatus}
@@ -804,10 +855,36 @@ export function WritePage() {
             )}
           </div>
 
-          <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" disabled={!query.trim() || generating} onClick={generateOutline}>
-              {generating && stage === 'outline' ? <><Loader2 size={14} className="spin" /> 生成大纲中…</> : <>生成大纲 <ArrowRight size={14} /></>}
-            </button>
+          {/* 主按钮：未采纳策略时，“生成创作策略”才是主路径；已采纳后才轮到大纲 */}
+          <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end', gap: 8 }}>
+            {!strategy && (
+              <button
+                className="btn btn-primary"
+                disabled={generating || anglesStatus === 'running' || !query.trim()}
+                onClick={handleGenerateAngles}
+                title="先定策略（写什么角度、给谁看、拿什么结果），再生成大纲"
+              >
+                {anglesStatus === 'running'
+                  ? <><Loader2 size={14} className="spin" /> 生成策略中…</>
+                  : <><Sparkles size={14} /> 生成创作策略 <ArrowRight size={14} /></>}
+              </button>
+            )}
+            {strategy ? (
+              <button className="btn btn-primary" disabled={!query.trim() || generating} onClick={generateOutline}>
+                {generating && stage === 'outline'
+                  ? <><Loader2 size={14} className="spin" /> 生成大纲中…</>
+                  : <>按此策略生成大纲 <ArrowRight size={14} /></>}
+              </button>
+            ) : (
+              <button
+                className="btn btn-ghost btn-sm"
+                disabled={!query.trim() || generating}
+                onClick={generateOutline}
+                title="不推荐：跳过策略会让 AI 自己猜角度，等于回到旧流程"
+              >
+                跳过策略，直接生成大纲
+              </button>
+            )}
           </div>
         </Card>
       )}
