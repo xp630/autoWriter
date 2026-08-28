@@ -592,6 +592,16 @@ select:focus-visible {
 .img-slot-gen-head { display: flex; align-items: center; gap: 8px; color: var(--line-2); font-weight: 600; font-size: 13px; }
 .img-slot-gen-desc { font-size: 13px; color: var(--ink); }
 .img-slot-gen-sub { font-size: 11px; color: var(--muted); }
+
+.img-slot-filled { position: relative; }
+.img-slot-busy {
+  position: absolute; inset: 0; z-index: 5; border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(14, 20, 19, .62); color: #fff; -webkit-user-select: none; user-select: none;
+  font-size: 13px; font-weight: 600;
+}
+.img-slot-busy em { font-style: normal; font-size: 11px; font-weight: 400; opacity: .85; }
+.img-slot-busy .spin { color: #7ee0bd; }
 .img-slot-loading { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 32px; color: var(--muted); background: var(--bg-soft); border-radius: 12px; font-size: 12px; }
 
 .img-slot { margin: 16px auto; max-width: 560px; position: relative; }

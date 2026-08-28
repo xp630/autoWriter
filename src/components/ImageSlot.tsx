@@ -87,6 +87,14 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
           {resolved
             ? <img src={resolved} alt={desc} className="img-slot-img" />
             : <div className="img-slot-loading"><Loader2 size={18} className="spin" /> 加载图片…</div>}
+          {/* 已有图又点「更换→AI生成/上传」时，在当前图上盖一层加载遮罩 */}
+          {busy && (
+            <div className="img-slot-busy">
+              <Loader2 size={22} className="spin" />
+              <span>{busy === 'upload' ? '正在上传…' : 'AI 重新生成中…'}</span>
+              {busy === 'generate' && <em>提示词扩写 + 出图，通常 10–30 秒</em>}
+            </div>
+          )}
           <div className="img-slot-caption">
             <span className="img-slot-desc">{desc}</span>
             <button type="button" className="img-slot-repick" onClick={() => setMenuOpen((v) => !v)} title="更换配图">
