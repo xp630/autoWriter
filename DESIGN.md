@@ -53,7 +53,7 @@
 | `--ink` | `#111827` | rgb(17, 24, 39) | 主文字 |
 | `--ink-2` | `#374151` | rgb(55, 65, 81) | 次要文字 |
 | `--ink-3` | `#6b7280` | rgb(107, 114, 128) | 三级文字 |
-| `--muted` | `#9ca3af` | rgb(156, 163, 175) | 占位符、禁用 |
+| `--muted` | `#64748b` | rgb(100, 116, 139) | 占位符、禁用、次要文字 |
 
 ### Code Block
 | Token | Hex | RGB | Usage |
@@ -334,7 +334,7 @@ Active Indicator:
 ```
 Font Size: 10px
 Font Weight: 600
-Color: #9ca3af
+Color: #64748b
 Text Transform: uppercase
 Letter Spacing: 0.1em
 ```
@@ -465,7 +465,7 @@ Text: #ef4444
     "text": {
       "primary": { "value": "#111827", "type": "color" },
       "secondary": { "value": "#374151", "type": "color" },
-      "muted": { "value": "#9ca3af", "type": "color" }
+      "muted": { "value": "#64748b", "type": "color" }
     },
     "border": {
       "default": { "value": "#e2ebe7", "type": "color" },

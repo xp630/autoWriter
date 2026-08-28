@@ -38,7 +38,7 @@ function kvList(arr?: string[]) {
   );
 }
 
-export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles }: Props) {
+export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle }: Props) {
   if (status === 'failed') {
     return (
       <div className="analysis-panel analysis-failed">

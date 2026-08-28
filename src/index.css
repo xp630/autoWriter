@@ -32,7 +32,7 @@
   --ink: #111827;
   --ink-2: #374151;
   --ink-3: #6b7280;
-  --muted: #9ca3af;
+  --muted: #64748b;  /* slate-500 · AA on white (was #9ca3af) */
   
   /* 圆角 */
   --r-xs: 4px;
@@ -130,7 +130,7 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
 
 .brand-text em {
   font-style: normal;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   font-weight: 400;
   margin-left: 4px;
@@ -189,7 +189,7 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   padding: 0 4px;
 }
@@ -221,7 +221,7 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
 }
 
 .side-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
@@ -373,7 +373,7 @@ select:focus-visible {
 }
 .qbp-expander:hover { background: var(--bg-soft); color: var(--ink); }
 .qbp-logcount {
-  font-size: 10px; color: var(--muted); background: var(--bg-soft);
+  font-size: 11px; color: var(--muted); background: var(--bg-soft);
   padding: 0 6px; border-radius: 999px; font-variant-numeric: tabular-nums;
 }
 .qbp-log {
@@ -388,7 +388,7 @@ select:focus-visible {
 .qbp-log-sys pre {
   margin: 6px 0 0; padding: 8px; max-height: 220px; overflow: auto;
   background: #0a0f0e; border-radius: 6px; color: #8a9a94;
-  font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
 }
 /* ===== Queue Badge (顶栏悬浮) ===== */
 .queue-badge-wrap {
@@ -505,7 +505,7 @@ select:focus-visible {
 }
 .qbp-meta { display: inline-flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .qbp-cli {
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 6px;
   background: var(--bg);
   border-radius: 4px;
@@ -1041,7 +1041,7 @@ select:focus-visible {
 .ps-avatar.sm { width: 22px; height: 22px; font-size: 12px; }
 .ps-meta { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
 .ps-name { font-size: 12px; font-weight: 600; color: var(--ink); }
-.ps-track { font-size: 10px; color: var(--muted); }
+.ps-track { font-size: 11px; color: var(--muted); }
 .ps-caret { color: var(--muted); transition: transform var(--t-fast) var(--ease); }
 .ps-caret.up { transform: rotate(180deg); }
 .ps-menu {
@@ -1050,7 +1050,7 @@ select:focus-visible {
   border-radius: var(--r); box-shadow: var(--shadow-lg);
   padding: 6px; z-index: 60;
 }
-.ps-menu-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px; }
+.ps-menu-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px; }
 .ps-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border-radius: var(--r-sm); cursor: pointer; text-align: left; }
 .ps-item:hover { background: var(--bg-soft); }
 .ps-item.active { background: var(--line-light); }
@@ -1507,7 +1507,7 @@ select:focus-visible {
 }
 
 .scheduler-stat-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1618,7 +1618,7 @@ select:focus-visible {
 .scheduler-history-row.err { color: var(--danger); }
 
 .scheduler-history-time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -1629,7 +1629,7 @@ select:focus-visible {
 .scheduler-history-dur {
   font-family: var(--font-mono);
   text-align: right;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -1834,7 +1834,7 @@ select:focus-visible {
 }
 
 .viral-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
