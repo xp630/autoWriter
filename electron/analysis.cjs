@@ -47,7 +47,9 @@ function loadAnalysisSkill() {
   if (!fs.existsSync(skillPath)) {
     throw new Error(`Analysis skill not found: ${skillPath}`);
   }
-  return fs.readFileSync(skillPath, 'utf-8');
+  const raw = fs.readFileSync(skillPath, 'utf-8');
+  // 剥掉 YAML frontmatter（---\n...\n---）：它不是给模型的指令，且以 --- 开头会干扰部分 CLI
+  return raw.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
 }
 
 /**

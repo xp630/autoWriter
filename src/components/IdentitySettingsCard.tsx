@@ -88,11 +88,11 @@ export function IdentitySettingsCard() {
             <div className="row" style={{ gap: 8 }}>
               <input
                 className="input"
-                style={{ flex: 1 }}
+                style={{ flex: '1 1 auto', minWidth: 0, width: 'auto' }}
                 defaultValue={active.name}
                 onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== active.name) { updateActiveProfile({ name: v }); } }}
               />
-              <select className="input emoji-picker" value={active.emoji} onChange={(e) => updateActiveProfile({ emoji: e.target.value })}>
+              <select className="input emoji-picker" style={{ flex: '0 0 auto', width: 64 }} value={active.emoji} onChange={(e) => updateActiveProfile({ emoji: e.target.value })}>
                 {EMOJIS.map((em) => <option key={em} value={em}>{em}</option>)}
               </select>
             </div>

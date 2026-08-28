@@ -37,6 +37,7 @@ function runAgent(cfg, prompt, onChunk, opts) {
     }
 
     let cmd, args;
+    let promptViaStdin = false;
     switch (cfg.cli) {
       case 'pi':
         cmd = 'pi';
@@ -45,10 +46,12 @@ function runAgent(cfg, prompt, onChunk, opts) {
         onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（带 --output 文件）...` });
         break;
       case 'claude':
+        // claude -p 从 stdin 读 prompt：避免以 '-' 开头的 prompt 被当成选项，也避免超长 argv 撞 ARG_MAX
         cmd = 'claude';
-        args = ['-p', prompt, '--output-format', 'text'];
+        args = ['-p', '--output-format', 'text'];
         if (cfg.model) args.push('--model', cfg.model);
-        onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（输出到 stdout）...` });
+        promptViaStdin = true;
+        onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（prompt 走 stdin）...` });
         break;
       case 'opencode':
         cmd = 'opencode';
@@ -89,7 +92,16 @@ function runAgent(cfg, prompt, onChunk, opts) {
       else signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    onChunk?.({ type: 'info', text: `📍 命令: ${cmd} ${args[0]} <prompt> ${args.length > 2 ? args.slice(2).join(' ') : ''}` });
+    onChunk?.({ type: 'info', text: `📍 命令: ${cmd} ${args.join(' ')}` });
+
+    // prompt 走 stdin（claude）：写入后关闭；EPIPE/写错不致命（子进程自己会报错退出）
+    if (promptViaStdin) {
+      child.stdin.on('error', () => { /* 忽略 EPIPE，close 事件会带退出码 */ });
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch { /* ignore */ }
+    }
 
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();

@@ -947,7 +947,8 @@ select:focus-visible {
 .profile-add { align-self: flex-start; margin-top: 4px; }
 .identity-field { display: flex; flex-direction: column; gap: 5px; }
 .identity-field > label { font-size: 12px; color: var(--ink-3); font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
-.emoji-picker { width: 64px; flex-shrink: 0; text-align: center; font-size: 18px; padding: 6px; }
+/* 双类名提升优先级，压过基础 .input{width:100%} */
+.input.emoji-picker, .emoji-picker { width: 64px; flex: 0 0 auto; flex-shrink: 0; text-align: center; font-size: 18px; padding: 6px; }
 .identity-hint { font-size: 11px; color: var(--muted); line-height: 1.6; margin-top: 4px; padding: 8px 10px; background: var(--bg-soft); border-radius: var(--r-sm); }
 
 /* ===== Onboarding (first-run banner) ===== */

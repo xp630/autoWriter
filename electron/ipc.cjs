@@ -10,6 +10,7 @@ const {
   parseAnalysisJson,
   loadAnalysisSkill,
   buildAnalysisPrompt,
+  buildAnalysisContextBlock,
   saveAnalysis,
 } = require('./analysis.cjs');
 
