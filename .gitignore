@@ -1,0 +1,64 @@
+# ===== Node / build artifacts =====
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+*.tsbuildinfo
+
+# ===== Test artifacts =====
+test-results/
+test-images-tensor/
+playwright-report/
+playwright/.cache/
+
+# ===== Runtime data (Electron userData) =====
+# Better-sqlite3 数据库、uploads 图片目录等都在 Electron 的 userData 下，
+# 默认在 macOS 是 ~/Library/Application Support/autoWriter-desktop/
+# 但开发模式下也可能在仓库 electron/ 下生成：
+electron/*.db
+electron/*.db-journal
+electron/*.db-wal
+electron/*.db-shm
+electron/uploads/
+
+# ===== OS junk =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Editor / IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Env / secrets =====
+.env
+.env.local
+.env.*.local
+
+# ===== Local test scripts (not part of CI) =====
+# 仓库根的 test-*.cjs 是开发期手动调试脚本，不进版本控制
+test-craft.cjs
+test-download.cjs
+test-hq.cjs
+test-image-prompt.js
+test-query.cjs
+test-settings.cjs
+test-tensor.cjs
+test-tensor-key.cjs
+test-tensor-token.cjs
+update-token.cjs
+
+# ===== Misc =====
+.cache/
+.tmp/
+tmp/
