@@ -2353,3 +2353,27 @@ select:focus-visible {
   font-size: 11px; color: var(--ink-2); background: var(--bg-soft);
   border: 1px solid var(--border); border-radius: var(--r-sm); padding: 2px 8px;
 }
+
+/* A 借势拆解：差异锚点（对抗同质化的正向抓手，所以给足视觉权重） */
+.angle-diff {
+  display: block; font-size: 13px; color: var(--ink); line-height: 1.6;
+  padding: 6px 10px; border-left: 2px solid var(--accent); background: var(--accent-soft);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+/* B 命题策划：可写性 + 缺料清单 */
+.angle-evidence { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.angle-feas {
+  align-self: flex-start; font-size: 11px; font-weight: 700;
+  border-radius: 999px; padding: 2px 8px; border: 1px solid transparent;
+}
+.angle-feas.feas-easy { color: #047857; background: var(--line-soft); border-color: #a7f3d0; }
+.angle-feas.feas-mid  { color: #92400e; background: var(--accent-soft); border-color: #fde68a; }
+.angle-feas.feas-hard { color: #b91c1c; background: var(--danger-soft); border-color: #fecaca; }
+.angle-evidence-label {
+  font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
+}
+.angle-evidence-list {
+  margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px;
+}
+.angle-evidence-list li { font-size: 12px; color: var(--ink-2); line-height: 1.6; }

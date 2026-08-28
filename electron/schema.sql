@@ -146,26 +146,42 @@ CREATE INDEX IF NOT EXISTS idx_content_analysis_created ON content_analysis(crea
 -- 注：idx_content_analysis_profile 必须在 db.cjs 迁移之后建（旧库可能还没 profile_id 列）
 
 -- ============================================================================
--- P0 内容决策系统
+-- 内容策略层（独立创作决策层）
 -- ============================================================================
 
--- 创作方向：基于一次内容分析生成的 N 个写作角度
-CREATE TABLE IF NOT EXISTS content_angles (
+-- 策略记录。注意它不隶属分析也不隶属文章：
+--   mode='reference' → A 借势拆解，挂在一条 content_analysis 上（analysis_id 有值）
+--   mode='topic'     → B 命题策划，无参考文（analysis_id 为 NULL），只凭主题推演
+-- strategy_json 里是 N 个候选角度 + 模式专属决策块（track_fit / value）
+CREATE TABLE IF NOT EXISTS content_strategies (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  analysis_id     INTEGER NOT NULL,
+  mode            TEXT NOT NULL DEFAULT 'reference',  -- reference | topic
+  analysis_id     INTEGER,                             -- A 模式挂靠；B 模式 NULL
+  topic           TEXT DEFAULT '',                     -- B 模式的输入主题；A 模式冷存原文标题
   profile_id      TEXT DEFAULT '',
   track           TEXT DEFAULT '',
-  angles_json     TEXT NOT NULL DEFAULT '{"angles":[],"track_fit":null}',
-  status          TEXT DEFAULT 'running',   -- running|completed|failed
+  persona         TEXT DEFAULT '',
+  strategy_json   TEXT NOT NULL DEFAULT '{"mode":"reference","angles":[],"track_fit":null,"value":null}',
+  status          TEXT DEFAULT 'running',              -- running | completed | failed
   error           TEXT DEFAULT '',
   duration_ms     INTEGER DEFAULT 0,
-  adopted_index   INTEGER DEFAULT -1,       -- 用户采纳的角度下标；-1 = 未采纳
-  adopted_at      DATETIME,                 -- 采纳时间
-  article_id      INTEGER,                  -- 采纳后生成的文章（content_angles → article_drafts 闭环）
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (analysis_id) REFERENCES content_analysis(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_content_angles_analysis ON content_angles(analysis_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_content_angles_profile ON content_angles(profile_id, created_at DESC);
--- 注：adopted / article_id 两个索引引用迁移新增的列，必须在 db.cjs 的 ALTER 之后建，
---     否则旧库启动时 schema 会在列还不存在时建索引 → no such column → app 起不来。
+CREATE INDEX IF NOT EXISTS idx_content_strategies_mode ON content_strategies(mode, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_content_strategies_profile ON content_strategies(profile_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_content_strategies_analysis ON content_strategies(analysis_id, created_at DESC);
+
+-- 采纳记录：策略 : 文章 = 1:N
+-- 一条策略可以躺在策略库里反复采纳给多篇文章；一条 adoption = 一次采纳。
+-- article_id 可空：用户可能“先采纳、还没生成文章”（采纳时还未入库）。
+CREATE TABLE IF NOT EXISTS strategy_adoptions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy_id   INTEGER NOT NULL,
+  article_id    INTEGER,
+  angle_index   INTEGER NOT NULL,
+  adopted_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (strategy_id) REFERENCES content_strategies(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_adoptions_strategy ON strategy_adoptions(strategy_id, adopted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_adoptions_article ON strategy_adoptions(article_id);

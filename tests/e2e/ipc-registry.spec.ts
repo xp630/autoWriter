@@ -121,8 +121,13 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['analysis:get', '取单条分析'],
   ['analysis:list', '列出分析'],
   ['analysis:delete', '删除分析'],
-  ['analysis:angles', '生成创作方向'],
-  ['angles:adopt', '采纳某个创作方向（P0-2 策略进入写作）'],
+  ['analysis:angles', '生成创作方向（旧名，已内联到 strategy:generate）'],
+  ['angles:adopt', '采纳某个创作方向（旧名，已内联到 strategy:adopt）'],
+  ['strategy:generate', '生成内容策略（双模式：reference / topic）'],
+  ['strategy:adopt', '采纳一个角度（1:N，写 strategy_adoptions）'],
+  ['strategy:list', '策略列表（可按 mode/profile 筛）'],
+  ['strategy:get', '取单条策略（含解析后 body 与采纳记录）'],
+  ['strategy:delete', '删除策略'],
   // 测试钩子（自身）
   ['test:list-channels', '测试用：列 channels'],
   ['test:invoke', '测试用：调 handler'],
@@ -158,6 +163,13 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   ['scheduler:snapshot', [], true],  // 启动后才存在
   ['scheduler:enable', [], true],
   ['analysis:list', [{}]],
+  ['strategy:list', [{}]],
+  // strategy:get 缺记录返回 null（better-sqlite3 行为）
+  ['strategy:get', [999999], true],
+  ['strategy:delete', [999999]],
+  // 以下两个空入参应走守卫分支，快速返回结构化错误（不触达 LLM）
+  ['strategy:generate', [{}]],
+  ['strategy:adopt', [{}]],
   // angles:adopt 入参不合法时应返回结构化错误（不碰 AI），用于验证守卫分支
   ['angles:adopt', [{}]],
   ['angles:adopt', [{ id: 999999, index: 0 }]],

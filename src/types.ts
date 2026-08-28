@@ -90,6 +90,32 @@ declare global {
         angle?: Angle;
         error?: string;
       }>;
+      // ===== 内容策略层（独立决策层，双模式）=====
+      generateStrategy: (params: {
+        mode: StrategyMode; topic?: string; analysisId?: number;
+        track?: string; persona?: string; profileId?: string; cli?: string; model?: string;
+      }) => Promise<{
+        ok: boolean;
+        id?: number;
+        taskId?: string | null;
+        mode?: StrategyMode;
+        angles?: Angle[];
+        track_fit?: TrackFit | null;
+        value?: StrategyValue | null;
+        error?: string;
+      }>;
+      adoptStrategy: (params: { strategyId: number; angleIndex: number; articleId?: number }) => Promise<{
+        ok: boolean;
+        adoptionId?: number;
+        strategyId?: number;
+        mode?: StrategyMode;
+        index?: number;
+        angle?: Angle;
+        error?: string;
+      }>;
+      listStrategies: (params?: { profileId?: string; mode?: StrategyMode; limit?: number }) => Promise<StrategyRecord[]>;
+      getStrategy: (id: number) => Promise<StrategyFullRecord | null>;
+      deleteStrategy: (id: number) => Promise<{ ok: boolean; changes: number }>;
     };
   }
 }
@@ -126,11 +152,18 @@ export interface GenerateParams {
   /** AI 对参考内容的分析结果（如有），会注入到 prompt 作为上下文 */
   analysis?: ContentAnalysisResult;
   /**
-   * 用户采纳的创作策略（P0-2）：拍平的角度字段 + 来源定位。
+   * 用户采纳的创作策略（P0-2）：拍平的角度字段 + mode + 来源定位。
    * 主进程用 buildStrategyBlock 渲染成 {{strategyBlock}} 注入大纲/正文，
-   * 正文入库后据 anglesId/index 回写 content_angles.article_id。
+   * 正文入库后回填 strategy_adoptions.article_id（策略:文章 = 1:N）。
    */
-  strategy?: Angle & { anglesId?: number; index?: number };
+  strategy?: Angle & {
+    mode?: StrategyMode;
+    strategyId?: number;
+    adoptionId?: number;
+    index?: number;
+    /** 旧字段名（P0-2 初期叫 anglesId），保留兼容 */
+    anglesId?: number;
+  };
 }
 
 export interface GenerateArticleParams extends GenerateParams {
@@ -181,13 +214,71 @@ export interface Angle {
   emotion?: string;
   /** 内容目标：这篇要拿到的结果（涨粉/评论/收藏/建立IP/商业转化） */
   goal?: string;
+  /** A 借势拆解专属：与原文的差异锚点（治同质化） */
+  differentiator?: string;
+  /** B 命题策划专属：用户无一手素材前提下的可写性（易|中|难） */
+  feasibility?: string;
+  /** B 命题策划专属：用户需要去补充的具体素材清单（治幻觉） */
+  evidence_needed?: string[];
 }
 
-/** 用户采纳的创作策略：角度 + 它的来源记录定位，用于回写关联与提示词注入 */
+/** 策略模式：A 借势拆解 / B 命题策划 */
+export type StrategyMode = 'reference' | 'topic';
+
+export interface TrackFit {
+  matches?: boolean;
+  article_track?: string;
+  user_track?: string;
+  note?: string;
+}
+
+/** B 命题策划的题面价值评估（回答“这个题目值不值得写”） */
+export interface StrategyValue {
+  worth?: boolean;
+  score?: number;
+  competition?: string;
+  audience_need?: string;
+  advice?: string;
+}
+
+/** 策略列表行 */
+export interface StrategyRecord {
+  id: number;
+  mode: StrategyMode;
+  analysis_id: number | null;
+  topic: string;
+  profile_id: string;
+  track: string;
+  persona: string;
+  status: 'running' | 'completed' | 'failed';
+  error: string;
+  duration_ms: number;
+  created_at: string;
+  angle_count: number | null;
+}
+
+/** 策略详情（含解析后的 body 与全部采纳记录） */
+export interface StrategyFullRecord extends Omit<StrategyRecord, 'angle_count'> {
+  strategy_json: string;
+  strategy: {
+    mode?: StrategyMode;
+    angles?: Angle[];
+    track_fit?: TrackFit | null;
+    value?: StrategyValue | null;
+  };
+  adoptions: Array<{ id: number; article_id: number | null; angle_index: number; adopted_at: string }>;
+}
+
+/**
+ * 用户采纳的创作策略。adoptStrategy 返回 adoptionId 后应带上，
+ * 正文入库时回填到那条具体采纳记录（策略:文章 = 1:N）。
+ */
 export interface StrategySelection {
-  anglesId: number;
+  strategyId: number;
+  mode: StrategyMode;
   index: number;
   angle: Angle;
+  adoptionId?: number;
 }
 
 export interface ContentAnalysisResult {

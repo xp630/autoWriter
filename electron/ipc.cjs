@@ -7,7 +7,8 @@ const { loadAllSkills, buildSkillInjection } = require('./skills.cjs');
 const { renderPrompt } = require('./prompts.cjs');
 const { TaskQueue } = require('./queue.cjs');
 const {
-  parseAnalysisJson, parseAngleResult, loadAnalysisSkill, loadAngleSkill,
+  parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
+  loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, saveAnalysis,
 } = require('./analysis.cjs');
 
@@ -313,15 +314,19 @@ function registerIpc() {
       channel || 'wechat',
     );
 
-    // 策略→文章闭环：若本次正文是基于用户采纳的创作策略生成的，回写关联
-    // （content_analysis → content_angles → article_drafts）
-    if (strategy && strategy.anglesId && Number.isInteger(strategy.index)) {
+    // 策略→文章闭环（1:N）：正文入库后回填本次采纳记录的文章 id。
+    // renderer 采纳时已拿到 adoptionId；没有则新建一条 adoption。
+    const stg = strategy && typeof strategy === 'object' ? strategy : null;
+    const stgId = stg ? Number(stg.adoptionId ? stg.strategyId : (stg.strategyId || stg.anglesId)) : 0;
+    if (stg && (stg.adoptionId || (stgId && Number.isInteger(stg.index)))) {
       try {
-        db.prepare(`
-          UPDATE content_angles
-          SET article_id = ?, adopted_index = ?, adopted_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(result.lastInsertRowid, strategy.index, Number(strategy.anglesId));
+        if (stg.adoptionId) {
+          db.prepare(`UPDATE strategy_adoptions SET article_id = ? WHERE id = ?`)
+            .run(result.lastInsertRowid, Number(stg.adoptionId));
+        } else {
+          db.prepare(`INSERT INTO strategy_adoptions (strategy_id, article_id, angle_index) VALUES (?, ?, ?)`)
+            .run(stgId, result.lastInsertRowid, stg.index);
+        }
       } catch (linkErr) {
         console.warn('[article:article] 策略关联写入失败:', linkErr.message);
       }
@@ -959,79 +964,150 @@ function registerIpc() {
     return { ...row, analysis: parsed };
   });
 
-  // ===== 创作方向生成（P0-1）=====
-  ipcMain.handle('analysis:angles', async (_e, params) => {
-    const analysisId = Number(params && params.analysisId);
-    if (!analysisId) return { ok: false, error: '缺少 analysisId' };
-    const row = db.prepare('SELECT id, title, content, analysis_json, status FROM content_analysis WHERE id = ?').get(analysisId);
-    if (!row) return { ok: false, error: '分析记录不存在' };
-    if (row.status !== 'completed') return { ok: false, error: '分析未完成，无法生成方向' };
-
-    const track = String((params && params.track) || '');
-    const cli   = String((params && params.cli)   || 'claude');
-    const model = String((params && params.model) || '');
+  // ===== 内容策略层（独立创作决策层，双模式）=====
+  // mode='reference' A 借势拆解：挂在一条 content_analysis 上，核心能力是「迁移」，核心风险是「同质化」
+  // mode='topic'     B 命题策划：只有一个题目，不产生也不依赖分析记录；核心能力是「规划」，核心风险是「幻觉」
+  async function runStrategyGenerate(params) {
+    const mode = (params && params.mode === 'topic') ? 'topic' : 'reference';
+    const track     = String((params && params.track)     || '');
+    const persona   = String((params && params.persona)   || '');
+    const cli       = String((params && params.cli)       || 'claude');
+    const model     = String((params && params.model)     || '');
     const profileId = String((params && params.profileId) || '');
+    let topic = String((params && params.topic) || '');
 
-    let analysisObj = {};
-    try { analysisObj = JSON.parse(row.analysis_json || '{}'); } catch {}
-    const ctx = {
-      topic: analysisObj.topic,
-      basic_info: analysisObj.basic_info,
-      core_points: Array.isArray(analysisObj.core_points) ? analysisObj.core_points.slice(0, 3) : undefined,
-      viral: analysisObj.viral,
-      audience: analysisObj.audience,
-    };
-    const skillBody = loadAngleSkill();
-    const userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n${profileId ? 'profileId: ' + profileId : ''}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作方向。\n对每个方向：给一个锐度标题、一句话核心观点、目标用户、3-5 步推荐结构、推荐理由。\n最后给 track_fit 块：本文与当前赛道是否值得写 + 一句话说明（如果不匹配，给拉回角度建议）。\n\n输出严格合法 JSON（不要 markdown 代码块包裹，字符串引号/逗号/括号都不能错）。`;
+    let analysisId = null;
+    let skillBody;
+    let userPrompt;
+
+    if (mode === 'reference') {
+      analysisId = Number(params && params.analysisId);
+      if (!analysisId) return { ok: false, error: '缺少 analysisId' };
+      const row = db.prepare('SELECT id, title, content, analysis_json, status FROM content_analysis WHERE id = ?').get(analysisId);
+      if (!row) return { ok: false, error: '分析记录不存在' };
+      if (row.status !== 'completed') return { ok: false, error: '分析未完成，无法生成方向' };
+
+      let analysisObj = {};
+      try { analysisObj = JSON.parse(row.analysis_json || '{}'); } catch {}
+      const ctx = {
+        topic: analysisObj.topic,
+        basic_info: analysisObj.basic_info,
+        core_points: Array.isArray(analysisObj.core_points) ? analysisObj.core_points.slice(0, 3) : undefined,
+        viral: analysisObj.viral,
+        audience: analysisObj.audience,
+      };
+      if (!topic) topic = row.title || '';
+      skillBody = loadAngleSkill();
+      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作方向。\n每个方向必须给：锐度标题、一句话核心观点、目标读者、3-5 步推荐结构、**与原文的差异锚点 differentiator**、推荐指数 value_score、情绪策略 emotion、内容目标 goal、推荐理由。\ndifferentiator 是本模式最重要的字段：必须讲清本稿比原文多给什么（新立场/新证据/新人群/新结论），禁止"换个说法"这种空话。\n最后给 track_fit 块：本文与当前赛道是否值得写 + 一句话说明（如果不匹配，给拉回角度建议）。\n\n输出严格合法 JSON（不要 markdown 代码块包裹，字符串引号/逗号/括号都不能错）。`;
+    } else {
+      if (!topic.trim()) return { ok: false, error: '请填写主题' };
+      skillBody = loadTopicSkill();
+      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 主题（唯一实质输入，**没有参考文章**）\n${topic}\n\n## 任务\n在没有任何参考素材的前提下做推演，输出两部分：\n1. value 块：这个题目在当前赛道**值不值得写**（worth / score / competition / audience_need / advice）。\n2. 5 个互斥创作角度，每个必须给：title、core_point（判断句、不依赖未证实数据）、target_user、structure、differentiator（相对同类写法新在哪）、feasibility（易|中|难）、evidence_needed（**至少 2 条用户能去获取的具体素材**）、value_score、emotion、goal、reason。\n\n铁律：不得编造具体数字、日期、人名、机构、研究结论、案例细节、第一手经历；不确定的内容一律以「待核实」写进 evidence_needed。feasibility 要敢说不乐观，不要全标「易」。\n\n输出严格合法 JSON（不要 markdown 代码块包裹，字符串引号/逗号/括号都不能错）。`;
+    }
+
     const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
+    const emptyJson = JSON.stringify({ mode, angles: [], track_fit: null, value: null });
+    const strategyId = db.prepare(`
+      INSERT INTO content_strategies (mode, analysis_id, topic, profile_id, track, persona, strategy_json, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'running')
+    `).run(mode, analysisId, topic, profileId, track, persona, emptyJson).lastInsertRowid;
 
-    const anglesId = db.prepare(`INSERT INTO content_angles (analysis_id, profile_id, track, angles_json, status) VALUES (?, ?, ?, ?, 'running')`)
-      .run(analysisId, profileId, track, JSON.stringify({ angles: [], track_fit: null })).lastInsertRowid;
     const start = Date.now();
     try {
-      const { taskId, promise } = enqueueAgentRun('angle',
-        `方向: ${(row.title || '未命名').slice(0, 24)}`,
+      const { taskId, promise } = enqueueAgentRun('strategy',
+        `策略·${mode === 'topic' ? '命题' : '借势'}: ${(topic || '未命名').slice(0, 24)}`,
         { cli, model }, fullPrompt);
       const { content: raw, elapsedMs } = await promise;
       const parsed = parseAnalysisJson(raw);
       const dur = elapsedMs || (Date.now() - start);
-      if (!parsed.ok) {
-        db.prepare(`UPDATE content_angles SET status='failed', error=?, duration_ms=?, angles_json=? WHERE id=?`)
-          .run(parsed.error, dur, JSON.stringify({ raw: parsed.raw }), anglesId);
-        return { ok: false, id: anglesId, error: parsed.error, taskId };
-      }
-      const shaped = parseAngleResult(parsed.data);
-      if (!shaped.ok) {
-        db.prepare(`UPDATE content_angles SET status='failed', error=?, duration_ms=?, angles_json=? WHERE id=?`)
-          .run(shaped.error, dur, JSON.stringify({ raw: parsed.data }), anglesId);
-        return { ok: false, id: anglesId, error: shaped.error, taskId };
-      }
-      const stored = { angles: shaped.angles, track_fit: shaped.track_fit };
-      db.prepare(`UPDATE content_angles SET status='completed', duration_ms=?, angles_json=? WHERE id=?`)
-        .run(dur, JSON.stringify(stored), anglesId);
-      return { ok: true, id: anglesId, taskId, angles: shaped.angles, track_fit: shaped.track_fit };
+      const fail = (msg, rawData) => {
+        db.prepare(`UPDATE content_strategies SET status='failed', error=?, duration_ms=?, strategy_json=? WHERE id=?`)
+          .run(msg, dur, JSON.stringify({ mode, angles: [], track_fit: null, value: null, raw: rawData }), strategyId);
+      };
+      if (!parsed.ok) { fail(parsed.error, parsed.raw); return { ok: false, id: strategyId, error: parsed.error, taskId }; }
+      const shaped = parseStrategyResult(parsed.data, mode);
+      if (!shaped.ok) { fail(shaped.error, parsed.data); return { ok: false, id: strategyId, error: shaped.error, taskId }; }
+
+      const stored = { mode: shaped.mode, angles: shaped.angles, track_fit: shaped.track_fit, value: shaped.value };
+      db.prepare(`UPDATE content_strategies SET status='completed', duration_ms=?, strategy_json=? WHERE id=?`)
+        .run(dur, JSON.stringify(stored), strategyId);
+      return {
+        ok: true, id: strategyId, taskId, mode: shaped.mode,
+        angles: shaped.angles, track_fit: shaped.track_fit, value: shaped.value,
+      };
     } catch (err) {
       const dur = Date.now() - start;
-      db.prepare(`UPDATE content_angles SET status='failed', error=?, duration_ms=? WHERE id=?`)
-        .run(err.message || String(err), dur, anglesId);
-      return { ok: false, id: anglesId, error: err.message || String(err), taskId: null };
+      db.prepare(`UPDATE content_strategies SET status='failed', error=?, duration_ms=? WHERE id=?`)
+        .run(err.message || String(err), dur, strategyId);
+      return { ok: false, id: strategyId, error: err.message || String(err), taskId: null };
     }
+  }
+
+  ipcMain.handle('strategy:generate', (_e, params) => runStrategyGenerate(params));
+  // 兼容别名：P0-1 时期的调用名（旧 renderer / e2e 仍在用）
+  ipcMain.handle('analysis:angles', (_e, params) => runStrategyGenerate({ ...(params || {}), mode: 'reference' }));
+
+  /**
+   * 采纳一个角度 → 写一条 strategy_adoptions（策略:文章 = 1:N）。
+   * 同一策略可被反复采纳给不同文章；article_id 先留空，正文入库后由 article:article 回填。
+   */
+  function adoptStrategy(strategyId, index, articleId) {
+    const id = Number(strategyId);
+    if (!id || !Number.isInteger(index)) return { ok: false, error: '缺少 strategyId 或 angleIndex' };
+    const row = db.prepare('SELECT id, mode, strategy_json, status FROM content_strategies WHERE id = ?').get(id);
+    if (!row) return { ok: false, error: '策略记录不存在' };
+    if (row.status !== 'completed') return { ok: false, error: '策略未生成完成，无法采纳' };
+    let list = [];
+    try { list = JSON.parse(row.strategy_json || '{}').angles || []; } catch {}
+    if (index < 0 || index >= list.length) return { ok: false, error: `角度下标越界（${index} / 共 ${list.length} 个）` };
+    const res = db.prepare(`
+      INSERT INTO strategy_adoptions (strategy_id, article_id, angle_index) VALUES (?, ?, ?)
+    `).run(id, articleId ? Number(articleId) : null, index);
+    return { ok: true, adoptionId: res.lastInsertRowid, strategyId: id, mode: row.mode, index, angle: list[index] };
+  }
+
+  ipcMain.handle('strategy:adopt', (_e, params) => adoptStrategy(
+    params && params.strategyId, params && params.angleIndex, params && params.articleId,
+  ));
+  // 兼容别名（旧名 angles:adopt，入参 { id, index }）
+  ipcMain.handle('angles:adopt', (_e, params) => adoptStrategy(
+    params && params.id, params && params.index, params && params.articleId,
+  ));
+
+  ipcMain.handle('strategy:list', (_e, params) => {
+    const { profileId, mode, limit = 30 } = params || {};
+    const pid = String(profileId || '');
+    const m = mode === 'topic' || mode === 'reference' ? mode : '';
+    const where = [], vals = [];
+    // 身份隔离：传 profileId 则只看本身份 + 旧数据（profile_id='' 的历史记录不隐身）
+    if (pid) { where.push(`(profile_id = ? OR profile_id = '' OR profile_id IS NULL)`); vals.push(pid); }
+    if (m)   { where.push(`mode = ?`); vals.push(m); }
+    vals.push(Number(limit) || 30);
+    const sql = `
+      SELECT id, mode, analysis_id, topic, profile_id, track, persona, status, error, duration_ms, created_at,
+             json_array_length(json_extract(strategy_json, '$.angles')) AS angle_count
+      FROM content_strategies
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `;
+    return db.prepare(sql).all(...vals);
   });
 
+  ipcMain.handle('strategy:get', (_e, id) => {
+    const row = db.prepare('SELECT * FROM content_strategies WHERE id = ?').get(Number(id));
+    if (!row) return null;
+    let parsed = {};
+    try { parsed = JSON.parse(row.strategy_json || '{}'); } catch {}
+    const adoptions = db.prepare(
+      `SELECT id, article_id, angle_index, adopted_at FROM strategy_adoptions WHERE strategy_id = ? ORDER BY adopted_at DESC`,
+    ).all(row.id);
+    return { ...row, strategy: parsed, adoptions };
+  });
 
-  // 记录用户采纳了哪个角度（不生成文章，仅标记策略；article_id 由正文生成时补）
-  ipcMain.handle('angles:adopt', (_e, params) => {
-    const id = Number(params && params.id);
-    const index = params && params.index;
-    if (!id || !Number.isInteger(index)) return { ok: false, error: '缺少 id 或 index' };
-    const row = db.prepare('SELECT id, angles_json, status FROM content_angles WHERE id = ?').get(id);
-    if (!row) return { ok: false, error: '方向记录不存在' };
-    let list = [];
-    try { list = JSON.parse(row.angles_json || '{}').angles || []; } catch {}
-    if (index < 0 || index >= list.length) return { ok: false, error: `角度下标越界（${index} / 共 ${list.length} 个）` };
-    db.prepare(`UPDATE content_angles SET adopted_index = ?, adopted_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .run(index, id);
-    return { ok: true, id, index, angle: list[index] };
+  ipcMain.handle('strategy:delete', (_e, id) => {
+    const res = db.prepare('DELETE FROM content_strategies WHERE id = ?').run(Number(id));
+    return { ok: true, changes: res.changes };
   });
 
     ipcMain.handle('analysis:list', (_e, { limit = 20, profileId } = {}) => {

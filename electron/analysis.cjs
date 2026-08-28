@@ -41,22 +41,56 @@ function parseAnalysisJson(text) {
   return { ok: false, error: 'no valid JSON found', raw: text.slice(0, 500) };
 }
 
-/** 读取 angle-generation skill（不依赖 skills.cjs 体系） */
+/** 读取 angle-generation skill（A 借势拆解，不依赖 skills.cjs 体系） */
 function loadAngleSkill() {
-  const p = path.resolve(__dirname, "..", "src", "skills", "analysis", "angle-generation", "SKILL.md");
+  const p = path.resolve(__dirname, "..", "src", "skills", "strategy", "angle-generation", "SKILL.md");
   if (!fs.existsSync(p)) throw new Error(`Angle skill not found: ${p}`);
   return fs.readFileSync(p, "utf-8")
     .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
 }
 
+/** 读取 topic-planning skill（B 命题策划） */
+function loadTopicSkill() {
+  const p = path.resolve(__dirname, "..", "src", "skills", "strategy", "topic-planning", "SKILL.md");
+  if (!fs.existsSync(p)) throw new Error(`Topic strategy skill not found: ${p}`);
+  return fs.readFileSync(p, "utf-8")
+    .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+}
+
 /** 角度生成结果：必须含 angles[]（≥5）与 track_fit{block}；其他字段容错 */
-function parseAngleResult(data) {
+function parseAngleResult(data, mode = 'reference') {
+  return parseStrategyResult(data, mode);
+}
+
+/**
+ * 策略生成结果解析（双模式）。
+ * A reference：靠 track_fit 回答“这个素材值不值得写”
+ * B topic    ：靠 value 回答“这个题目值不值得写”，并且无参考文→必须带 evidence_needed
+ */
+function parseStrategyResult(data, mode = 'reference') {
+  const isTopic = mode === 'topic';
   if (!data || typeof data !== "object") return { ok: false, error: "缺少 JSON 对象" };
   const raw = Array.isArray(data.angles) ? data.angles.filter(a => a && (a.title || a.angle_type)) : [];
-  const angles = raw.map(normalizeAngle);
+  const angles = raw.map(a => normalizeAngle(a, mode));
   if (angles.length < 3) return { ok: false, error: `angles 不足（${angles.length} 个，至少要 3 个）` };
+  if (isTopic) {
+    const v = data.value && typeof data.value === "object" ? normalizeStrategyValue(data.value) : null;
+    return { ok: true, mode: 'topic', angles, track_fit: null, value: v };
+  }
   const tf = data.track_fit && typeof data.track_fit === "object" ? data.track_fit : null;
-  return { ok: true, angles, track_fit: tf };
+  return { ok: true, mode: 'reference', angles, track_fit: tf, value: null };
+}
+
+/** B 模式的题目价值评估块 */
+function normalizeStrategyValue(v) {
+  const out = {};
+  if (typeof v.worth === 'boolean') out.worth = v.worth;
+  const n = typeof v.score === 'number' ? v.score : parseFloat(v.score);
+  if (Number.isFinite(n)) out.score = Math.max(0, Math.min(10, Math.round(n * 10) / 10));
+  for (const k of ['competition', 'audience_need', 'advice']) {
+    if (v[k]) out[k] = String(v[k]).trim();
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /**
@@ -64,7 +98,7 @@ function parseAngleResult(data) {
  * 宽容处理：value_score 容忍字符串/越界；emotion/goal 不强校枚举（模型可能换说法），
  * 保留原文交给 UI 展示。老数据（没有这三个字段）不会因为缺字段而报错。
  */
-function normalizeAngle(a) {
+function normalizeAngle(a, mode = 'reference') {
   const out = {
     angle_type: String(a.angle_type || '').trim(),
     title: String(a.title || '').trim(),
@@ -80,6 +114,13 @@ function normalizeAngle(a) {
   if (Number.isFinite(n)) out.value_score = Math.max(0, Math.min(10, Math.round(n * 10) / 10));
   if (a.emotion) out.emotion = String(a.emotion).trim();
   if (a.goal) out.goal = String(a.goal).trim();
+  if (a.differentiator) out.differentiator = String(a.differentiator).trim();
+  if (a.feasibility) out.feasibility = String(a.feasibility).trim();
+  if (Array.isArray(a.evidence_needed)) {
+    const ev = a.evidence_needed.map(s => String(s == null ? '' : s).trim()).filter(Boolean);
+    if (ev.length) out.evidence_needed = ev;
+  }
+  void mode;   // 模式不影响字段保留（均宽容），只为后续可能的差异化校验留位
   return out;
 }
 
@@ -103,18 +144,19 @@ const GOAL_GUIDE = {
 };
 
 /**
- * 把用户采纳的那个角度渲染成提示词里的“创作策略”块。
- * 与 buildAnalysisContextBlock 的区分：那边是“参考素材是什么”，这边是“用户已决定怎么写”，
- * 所以显式要求不得沿用原文观点与结构。
- * @param {Object} [strategy] 来自 renderer 的已采纳角度（Angle 字段 + anglesId/index）
+ * 把用户采纳的角度渲染成提示词里的“创作策略”块（双模式）。
+ * 与 buildAnalysisContextBlock 的区分：那边是“参考素材是什么”，这边是“用户已决定怎么写”。
+ * @param {Object} [strategy] 来自 renderer 的已采纳角度（Angle 字段 + mode/anglesId/index）
  */
 function buildStrategyBlock(strategy) {
   if (!strategy || typeof strategy !== 'object') return '';
+  const isTopic = strategy.mode === 'topic';
   const lines = [];
   if (strategy.angle_type) lines.push(`- **创作角度**: ${strategy.angle_type}`);
   if (strategy.core_point) lines.push(`- **文章立意**: ${strategy.core_point}`);
   if (strategy.title) lines.push(`- **标题方向**: ${strategy.title}`);
   if (strategy.target_user) lines.push(`- **目标读者**: ${strategy.target_user}`);
+  if (strategy.differentiator) lines.push(`- **差异锚点**: ${strategy.differentiator}`);
   if (strategy.emotion) {
     const g = EMOTION_GUIDE[strategy.emotion];
     lines.push(`- **情绪策略**: 读完后的主导情绪 = ${strategy.emotion}${g ? ' —— ' + g : ''}`);
@@ -129,15 +171,45 @@ function buildStrategyBlock(strategy) {
     struct.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
   }
   if (!lines.length) return '';
-  return [
-    '## 本次创作策略（用户已采纳，约束力高于参考素材）',
-    ...lines,
-    '',
-    '⚠️ 上面的「参考内容分析」只是素材与市场参照，**不得沿用原文的观点、例子与结构**；',
-    strategy.core_point
-      ? '本文必须围绕上面这条「文章立意」展开，并按指定的角度、情绪、目标重写。'
-      : '本文必须按上面指定的角度、情绪、目标来写。',
-  ].join('\n');
+
+  const head = isTopic
+    ? '## 本次创作策略（用户已采纳：命题策划，无参考素材）'
+    : '## 本次创作策略（用户已采纳，约束力高于参考素材）';
+  const body = [head, ...lines, ''];
+
+  const ev = Array.isArray(strategy.evidence_needed) ? strategy.evidence_needed.filter(Boolean) : [];
+  if (isTopic) {
+    // B 模式核心风险 = 幻觉。无参考文时模型最爱编数据/人名/案例。
+    body.push('⚠️ **事实约束（本次无参考素材，硬要求）**：');
+    body.push('- 禁止编造具体数字、百分比、日期、研究结论、人名、机构名、书名、引语、他人经历。');
+    body.push('- 需要数据/案例支撑处，若用户未提供则写「待补充」占位，不得自行臆造。');
+    body.push('- 不得替用户编造第一手经历（“我有个朋友…”、“去年我…”）。');
+    body.push('- 允许用普遍观察式表述（“不少人有这种体会…”），但不得伪装成统计结论。');
+    if (ev.length) {
+      body.push('');
+      body.push('- **本角度需要用户补充的素材（写之前先看用户有没有给；缺就保留占位并在结尾提醒）**：');
+      ev.forEach((e, i) => body.push(`  ${i + 1}. ${e}`));
+    }
+    if (strategy.core_point) {
+      body.push('');
+      body.push(`本文必须围绕上面这条「文章立意」展开，并按指定的角度、情绪、目标来写。`);
+    }
+  } else {
+    // A 模式核心风险 = 同质化。负向约束不够，还要正向差异锚点。
+    body.push('⚠️ 上面的「参考内容分析」只是素材与市场参照，**不得沿用原文的观点、例子与结构**；');
+    body.push(strategy.differentiator
+      ? `本文必须把下面这条差异锦成文实：**${strategy.differentiator}**。凡是与原文可能重合的表述、案例、结论，一律重写或删除。`
+      : '本文必须按上面指定的角度、情绪、目标重写，不得只改标题与措辞。');
+    if (strategy.core_point) {
+      body.push(`全文要围绕上面这条「文章立意」展开。`);
+    }
+    if (ev.length) {
+      body.push('');
+      body.push('- **建议补充的素材**：');
+      ev.forEach((e, i) => body.push(`  ${i + 1}. ${e}`));
+    }
+  }
+  return body.join('\n');
 }
 
 /** 读取 content-analysis skill（不依赖 skills.cjs 的 channels/personas 体系） */
@@ -266,6 +338,7 @@ function saveAnalysis(db, { source_url, title, platform, author, content, analys
 }
 
 module.exports = {
-  parseAnalysisJson, parseAngleResult, normalizeAngle, loadAnalysisSkill, loadAngleSkill,
+  parseAnalysisJson, parseAngleResult, parseStrategyResult, normalizeAngle, normalizeStrategyValue,
+  loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, saveAnalysis,
 };

@@ -78,14 +78,64 @@ function getDb(opts = {}) {
       if (ensureCols('content_analysis', [['profile_id', "TEXT DEFAULT ''"]])) {
         ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_analysis_profile ON content_analysis(profile_id, created_at DESC)`);
       }
-      // content_angles 若缺策略采纳相关列（P0-2 策略进入写作）
-      if (ensureCols('content_angles', [
-        ['adopted_index', 'INTEGER DEFAULT -1'],
-        ['adopted_at', 'DATETIME'],
-        ['article_id', 'INTEGER'],
-      ])) {
-        ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_angles_adopted ON content_angles(profile_id, adopted_index, created_at DESC)`);
-        ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_angles_article ON content_angles(article_id)`);
+      // 一次性重构迁移：content_angles（分析附属能力）→ content_strategies（独立决策层）
+      // schema 已先建好新表，这里只负责搬数据、补建 adoption，然后 DROP 旧表。
+      const hasOld = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='content_angles'`,
+      ).get();
+      if (hasOld) {
+        // 旧库的 content_angles 可能连 P0-2 那三列都没有（P0-1a 版本），先补齐再读
+        const oldCols = db.prepare(`PRAGMA table_info(content_angles)`).all().map(c => c.name);
+        for (const [n, t] of [
+          ['adopted_index', 'INTEGER DEFAULT -1'], ['adopted_at', 'DATETIME'], ['article_id', 'INTEGER'],
+        ]) {
+          if (!oldCols.includes(n)) { try { db.exec(`ALTER TABLE content_angles ADD COLUMN ${n} ${t}`); } catch {} }
+        }
+
+        const rows = db.prepare(`SELECT * FROM content_angles ORDER BY id`).all();
+        const insStrategy = db.prepare(`
+          INSERT OR IGNORE INTO content_strategies
+          (id, mode, analysis_id, topic, profile_id, track, persona, strategy_json, status, error, duration_ms, created_at)
+          VALUES (?, 'reference', ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
+        `);
+        const insAdoption = db.prepare(`
+          INSERT INTO strategy_adoptions (strategy_id, article_id, angle_index, adopted_at)
+          VALUES (?, ?, ?, ?)
+        `);
+        const existingAdopt = db.prepare(`SELECT COUNT(*) c FROM strategy_adoptions WHERE strategy_id = ?`);
+        const moved = db.transaction(() => {
+          let n = 0;
+          for (const r of rows) {
+            let obj = {};
+            try { obj = JSON.parse(r.angles_json || '{}'); } catch {}
+            const json = JSON.stringify({
+              mode: 'reference',
+              angles: Array.isArray(obj.angles) ? obj.angles : [],
+              track_fit: obj.track_fit || null,
+              value: null,
+            });
+            insStrategy.run(
+              r.id, r.analysis_id ?? null, r.title || '', r.profile_id || '', r.track || '',
+              json, r.status || 'completed', r.error || '', r.duration_ms || 0, r.created_at,
+            );
+            // 旧模型的采纳信息（adopted_index / article_id）转成一条 adoption，保持 1:N 语义下的历史不丢
+            const hadAdopt = (r.article_id != null) || ((r.adopted_index ?? -1) >= 0);
+            if (hadAdopt && existingAdopt.get(r.id).c === 0) {
+              insAdoption.run(r.id, r.article_id ?? null, Math.max(0, (r.adopted_index ?? -1)), r.adopted_at || r.created_at);
+            }
+            n++;
+          }
+          return n;
+        });
+        const movedCount = moved();
+        // 显式插了 id，要把自增序列顶上去，否则下一条新记录会 id 冲突
+        const seqRow = db.prepare(`SELECT seq FROM sqlite_sequence WHERE name = 'content_strategies'`).get();
+        const maxId = db.prepare(`SELECT COALESCE(MAX(id), 0) m FROM content_strategies`).get().m;
+        if (seqRow) db.prepare(`UPDATE sqlite_sequence SET seq = ? WHERE name = 'content_strategies'`).run(Math.max(seqRow.seq || 0, maxId));
+        else if (maxId > 0) db.prepare(`INSERT INTO sqlite_sequence (name, seq) VALUES ('content_strategies', ?)`).run(maxId);
+
+        db.exec(`DROP TABLE content_angles`);
+        console.log(`[db] 迁移：content_angles → content_strategies，共搬运 ${movedCount} 条策略记录（旧表已删除）`);
       }
     }
   } catch (e) { console.warn('[db] migration skipped:', e.message); }

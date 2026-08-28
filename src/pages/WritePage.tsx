@@ -13,7 +13,7 @@ import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
 import { ArticleViewer } from '../components/ArticleViewer';
-import type { ContentAnalysisResult, Angle, StrategySelection } from '../types';
+import type { ContentAnalysisResult, Angle, StrategySelection, StrategyMode } from '../types';
 import { getAgentSettings } from '../utils/storage';
 import { getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
 import { useActiveProfile } from '../hooks/useActiveProfile';
@@ -72,12 +72,20 @@ export function WritePage() {
   const [anglesStatus, setAnglesStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [anglesError, setAnglesError] = useState<string>('');
   const [trackFit, setTrackFit] = useState<{ matches?: boolean; article_track?: string; user_track?: string; note?: string } | null>(null);
-  // 已采纳的创作策略：anglesId = content_angles 行 id，strategy = 采纳的那个角度
-  const [anglesId, setAnglesId] = useState<number | null>(null);
+  // 已采纳的创作策略：strategyId = content_strategies 行 id，strategy = 采纳的那个角度
+  const [strategyId, setStrategyId] = useState<number | null>(null);
+  const [strategyMode, setStrategyMode] = useState<StrategyMode>('reference');
   const [strategy, setStrategy] = useState<StrategySelection | null>(null);
-  // 发给主进程的策略负载：拍平角度字段 + 来源定位（主进程据此渲染 strategyBlock 并回写 article_id）
+  // 发给主进程的策略负载：拍平角度字段 + 模式 + 来源定位
+  // （主进程据此渲染 strategyBlock，并在正文入库后回填那条 adoption 的 article_id）
   const strategyPayload = strategy
-    ? { anglesId: strategy.anglesId, index: strategy.index, ...strategy.angle }
+    ? {
+        mode: strategy.mode,
+        strategyId: strategy.strategyId,
+        adoptionId: strategy.adoptionId,
+        index: strategy.index,
+        ...strategy.angle,
+      }
     : undefined;
   const analysisDomain = settings.track;   // 账号级赛道（设置页配）
   const [referenceText, setReferenceText] = useState('');
@@ -549,14 +557,15 @@ export function WritePage() {
     setTrackFit(null);
     try {
       const cfg = getAgentSettings();
-      const r = await window.electronAPI.generateAngles({
-        analysisId, track: analysisDomain || '',
+      const r = await window.electronAPI.generateStrategy({
+        mode: strategyMode, analysisId, track: analysisDomain || '',
+        persona,
         profileId: profile.id,
         cli: cfg.cli, model: cfg.model || undefined,
       });
       if (!r.ok) { setAnglesStatus('failed'); setAnglesError(r.error || '生成失败'); showToast('❌ ' + (r.error || '生成失败')); return; }
       setAngles(r.angles || []);
-      setAnglesId(typeof r.id === 'number' ? r.id : null);
+      setStrategyId(typeof r.id === 'number' ? r.id : null);
       setStrategy(null);   // 新一次生成→清除上次采纳，避免用旧角度
       setTrackFit(r.track_fit || null);
       setAnglesStatus('completed');
@@ -581,14 +590,20 @@ export function WritePage() {
     }
     // 关键：不只填文本，还要把策略作为参数注入后续大纲/正文提示词
     const idx = angles ? angles.findIndex(a => a === angle) : -1;
-    if (anglesId && idx >= 0) {
-      setStrategy({ anglesId, index: idx, angle });
-      void window.electronAPI.adoptAngle({ id: anglesId, index: idx }).catch(() => {});
+    if (strategyId && idx >= 0) {
+      // 先落一条 adoption（1:N），拿回 adoptionId；正文入库时回填它的 article_id
+      const mode = strategyMode;
+      void window.electronAPI.adoptStrategy({ strategyId, angleIndex: idx })
+        .then((res) => {
+          if (res?.ok) setStrategy({ strategyId, mode, index: idx, angle, adoptionId: res.adoptionId });
+          else setStrategy({ strategyId, mode, index: idx, angle });
+        })
+        .catch(() => setStrategy({ strategyId, mode, index: idx, angle }));
     } else {
       setStrategy(null);
     }
     setStep(1);
-    showToast(anglesId && idx >= 0
+    showToast(strategyId && idx >= 0
       ? `✅ 已采纳策略「${angle.angle_type || '未命名'}」— 生成大纲与正文时会按此角度的立意/情绪/目标执行`
       : '✅ 已预填方向到写文章页（未关联策略记录，仅填文本）');
   };

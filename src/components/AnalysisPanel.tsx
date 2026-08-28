@@ -222,6 +222,12 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                 </div>
               )}
               <div className="angle-meta">
+                {a.differentiator && (
+                  <div className="angle-row">
+                    <span className="viral-label">差异锚点</span>
+                    <span className="angle-diff">{a.differentiator}</span>
+                  </div>
+                )}
                 {a.target_user && <div className="angle-row"><span className="viral-label">目标用户</span><span>{a.target_user}</span></div>}
                 {a.structure && a.structure.length > 0 && (
                   <div className="angle-row">
@@ -230,6 +236,23 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                   </div>
                 )}
                 {a.reason && <div className="angle-row"><span className="viral-label">推荐理由</span><span>{a.reason}</span></div>}
+                {(a.feasibility || (a.evidence_needed && a.evidence_needed.length > 0)) && (
+                  <div className="angle-evidence">
+                    {a.feasibility && (
+                      <span className={`angle-feas feas-${a.feasibility === '易' ? 'easy' : a.feasibility === '中' ? 'mid' : 'hard'}`}>
+                        可写性 · {a.feasibility}
+                      </span>
+                    )}
+                    {a.evidence_needed && a.evidence_needed.length > 0 && (
+                      <>
+                        <div className="angle-evidence-label">你需要补充（缺这些就只能写成空泛观点文）</div>
+                        <ul className="angle-evidence-list">
+                          {a.evidence_needed.map((e, j) => <li key={j}>{e}</li>)}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               {onSaveTopic && (
                 <button type="button" className="btn btn-outline btn-sm angle-save" onClick={() => onSaveTopic(a)}>

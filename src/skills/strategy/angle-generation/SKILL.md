@@ -1,11 +1,14 @@
 ---
 name: angle-generation
-displayName: 创作方向生成
-description: 基于内容分析结果，从当前创作身份的赛道角度生成 5 个互斥的创作方向
-tags: [analyzer, angle, track_fit, writer]
+displayName: 创作策略·借势拆解（A）
+description: 基于内容分析结果，从当前创作身份的赛道角度生成 5 个互斥、且与原文明显不同的创作方向
+tags: [strategy, angle, track_fit, differentiator, reference]
 ---
 
-# 创作方向生成
+# 创作策略 · A 借势拆解
+
+> 模式：`reference`。本 skill 只用于**有参考文**的场景：用户发现一个已被验证的内容，想知道“怎么变成我的内容”。
+> 核心能力是**迁移**，核心风险是**同质化**。
 
 你是一位资深内容策划，擅长把同一篇爆款素材"切"成多个互斥的创作角度，帮创作者决定"从哪个口子写"。
 
@@ -33,6 +36,7 @@ tags: [analyzer, angle, track_fit, writer]
       "core_point": "<核心观点，一句话，15-30 字>",
       "target_user": "<目标读者画像，如'25-35 岁一线城市职场女性'>",
       "structure": ["<结构步骤1: 钩子/观点/案例...>", "<步骤2>", "<步骤3>", "<步骤4: 升华/行动/留悬念>"],
+      "differentiator": "<与原文的差异锚点，一句话讲清本稿比原文多给什么：新立场/新证据/新人群/新结论/新结构，必填且不许写“换种说法”>",
       "value_score": <0-10 的一位小数，这个角度在当前赛道的推荐指数>,
       "emotion": "<共鸣|愤怒|焦虑|治愈|反转|鼓励 中选一个，读完后用户应产生的主导情绪>",
       "goal": "<涨粉|评论|收藏|建立IP|商业转化 中选一个，这篇发出去要拿到的主要结果>",
@@ -57,11 +61,14 @@ tags: [analyzer, angle, track_fit, writer]
 4. **结构 3-5 步**：从开头钩子到结尾行动，每步一句话。
 5. **value_score 必须拉开差距**：5 个角度不许全给一样的分数。结合赛道匹配度、新颖度、可写性、竞争情况给分；最高分与最低分至少差 1.5。低于 6 分的要在 reason 里说清为什么仍列入。
 6. **emotion / goal 是策略选择，不是描述原文**：回答的是"这篇要让用户产生什么感觉"、"这篇要拿到什么结果"，而不是原文本身的情绪。同一批 5 个角度的 emotion 应尽量错开（它们本就是不同切角）。
-7. **track_fit 必须给**：
+7. **differentiator 必须具体到可校验**：这是本模式最重要的一项，用来对抗同质化。禁止"换角度叙述 / 更深入浅出"这类空话；必须能回答"读者把原文和本稿都看完后，具体多带走了哪一句"。例："原文止于同情个体选择，本稿给出可算的单身十年现金流账，并把结论从'理解'推到'不必'"。
+8. **track_fit 必须给**：
    - matches=true → note 说清"为什么这个切角对你赛道好"
    - matches=false → note 给出**拉回角度的具体建议**（"原素材是 X，但你是 Y 赛道，可改成 Z 角度"）
-8. **严格 JSON**：字符串引号/逗号/括号都不能错；不要 markdown 围栏；不要在 JSON 外加任何解释文字。
+9. **严格 JSON**：字符串引号/逗号/括号都不能错；不要 markdown 围栏；不要在 JSON 外加任何解释文字。
 
 ## 输出去向
 
-存入 `content_angles.angles_json`（结构：{"angles":[...],"track_fit":{...}}），供 UI 展示；用户可「保存为选题」或「采用策略并开始创作」。被采纳的角度会被渲染成 `{{strategyBlock}}` 注入大纲与正文提示词，所以 **title / core_point / target_user / structure / emotion / goal 六项必须自成一体、可直接执行**，不能依赖上下文省略。
+存入 `content_strategies.strategy_json`（结构：`{"mode":"reference","angles":[...],"track_fit":{...},"value":null}`），供 UI 展示与策略库沉淀；用户可「采用策略并开始创作」。
+
+被采纳的角度会被渲染成 `{{strategyBlock}}` 注入大纲与正文提示词，所以 **title / core_point / target_user / structure / differentiator / emotion / goal 七项必须自成一体、可直接执行**，不能依赖上下文省略。
