@@ -720,6 +720,15 @@ export function WritePage() {
           <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
             💡 你可以直接修改大纲。改过的章节会被标 [已修订]，Agent 会严格遵循。
           </div>
+          {generating && stage === 'outline' && !outline ? (
+            <div className="gen-loading">
+              <div className="gen-loading-head">
+                <Loader2 size={16} className="spin" />
+                <span>Agent 正在生成大纲…已用时 {elapsed}s</span>
+              </div>
+              <div className="gen-skeleton"><i/><i/><i/><i/><i/></div>
+            </div>
+          ) : (
           <textarea
             className="textarea"
             rows={12}
@@ -730,6 +739,7 @@ export function WritePage() {
             }}
             style={{ fontSize: 13, lineHeight: 1.7 }}
           />
+          )}
 
           {/* 生成正文前参数确认面板 */}
           <div style={{ marginTop: 12, padding: '12px 14px', background: 'var(--line-light)', borderRadius: 10, border: '1px solid var(--line-soft)' }}>
@@ -1052,8 +1062,10 @@ export function WritePage() {
           </div>
           <div
             style={{
-              maxHeight: 420,
+              maxHeight: 320,
               overflowY: 'auto',
+              overflowX: 'hidden',
+              wordBreak: 'break-word',
               padding: 10,
               background: '#0e1413',
               color: '#b8c4bf',
@@ -1070,6 +1082,15 @@ export function WritePage() {
                 const colorMap: Record<string, string> = {
                   stdout: '#b8c4bf', info: '#38bdf8', error: '#f43f5e', stderr: '#fbbf24', done: '#14b789', sys: '#a78bfa',
                 };
+                // sys = 完整提示词，默认折叠，避免刷屏撑大面板
+                if (l.type === 'sys') {
+                  return (
+                    <details key={i} className="log-sys">
+                      <summary>📝 提示词（{l.text.length} 字）</summary>
+                      <pre>{l.text}</pre>
+                    </details>
+                  );
+                }
                 return (
                   <div key={i} style={{ color: colorMap[l.type] || '#b8c4bf' }}>
                     <span style={{ color: 'var(--muted)', marginRight: 6 }}>

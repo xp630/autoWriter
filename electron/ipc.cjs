@@ -246,8 +246,9 @@ function registerIpc() {
   ipcMain.handle('article:article', async (_e, params) => {
     const { cli, model, title, keywords, style = 'tech', length = 'medium', channel, persona, track, reference_text, outline, need_image, analysis } = params;
     if (!cli) throw new Error('未选择 Agent CLI');
-    if (!keywords || !keywords.length) throw new Error('关键词不能为空');
     if (!outline) throw new Error('缺少大纲，请先生成大纲');
+    // 关键词可为空：只要有大纲（从链接/参考文进来的流程，主题已凝在大纲里）
+    if ((!keywords || !keywords.length) && !outline && !reference_text) throw new Error('关键词、大纲、参考文至少一个');
 
     const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text, track });
     const analysisBlock = buildAnalysisContextBlock(analysis);
@@ -258,7 +259,7 @@ function registerIpc() {
     const prompt = renderPrompt('article', {
       skillBlock: ctx.skillBlock,
       titleHint: ctx.titleHint,
-      keywords: ctx.keywordsStr,
+      keywords: ctx.keywordsStr || '（未指定关键词，请从下方大纲推定主题）',
       styleDesc: ctx.styleDesc,
       lengthDesc: ctx.lengthDesc,
       personaHint: ctx.personaHint,
