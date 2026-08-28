@@ -1,7 +1,7 @@
 // ImageSlot — 配图占位/成品槽（写文章页 & 我的文章共用，保证 UI+逻辑一致）
 // 直观展示：无图=虚线框显示描述；有图=显示成图。点占位卡片 → AI生成/上传/图库三选一。
 // 一律走 generateImageFor（持久化 + 用当前 provider + craft），与「我的文章」数据同源。
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2, Sparkles, Upload, Image as ImageIcon, RefreshCw, X } from 'lucide-react';
 import { showToast } from '../toast';
 import { ImageLibraryGrid } from './ImageLibraryGrid';
@@ -18,13 +18,29 @@ interface Props {
 }
 
 export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Props) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'' | 'generate' | 'upload'>('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [libOpen, setLibOpen] = useState(false);
+  const [resolved, setResolved] = useState('');
+
+  // aw-img:// / uploads 相对路径 → dataURL（自定义协议不可靠，统一走 IPC 解析）
+  useEffect(() => {
+    let alive = true;
+    if (!url) { setResolved(''); return; }
+    if (url.startsWith('data:') || url.startsWith('http')) { setResolved(url); return; }
+    (async () => {
+      try {
+        const r = await window.electronAPI.readImageDataUrl(url);
+        if (alive && r?.ok) setResolved(r.dataUrl);
+        else if (alive) setResolved('');
+      } catch { if (alive) setResolved(''); }
+    })();
+    return () => { alive = false; };
+  }, [url]);
 
   const doGenerate = async () => {
     setMenuOpen(false);
-    setBusy(true);
+    setBusy('generate');
     try {
       const r = await window.electronAPI.generateImageFor({
         articleId, placeholderId, prompt: desc, useCraft: true,
@@ -34,7 +50,7 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
     } catch (e: any) {
       showToast('❌ 生成失败：' + (e.message || e));
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   };
 
@@ -42,7 +58,7 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
-    setMenuOpen(false); setBusy(true);
+    setMenuOpen(false); setBusy('upload');
     try {
       const dataUrl = await new Promise<string>((res) => {
         const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(f);
@@ -53,7 +69,7 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
     } catch (e: any) {
       showToast('❌ 上传失败：' + (e.message || e));
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   };
 
@@ -68,7 +84,9 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
     <div className="img-slot">
       {url ? (
         <div className="img-slot-filled">
-          <img src={url} alt={desc} className="img-slot-img" />
+          {resolved
+            ? <img src={resolved} alt={desc} className="img-slot-img" />
+            : <div className="img-slot-loading"><Loader2 size={18} className="spin" /> 加载图片…</div>}
           <div className="img-slot-caption">
             <span className="img-slot-desc">{desc}</span>
             <button type="button" className="img-slot-repick" onClick={() => setMenuOpen((v) => !v)} title="更换配图">
@@ -76,11 +94,21 @@ export function ImageSlot({ articleId, placeholderId, desc, url, onUpdated }: Pr
             </button>
           </div>
         </div>
+      ) : busy ? (
+        <div className="img-slot-generating">
+          <div className="img-slot-gen-head">
+            <Loader2 size={16} className="spin" />
+            <span>{busy === 'upload' ? '正在上传…' : 'AI 正在生成配图…'}</span>
+          </div>
+          <div className="img-slot-gen-desc">{desc}</div>
+          {busy === 'generate' && <div className="img-slot-gen-sub">提示词扩写 + 出图，通常 10–30 秒</div>}
+          <div className="gen-skeleton"><i/><i/><i/></div>
+        </div>
       ) : (
-        <button type="button" className="img-slot-empty" disabled={busy} onClick={() => setMenuOpen((v) => !v)} title="点击选择配图方式">
-          {busy ? <Loader2 size={18} className="spin" /> : <ImageIcon size={20} />}
+        <button type="button" className="img-slot-empty" onClick={() => setMenuOpen((v) => !v)} title="点击选择配图方式">
+          <ImageIcon size={20} />
           <span className="img-slot-empty-desc">{desc}</span>
-          <span className="img-slot-empty-tip">{busy ? '处理中…' : '点击配图 · AI生成/上传/图库'}</span>
+          <span className="img-slot-empty-tip">{'点击配图 · AI生成/上传/图库'}</span>
         </button>
       )}
 

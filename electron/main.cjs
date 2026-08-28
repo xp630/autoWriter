@@ -20,8 +20,11 @@ function registerImgProtocol() {
     protocol.handle('aw-img', (request) => {
       try {
         const url = new URL(request.url);
-        const rawName = (url.hostname || url.host || url.pathname.replace(/^\//, ''));
-        const filename = decodeURIComponent(rawName.replace(/^img\//, ''));
+        // 优先 pathname（aw-img://img/xxx.jpg → pathname='/xxx.jpg'），兼容旧版 aw-img://<文件名>（host）
+        let rawName = url.pathname.replace(/^\//, '');
+        if (!rawName) rawName = url.hostname || url.host || '';
+        rawName = rawName.replace(/^img\//, '');
+        const filename = decodeURIComponent(rawName);
         const filePath = path.join(uploadsDir, filename);
         if (!filePath.startsWith(uploadsDir + path.sep)) {
           return new Response('forbidden', { status: 403 });
