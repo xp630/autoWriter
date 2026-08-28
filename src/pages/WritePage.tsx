@@ -496,10 +496,7 @@ export function WritePage() {
                 🔑 {smartSplitKeywords(query).length} 个关键词：
               </span>
               {smartSplitKeywords(query).slice(0, 12).map((kw, i) => (
-                <span key={i} className="mono" style={{
-                  padding: '2px 8px', background: 'var(--line-light)', color: 'var(--line-2)',
-                  borderRadius: 999, fontSize: 11,
-                }}>{kw}</span>
+                <span key={i} className="mono kw-chip">{kw}</span>
               ))}
               {smartSplitKeywords(query).length > 12 && (
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>...</span>

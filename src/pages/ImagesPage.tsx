@@ -23,17 +23,18 @@ async function downloadImage(img: ImageRecord) {
 /** 尺寸分类 */
 type SizeCategory = 'all' | 'wechat' | 'weibo' | 'xhslike' | 'zhihu' | 'toutiao' | 'bilibili' | 'portrait' | 'square' | 'landscape';
 
-const SIZE_TABS: { key: SizeCategory; label: string; icon: string; ratioRange?: [number, number]; note?: string }[] = [
-  { key: 'all', label: '全部', icon: '🖼️' },
-  { key: 'wechat', label: '公众号', icon: '💚', ratioRange: [2.0, 2.7], note: '2.35:1' },
-  { key: 'weibo', label: '微博', icon: '🧡', ratioRange: [1.6, 2.0], note: '1.8:1' },
-  { key: 'xhslike', label: '小红书', icon: '🔴', ratioRange: [0.9, 1.1], note: '1:1' },
-  { key: 'zhihu', label: '知乎', icon: '💡', ratioRange: [1.6, 2.0], note: '1.82:1' },
-  { key: 'toutiao', label: '头条', icon: '📰', ratioRange: [1.8, 2.2], note: '2:1' },
-  { key: 'bilibili', label: 'B站', icon: '🎬', ratioRange: [1.6, 2.0], note: '16:9' },
-  { key: 'portrait', label: '竖版', icon: '📱', ratioRange: [0, 0.7] },
-  { key: 'square', label: '方形', icon: '⬜', ratioRange: [0.85, 1.15] },
-  { key: 'landscape', label: '横版', icon: '🖥️', ratioRange: [1.4, 999] },
+import type { LucideIcon } from 'lucide-react';
+const SIZE_TABS: { key: SizeCategory; label: string; icon: LucideIcon; ratioRange?: [number, number]; note?: string }[] = [
+  { key: 'all', label: '全部', icon: ImageIcon },
+  { key: 'wechat', label: '公众号', icon: MessageCircle, ratioRange: [2.0, 2.7], note: '2.35:1' },
+  { key: 'weibo', label: '微博', icon: Heart, ratioRange: [1.6, 2.0], note: '1.8:1' },
+  { key: 'xhslike', label: '小红书', icon: Heart, ratioRange: [0.9, 1.1], note: '1:1' },
+  { key: 'zhihu', label: '知乎', icon: Lightbulb, ratioRange: [1.6, 2.0], note: '1.82:1' },
+  { key: 'toutiao', label: '头条', icon: Newspaper, ratioRange: [1.8, 2.2], note: '2:1' },
+  { key: 'bilibili', label: 'B站', icon: Tv, ratioRange: [1.6, 2.0], note: '16:9' },
+  { key: 'portrait', label: '竖版', icon: Smartphone, ratioRange: [0, 0.7] },
+  { key: 'square', label: '方形', icon: Square, ratioRange: [0.85, 1.15] },
+  { key: 'landscape', label: '横版', icon: Monitor, ratioRange: [1.4, 999] },
 ];
 
 function getSizeCategory(img: ImageRecord): SizeCategory {
@@ -113,7 +114,7 @@ function GalleryImage({ img, onClick, selected }: { img: ImageRecord; onClick: (
         <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
           {img.source === 'ai' ? (
             <span style={{ padding: '3px 7px', background: img.provider === 'tensorart' ? 'rgba(168,85,247,0.9)' : 'rgba(34,197,94,0.9)', color: '#fff', borderRadius: 5, fontSize: 10, fontWeight: 700 }}>
-              {img.provider === 'tensorart' ? '🎨' : '🌐'}
+              {img.provider === 'tensorart' ? Palette : Globe}
             </span>
           ) : (
             <span style={{ padding: '3px 7px', background: 'rgba(255,255,255,0.85)', color: '#666', borderRadius: 5, fontSize: 10, fontWeight: 600 }}>
@@ -269,12 +270,12 @@ function ImagePreview({ img, onClose }: { img: ImageRecord; onClose: () => void 
 /** 预设分类 */
 const IMAGE_CATEGORIES = [
   { value: '', label: '无' },
-  { value: 'cover', label: '🖼️ 封面' },
-  { value: '配图', label: '📸 配图' },
-  { value: '素材', label: '🎨 素材' },
-  { value: 'banner', label: '📱 Banner' },
-  { value: '人物', label: '👤 人物' },
-  { value: '风景', label: '🏔️ 风景' },
+  { value: 'cover', label: '封面', icon: ImageIcon },
+  { value: '配图', label: '配图', icon: Camera },
+  { value: '素材', label: '素材', icon: Layers },
+  { value: 'banner', label: 'Banner', icon: Smartphone },
+  { value: '人物', label: '人物', icon: User },
+  { value: '风景', label: '风景', icon: Mountain },
   { value: '产品', label: '📦 产品' },
 ];
 
@@ -826,7 +827,8 @@ export function ImagesPage() {
                     gap: 4,
                   }}
                 >
-                  {tab.icon} {tab.label}
+                  <tab.icon size={12} strokeWidth={2} />
+                  {tab.label}
                   {catCount > 0 && <span style={{ fontSize: 10, opacity: 0.7 }}>({catCount})</span>}
                 </button>
               );

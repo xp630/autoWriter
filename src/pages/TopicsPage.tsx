@@ -6,9 +6,9 @@ import { Empty } from '../components/Empty';
 
 type Tab = 'hot' | 'rss' | 'library';
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'hot', label: '🔥 热点' },
-  { id: 'rss', label: '📡 RSS' },
-  { id: 'library', label: '📚 我的选题库' },
+  { id: 'hot', label: '热点', icon: Flame },
+  { id: 'rss', label: 'RSS', icon: Rss },
+  { id: 'library', label: '我的选题库', icon: Bookmark },
 ];
 
 export function TopicsPage() {
@@ -33,7 +33,7 @@ export function TopicsPage() {
 
       <Card>
         <Empty
-          emoji={tab === 'hot' ? '🔥' : tab === 'rss' ? '📡' : '📚'}
+          icon={tab === 'hot' ? Flame : tab === 'rss' ? Rss : Bookmark}
           title={tab === 'hot' ? '还没有热点' : tab === 'rss' ? '还没有 RSS 订阅' : '选题库为空'}
           description="后续接入：百度 / 36kr / 少数派 / 微信订阅号"
         />
