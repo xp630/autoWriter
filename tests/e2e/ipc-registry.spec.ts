@@ -116,6 +116,10 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['scheduler:disable', '停止调度器'],
   ['scheduler:run-now', '手动跑任务'],
   ['scheduler:set-interval', '修改调度间隔'],
+  ['analysis:run', '跑内容分析'],
+  ['analysis:get', '取单条分析'],
+  ['analysis:list', '列出分析'],
+  ['analysis:delete', '删除分析'],
   // 测试钩子（自身）
   ['test:list-channels', '测试用：列 channels'],
   ['test:invoke', '测试用：调 handler'],
@@ -150,6 +154,7 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   ['images:refs', [99999], true],
   ['scheduler:snapshot', [], true],  // 启动后才存在
   ['scheduler:enable', [], true],
+  ['analysis:list', [{}]],
   ['article:images', [99999], true],
   ['test:list-channels', []],
   ['test:userdata', []],

@@ -10,7 +10,9 @@ import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
 import { showToast } from '../toast';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
-import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight } from 'lucide-react';
+import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
+import { AnalysisPanel } from '../components/AnalysisPanel';
+import type { ContentAnalysisResult } from '../types';
 // (FileEdit already imported for Card icon usage)
 
 /** 本地草稿（刷新不丢）*/
@@ -69,6 +71,12 @@ export function WritePage() {
   const [query, setQuery] = useState('');
   const [savedQuery, setSavedQuery] = useState('');  // 保存原始关键词，大纲编辑时清空 query 也能生成
   const [referenceUrl, setReferenceUrl] = useState('');
+
+  // P0 内容分析
+  const [analysis, setAnalysis] = useState<ContentAnalysisResult | null>(null);
+  const [analysisId, setAnalysisId] = useState<number | null>(null);
+  const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+  const [analysisError, setAnalysisError] = useState<string>('');
   const [referenceText, setReferenceText] = useState('');
   const [fetching, setFetching] = useState(false);
 
@@ -444,6 +452,41 @@ export function WritePage() {
     }
   };
 
+  // P0：跑内容分析（参考文 → AI 拆解 → 结构化结果）
+  const runAnalysis = async () => {
+    if (!referenceText || !referenceText.trim()) {
+      showToast('❌ 先抓取或粘贴参考内容');
+      return;
+    }
+    setAnalysisStatus('running');
+    setAnalysisError('');
+    setLogs((prev) => [...prev, { type: 'info', text: `🧠 内容分析中（参考文 ${referenceText.length} 字）…`, at: Date.now() }]);
+    try {
+      const r = await window.electronAPI.runAnalysis({
+        title: query || '',
+        content: referenceText,
+        platform: '公众号 / 用户输入',
+        author: '',
+        source_url: referenceUrl || '',
+      });
+      if (!r.ok) {
+        setAnalysisStatus('failed');
+        setAnalysisError(r.error || '分析失败');
+        showToast('❌ 分析失败：' + (r.error || '未知错误'));
+        return;
+      }
+      setAnalysisId(r.id || null);
+      setAnalysis(r.analysis || {});
+      setAnalysisStatus('completed');
+      setLogs((prev) => [...prev, { type: 'done', text: `✅ 内容分析完成（${((r.durationMs || 0) / 1000).toFixed(1)}s · 7 个维度）`, at: Date.now() }]);
+      showToast('✅ 分析完成');
+    } catch (err: any) {
+      setAnalysisStatus('failed');
+      setAnalysisError(err.message);
+      showToast('❌ ' + err.message);
+    }
+  };
+
   // ===== 解析配图占位符 =====
   const parseImagePlaceholders = (content: string): { id: string; desc: string }[] => {
     const matches = content.matchAll(/\[\[配图:([^@]+)@(\w+)\]\]/g);
@@ -516,6 +559,15 @@ export function WritePage() {
             <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
               {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
             </button>
+            <button
+              className="write-analysis-trigger"
+              disabled={!referenceText || analysisStatus === 'running'}
+              onClick={runAnalysis}
+              title="用 AI 拆解参考内容（主题/观点/爆点/结构/用户画像/可借鉴）"
+            >
+              {analysisStatus === 'running' ? <Loader2 size={12} className="spin" /> : <BarChart3 size={12} />}
+              {analysisStatus === 'running' ? '分析中…' : '分析内容'}
+            </button>
           </div>
 
           {referenceText && (
@@ -544,6 +596,25 @@ export function WritePage() {
                 </pre>
               </details>
             </div>
+          )}
+
+          {/* P0：内容分析结果 */}
+          {(analysisStatus === 'running' || analysisStatus === 'completed' || analysisStatus === 'failed') && (
+            analysisStatus === 'running' ? (
+              <div className="analysis-loading">
+                <Loader2 size={20} className="spin" />
+                <span>正在拆解这篇内容的主题、观点、爆点、结构、用户画像…</span>
+              </div>
+            ) : (
+              <AnalysisPanel
+                analysis={analysis || {}}
+                status={analysisStatus === 'failed' ? 'failed' : 'completed'}
+                error={analysisError}
+                onStartWriting={() => {
+                  showToast('请使用「生成大纲」按钮，结果会作为参考');
+                }}
+              />
+            )
           )}
 
           <div style={{ marginTop: 12 }}>

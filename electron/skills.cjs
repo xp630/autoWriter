@@ -45,12 +45,13 @@ function loadAllSkills() {
   return {
     channels: loadSkillsInDir(path.join(skillsRoot, 'channels')),
     personas: loadSkillsInDir(path.join(skillsRoot, 'personas')),
+    analysis: loadSkillsInDir(path.join(skillsRoot, 'analysis')),
   };
 }
 
 function findSkill(name, kind) {
   const skillsRoot = path.resolve(__dirname, '..', 'src', 'skills');
-  const dir = path.join(skillsRoot, kind === 'channel' ? 'channels' : 'personas');
+  const dir = path.join(skillsRoot, kind === 'channel' ? 'channels' : kind === 'analysis' ? 'analysis' : 'personas');
   const skillFile = path.join(dir, name, 'SKILL.md');
   if (!fs.existsSync(skillFile)) return null;
   const raw = fs.readFileSync(skillFile, 'utf-8');

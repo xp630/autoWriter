@@ -125,3 +125,20 @@ CREATE INDEX IF NOT EXISTS idx_img_image ON article_images(image_id);
 CREATE INDEX IF NOT EXISTS idx_scheduled ON article_drafts(status, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_article_status ON article_drafts(status);
 CREATE INDEX IF NOT EXISTS idx_rss_items_unused ON rss_items(is_used, published_at DESC);
+-- ============================================================================
+-- P0 内容分析中心
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS content_analysis (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_url      TEXT DEFAULT '',
+  title           TEXT,
+  platform        TEXT DEFAULT '',
+  author          TEXT DEFAULT '',
+  content         TEXT NOT NULL,
+  analysis_json   TEXT NOT NULL DEFAULT '{}',
+  status          TEXT DEFAULT 'completed',  -- pending | running | completed | failed
+  error           TEXT DEFAULT '',
+  duration_ms     INTEGER DEFAULT 0,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_content_analysis_created ON content_analysis(created_at DESC);

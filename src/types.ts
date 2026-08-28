@@ -61,6 +61,19 @@ declare global {
       schedulerDisable: () => Promise<SchedulerSnapshot | null>;
       schedulerRunNow: (name: string) => Promise<{ ok: boolean; reason?: string; error?: string; detail?: any; durationMs?: number }>;
       schedulerSetInterval: (ms: number) => Promise<{ ok: boolean; error?: string; snapshot?: SchedulerSnapshot }>;
+
+      /** 内容分析 */
+      runAnalysis: (params: { title?: string; content: string; platform?: string; author?: string; source_url?: string }) => Promise<{
+        ok: boolean;
+        id?: number;
+        taskId?: string | null;
+        analysis?: ContentAnalysisResult;
+        error?: string;
+        durationMs?: number;
+      }>;
+      getAnalysis: (id: number) => Promise<ContentAnalysisRecord | null>;
+      listAnalyses: (params?: { limit?: number }) => Promise<Array<{ id: number; title: string; platform: string; status: string; duration_ms: number; created_at: string }>>;
+      deleteAnalysis: (id: number) => Promise<{ ok: boolean; changes: number }>;
     };
   }
 }
@@ -125,6 +138,51 @@ export interface QueueSnapshot {
   pending: number;
   completed: number;
   tasks: QueueTask[];
+}
+
+/** 内容分析结果（P0）*/
+export interface ContentAnalysisResult {
+  basic_info?: {
+    title?: string;
+    source?: string;
+    platform?: string;
+    author?: string;
+    keywords?: string[];
+  };
+  topic?: {
+    main_topic?: string;
+    category?: string;
+    summary?: string;
+  };
+  core_points?: string[];
+  viral?: {
+    emotion?: string;
+    conflict?: string;
+    reasons?: string[];
+  };
+  structure?: string[];
+  audience?: {
+    target_user?: string;
+    pain_points?: string[];
+  };
+  adaptation?: {
+    borrow?: string[];
+    avoid_copy?: string[];
+  };
+}
+
+export interface ContentAnalysisRecord {
+  id: number;
+  source_url: string;
+  title: string;
+  platform: string;
+  author: string;
+  content: string;
+  analysis: ContentAnalysisResult;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  error: string;
+  duration_ms: number;
+  created_at: string;
 }
 
 /** Scheduler 调度器快照 */

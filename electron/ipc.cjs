@@ -6,6 +6,12 @@ const { fetchUrl } = require('./fetcher.cjs');
 const { loadAllSkills, buildSkillInjection } = require('./skills.cjs');
 const { renderPrompt } = require('./prompts.cjs');
 const { TaskQueue } = require('./queue.cjs');
+const {
+  parseAnalysisJson,
+  loadAnalysisSkill,
+  buildAnalysisPrompt,
+  saveAnalysis,
+} = require('./analysis.cjs');
 
 /** 把 agent 流式 chunk 推到所有 renderer 窗口 */
 function emitAgentChunk(chunk) {
@@ -812,6 +818,101 @@ function registerIpc() {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  });
+
+  // ===== Content Analysis (P0) =====
+  ipcMain.handle('analysis:run', async (_e, params) => {
+    const { title, content, platform, author, source_url } = params || {};
+    if (!content || !String(content).trim()) {
+      throw new Error('缺少分析内容');
+    }
+
+    // 先入库一条 pending 记录拿出去
+    const pendingId = db.prepare(`
+      INSERT INTO content_analysis
+      (source_url, title, platform, author, content, analysis_json, status, duration_ms)
+      VALUES (?, ?, ?, ?, ?, '{}', 'running', 0)
+    `).run(
+      source_url || '',
+      title || '',
+      platform || '',
+      author || '',
+      String(content),
+    ).lastInsertRowid;
+
+    // 构造 prompt + 跑 skill
+    const skillBody = loadAnalysisSkill();
+    const userPrompt = buildAnalysisPrompt({ title, content, platform, author, source: source_url });
+    const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
+
+    const start = Date.now();
+    try {
+      const { taskId, promise } = enqueueAgentRun(
+        'analysis',
+        `分析: ${(title || '').slice(0, 30) || '未命名'}`,
+        { cli: 'claude', model: '' },
+        fullPrompt,
+      );
+      const { content: raw, elapsedMs } = await promise;
+      const parseResult = parseAnalysisJson(raw);
+      const duration = elapsedMs || (Date.now() - start);
+
+      if (!parseResult.ok) {
+        // 解析失败：保留 raw 到 error 字段
+        db.prepare(`
+          UPDATE content_analysis
+          SET status='failed', error=?, duration_ms=?, analysis_json=?
+          WHERE id=?
+        `).run(parseResult.error, duration, JSON.stringify({ raw: parseResult.raw }), pendingId);
+        return { ok: false, id: pendingId, error: parseResult.error, taskId };
+      }
+
+      // 成功：写回 analysis_json
+      db.prepare(`
+        UPDATE content_analysis
+        SET status='completed', analysis_json=?, duration_ms=?
+        WHERE id=?
+      `).run(JSON.stringify(parseResult.data), duration, pendingId);
+
+      return {
+        ok: true,
+        id: pendingId,
+        taskId,
+        analysis: parseResult.data,
+        durationMs: duration,
+      };
+    } catch (err) {
+      const duration = Date.now() - start;
+      db.prepare(`
+        UPDATE content_analysis
+        SET status='failed', error=?, duration_ms=?
+        WHERE id=?
+      `).run(err.message || String(err), duration, pendingId);
+      return { ok: false, id: pendingId, error: err.message, taskId: null };
+    }
+  });
+
+  ipcMain.handle('analysis:get', (_e, id) => {
+    const row = db.prepare(`SELECT * FROM content_analysis WHERE id = ?`).get(Number(id));
+    if (!row) return null;
+    let parsed = {};
+    try { parsed = JSON.parse(row.analysis_json || '{}'); } catch {}
+    return { ...row, analysis: parsed };
+  });
+
+  ipcMain.handle('analysis:list', (_e, { limit = 20 } = {}) => {
+    const rows = db.prepare(`
+      SELECT id, source_url, title, platform, author, status, duration_ms, created_at
+      FROM content_analysis
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(Number(limit) || 20);
+    return rows;
+  });
+
+  ipcMain.handle('analysis:delete', (_e, id) => {
+    const r = db.prepare(`DELETE FROM content_analysis WHERE id = ?`).run(Number(id));
+    return { ok: true, changes: r.changes };
   });
 }
 
