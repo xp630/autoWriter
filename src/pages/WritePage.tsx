@@ -13,7 +13,8 @@ import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3 } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
 import { ArticleViewer } from '../components/ArticleViewer';
-import type { ContentAnalysisResult } from '../types';
+import type { ContentAnalysisResult, Angle } from '../types';
+import { getAgentSettings } from '../utils/storage';
 import { getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
 import { useActiveProfile } from '../hooks/useActiveProfile';
 // (FileEdit already imported for Card icon usage)
@@ -66,6 +67,11 @@ export function WritePage() {
   const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [analysisError, setAnalysisError] = useState<string>('');
+  // ===== P0-1b：创作方向 =====
+  const [angles, setAngles] = useState<Angle[] | null>(null);
+  const [anglesStatus, setAnglesStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+  const [anglesError, setAnglesError] = useState<string>('');
+  const [trackFit, setTrackFit] = useState<{ matches?: boolean; article_track?: string; user_track?: string; note?: string } | null>(null);
   const analysisDomain = settings.track;   // 账号级赛道（设置页配）
   const [referenceText, setReferenceText] = useState('');
   const [fetching, setFetching] = useState(false);
@@ -516,6 +522,56 @@ export function WritePage() {
     return () => clearTimeout(timer);
   }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, style, length, needImage]);
 
+  // 分析记录变化时清空旧方向，避免串号
+  useEffect(() => { setAngles(null); setAnglesStatus('idle'); setAnglesError(''); setTrackFit(null); }, [analysisId]);
+
+  // ===== P0-1b：生成创作方向（走队列，复用 parseAnalysisJson）=====
+  const handleGenerateAngles = async () => {
+    if (!analysisId) { showToast('❌ 请先点「分析内容」生成分析结果'); return; }
+    setAnglesStatus('running');
+    setAnglesError('');
+    setTrackFit(null);
+    try {
+      const cfg = getAgentSettings();
+      const r = await window.electronAPI.generateAngles({
+        analysisId, track: analysisDomain || '',
+        profileId: profile.id,
+        cli: cfg.cli, model: cfg.model || undefined,
+      });
+      if (!r.ok) { setAnglesStatus('failed'); setAnglesError(r.error || '生成失败'); showToast('❌ ' + (r.error || '生成失败')); return; }
+      setAngles(r.angles || []);
+      setTrackFit(r.track_fit || null);
+      setAnglesStatus('completed');
+      showToast(`✅ 已生成 ${(r.angles || []).length} 个方向`);
+    } catch (err: any) {
+      setAnglesStatus('failed');
+      setAnglesError(err.message || String(err));
+      showToast('❌ ' + (err.message || String(err)));
+    }
+  };
+
+  // 用某个方向开始创作：把方向的 title/core_point/structure 预填到写作页
+  const handleStartWithAngle = (angle: Angle) => {
+    const parts: string[] = [];
+    if (angle.title) parts.push(angle.title);
+    if (angle.core_point) parts.push(angle.core_point);
+    setQuery(parts.join(' / '));
+    if (angle.structure && angle.structure.length > 0) {
+      const outlineText = angle.structure.map((s, i) => '## ' + (i + 1) + '. ' + s).join('\n\n');
+      setOutline(outlineText);
+      setOutlineDirty(true);
+    }
+    setStep(1);
+    showToast('✅ 已预填方向「' + (angle.angle_type || '...') + '」到写文章页');
+  };
+
+  
+
+  // 保存为选题（P0-2 真正实现，先给个 toast 占位）
+  const handleSaveTopicStub = (angle: Angle) => {
+    showToast('🚧 「保存为选题」将在 P0-2 选题中心实现，先在分析结果里选中');
+  };
+
   // ===== 解析配图占位符 =====
   const parseImagePlaceholders = (content: string): { id: string; desc: string }[] => {
     const matches = content.matchAll(/\[\[配图:([^@]+)@(\w+)\]\]/g);
@@ -641,6 +697,13 @@ export function WritePage() {
                 analysis={analysis || {}}
                 status={analysisStatus === 'failed' ? 'failed' : 'completed'}
                 error={analysisError}
+                angles={angles}
+                anglesStatus={anglesStatus}
+                anglesError={anglesError}
+                trackFit={trackFit}
+                onGenerateAngles={handleGenerateAngles}
+                onSaveTopic={handleSaveTopicStub}
+                onStartWithAngle={handleStartWithAngle}
                 onStartWriting={() => {
                   // P0 §9.3：点击「开始写作」直接触发大纲生成（会自动带上分析上下文）
                   if (!query.trim()) {

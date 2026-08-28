@@ -1,16 +1,22 @@
-// AnalysisPanel — 展示 AI 内容分析的 7 个卡片
+// AnalysisPanel — 展示 AI 内容分析的 7 个卡片 + 创作方向（P0-1b）
 import {
   FileText, Globe, Hash, Lightbulb, MessageSquare,
-  Sparkles, Target, Users, Wand2, XCircle,
+  Sparkles, Target, Users, Wand2, XCircle, CheckCircle2, AlertTriangle, Loader2, BookmarkPlus,
 } from 'lucide-react';
-import type { ContentAnalysisResult } from '../types';
+import type { ContentAnalysisResult, Angle } from '../types';
 
 interface Props {
   analysis: ContentAnalysisResult;
   status: 'running' | 'completed' | 'failed';
   error?: string;
   onStartWriting?: () => void;
-  onGenerateAngles?: () => void;  // 未来 P1
+  onGenerateAngles?: () => void;
+  angles?: Angle[] | null;
+  anglesStatus?: 'idle' | 'running' | 'completed' | 'failed';
+  anglesError?: string;
+  trackFit?: { matches?: boolean; article_track?: string; user_track?: string; note?: string } | null;
+  onSaveTopic?: (angle: Angle) => void;
+  onStartWithAngle?: (angle: Angle) => void;
 }
 
 const SECTIONS = [
@@ -54,8 +60,10 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
         </div>
         <div className="analysis-actions">
           {onGenerateAngles && (
-            <button type="button" className="btn btn-outline btn-sm" disabled title="P1 阶段开放">
-              <Wand2 size={12} /> 生成创作方向
+            <button type="button" className="btn btn-outline btn-sm" disabled={anglesStatus === 'running'} onClick={onGenerateAngles} title="基于分析结果，从当前创作身份赛道生成 5 个互斥角度">
+              {anglesStatus === 'running'
+                ? <><Loader2 size={12} className="spin" /> 生成中…</>
+                : <><Wand2 size={12} /> 生成创作方向</>}
             </button>
           )}
           {onStartWriting && (
@@ -160,6 +168,62 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
           );
         })}
       </div>
+
+      {/* ===== 创作方向（P0-1b）===== */}
+      {(anglesStatus === 'running') && (
+        <div className="gen-loading angles-loading">
+          <Loader2 size={16} className="spin" />
+          <span>AI 正在从你的赛道生成 5 个创作方向…</span>
+        </div>
+      )}
+
+      {trackFit && (
+        <div className={`track-fit-banner ${trackFit.matches ? 'fit' : 'mismatch'}`}>
+          {trackFit.matches
+            ? <><CheckCircle2 size={16} /> 本文与「{trackFit.user_track || '当前'}」赛道匹配：{trackFit.note}</>
+            : <><AlertTriangle size={16} /> 本文偏「{trackFit.article_track || '?'}」，与你的「{trackFit.user_track || '当前'}」赛道不匹配：{trackFit.note}</>}
+        </div>
+      )}
+
+      {anglesError && (
+        <div className="angles-error">
+          <XCircle size={15} /> 生成方向失败：{anglesError}
+        </div>
+      )}
+
+      {angles && angles.length > 0 && (
+        <div className="angles-list">
+          {angles.map((a, i) => (
+            <div key={i} className="angle-card">
+              <div className="angle-head">
+                <span className="angle-type">{a.angle_type || `方向 ${i + 1}`}</span>
+                {onStartWithAngle && (
+                  <button type="button" className="btn btn-primary btn-sm angle-start" onClick={() => onStartWithAngle(a)}>
+                    用此方向开始创作 <Wand2 size={12} />
+                  </button>
+                )}
+              </div>
+              <div className="angle-title">{a.title}</div>
+              {a.core_point && <div className="angle-core">{a.core_point}</div>}
+              <div className="angle-meta">
+                {a.target_user && <div className="angle-row"><span className="viral-label">目标用户</span><span>{a.target_user}</span></div>}
+                {a.structure && a.structure.length > 0 && (
+                  <div className="angle-row">
+                    <span className="viral-label">推荐结构</span>
+                    <ol className="analysis-list compact">{a.structure.map((s, j) => <li key={j}>{s}</li>)}</ol>
+                  </div>
+                )}
+                {a.reason && <div className="angle-row"><span className="viral-label">推荐理由</span><span>{a.reason}</span></div>}
+              </div>
+              {onSaveTopic && (
+                <button type="button" className="btn btn-outline btn-sm angle-save" onClick={() => onSaveTopic(a)}>
+                  <BookmarkPlus size={13} /> 保存为选题
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

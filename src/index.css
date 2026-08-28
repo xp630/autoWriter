@@ -2311,3 +2311,26 @@ select:focus-visible {
     padding: 0 !important;
   }
 }
+
+/* ===== 创作方向 P0-1b ===== */
+.angles-loading { margin: 12px 0 4px; }
+.angles-error { display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin: 12px 0; background: var(--danger-soft); color: var(--danger); border-radius: var(--r-sm); font-size: 13px; }
+.track-fit-banner {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 14px; margin: 12px 0;
+  border-radius: var(--r-sm); font-size: 13px; line-height: 1.5;
+}
+.track-fit-banner.fit      { background: var(--line-light); color: var(--line-2); }
+.track-fit-banner.mismatch { background: var(--accent-soft); color: #b45309; }
+.angles-list { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.angle-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 14px 16px; }
+.angle-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 8px; }
+.angle-type { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; background: var(--bg-soft); border-radius: 999px; font-weight: 600; }
+.angle-title { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 6px; line-height: 1.4; }
+.angle-core { font-size: 13px; color: var(--ink-2); margin-bottom: 10px; line-height: 1.6; padding: 8px 10px; background: var(--bg-soft); border-radius: var(--r-sm); }
+.angle-meta { display: flex; flex-direction: column; gap: 8px; }
+.angle-row { display: flex; flex-direction: column; gap: 2px; }
+.angle-row span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.angle-row > span + *, .angle-row > ol { font-size: 13px; color: var(--ink-2); }
+.angle-start { white-space: nowrap; }
+.angle-save { margin-top: 10px; }
