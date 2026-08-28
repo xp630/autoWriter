@@ -1,6 +1,6 @@
 # 内容策略系统 V2 · Strategy-Driven Workflow
 
-> 状态：已实现（后端 + 双模式入口）；策略库页与回填 UI 待做
+> 状态：策略层后端 + 双模式入口 + 策略库页 + 效果回填录入 均已实现；导出摘要/发布清单/P2 策略评分待做
 > 取代：`P0_CONTENT_DECISION.md` 里 P0-1/P0-2 的原始划分
 > 上游设计输入：《AutoWriter 内容策略系统（V2）》
 
@@ -14,9 +14,10 @@ ContentStrategy
 ├── 正文生成   ✅ 注入 {{strategyBlock}}
 ├── 二次润色   ✅ 注入 + 禁改五要素（立意/角度/情绪/目标/差异）
 ├── AI 配图    ✅ emotion→画面气质，goal→图像作用
-├── 导出       ⚠️ 后端可反查，导出未附策略摘要
+├── 导出       ⚠️ 后端可反查（article:strategyFor），导出未附策略摘要
 ├── 发布       ⚠️ 后端可反查，发布前检查清单未做
-└── 效果回填   ✅ 表 + IPC 已就绪，录入 UI 未做
+├── 效果回填   ✅ 表 + IPC + 策略详情页内联录入表单
+└── 策略库     ✅ 浏览/筛选/搜索/详情/采用记录/战绩汇总/从策略重新创作
 ```
 
 ## 为什么必须有"反查口"
@@ -113,19 +114,34 @@ article:strategyFor(articleId) → 该行策略 + adoptionId
 - 迁移时调用 `normalizeDifferentiator / normalizeTrackFit / normalizeFeasibility`，
   保证库里**只有一种形状**，不留 `matches/note`、`易/中/难` 这类旧字段
 
+## 已实现（补）
+
+- **策略库页** `src/pages/StrategiesPage.tsx`：侧栏「创作」组入口；卡片直显立意
+  （要不要复用靠它，不用点详情）；模式/状态/关键词筛选走后端过滤；
+  详情展开全部字段 + 采用记录 + 战绩汇总；归档/删除；「从这条重新创作」。
+- **跳页交接** `src/utils/strategyHandoff.ts`：模块级一次性 consume（take 即清空）。
+  WritePage 必须在**草稿恢复 effect 之后**消费，否则草稿会把策略预填洗掉。
+  复用历史策略 = 再落一条 `strategy_articles`（这才是 1:N 的真实意义）。
+- **效果回填录入 UI**：每条采用记录内联表单（阅读/点赞/收藏/评论/涨粉/主观分 + 备注）。
+  先手动录，不等自动抓。
+
 ## 待做
 
-1. **策略库页**（§十二）：浏览/筛选/搜索/复用/**从策略直接开一篇新文章**；顺带收编"保存为选题"
-   （选题降级为策略来源之一，不再是并列页面）
-2. **效果回录入库 UI**：在「我的文章」详情里填阅读/评论/涨粉（后端与表已就绪）
-3. **导出附策略摘要**、**发布前按 goal 生成检查清单**
+1. **策略评分/推荐**（P2）：有了真实战绩才能做——按赛道统计各角度的平均评论/阅读，
+   反向校正 `value_score`。例：AI 赛道下「反转观点」均评 230 vs 「教程拆解」均评 35。
+2. **导出附策略摘要**、**发布前按 goal 生成检查清单**
+3. 「保存为选题」仍是占位：选题应降级为策略的一个来源（`source_type='manual'`），
+   与策略库合并，不再做并列页面
 4. `article_drafts` 仍无 `profile_id` → 「我的文章」两个账号混在一起（待决策）
 5. `listAnalyses` 在 renderer 无调用方 → 刷新不恢复上次分析
+6. e2e 偶发：`articles-flow:51` 与 `dashboard-flow:29` 在 CPU 抢严重时超时（
+   单跑必过），应改成等就绪而不是依赖默认 5s expect 超时
 
 ## 相关实现文件
 
 `electron/analysis.cjs`（归一化 + `buildStrategyBlock` + `buildImageStrategyHint`）、
 `electron/ipc.cjs`（策略 handlers + `strategyForArticle`）、`electron/schema.sql`、`electron/db.cjs`（迁移）、
 `src/skills/strategy/angle-generation/SKILL.md`（A）、`src/skills/strategy/topic-planning/SKILL.md`（B）、
-`src/components/AnalysisPanel.tsx`、`src/pages/WritePage.tsx`、
-`tests/unit/strategy-block.test.ts`、`tests/e2e/strategy-flow.spec.ts`
+`src/components/AnalysisPanel.tsx`、`src/pages/WritePage.tsx`、`src/pages/StrategiesPage.tsx`（策略库）、
+`src/utils/strategyHandoff.ts`（跳页交接）、
+`tests/unit/strategy-block.test.ts`、`tests/e2e/strategy-flow.spec.ts`、`tests/e2e/strategies-library-flow.spec.ts`
