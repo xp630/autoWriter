@@ -5,7 +5,7 @@ import type { SchedulerSnapshot } from '../types';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
-import { setAgentSettings, setImageSettings } from '../utils/storage';
+import { setAgentSettings, setImageSettings, getAgentSettings, getImageSettings } from '../utils/storage';
 
 interface CliStatus {
   pi: boolean;

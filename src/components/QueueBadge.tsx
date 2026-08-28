@@ -56,8 +56,6 @@ export function QueueBadge() {
   }, [snapshot?.running]);
 
   const active = (snapshot?.running || 0) + (snapshot?.pending || 0);
-  if (!snapshot) return null;
-  if (active === 0 && (snapshot?.completed || 0) === 0) return null;
 
   const handleCancel = useCallback(async (taskId: string) => {
     const r = await window.electronAPI.queueCancel(taskId);
@@ -69,6 +67,9 @@ export function QueueBadge() {
     await window.electronAPI.queueClearCompleted();
     showToast('🧹 已清空历史');
   }, []);
+
+  if (!snapshot) return null;
+  if (active === 0 && (snapshot?.completed || 0) === 0) return null;
 
   return (
     <div className="queue-badge-wrap">

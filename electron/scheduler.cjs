@@ -177,8 +177,14 @@ function processScheduledArticles(db) {
   return { processed, articles: titles };
 }
 
-/** 扫描需要同步的博主：标记 last_synced_at（实际抓取逻辑留待接入） */
+/** 扫描需要同步的博主：标记 last_synched_at（实际抓取逻辑留待接入） */
 function syncBloggers(db) {
+  // bloggers 表 V2 Phase 1 才会存在，Phase 1 容错：表不在就跳过
+  const tableExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='bloggers'"
+  ).get();
+  if (!tableExists) return { processed: 0, skipped: 'bloggers table not yet created' };
+
   const rows = db.prepare(`
     SELECT id, name, platform, sync_interval_hours, last_synced_at FROM bloggers
     WHERE enabled = 1
@@ -201,6 +207,12 @@ function syncBloggers(db) {
 
 /** 清理过期选题：30 天没动作的 to_write 状态，标记 pending */
 function cleanupStaleTopics(db) {
+  // topics 表 V2 Phase 1 才会存在，Phase 1 容错：表不在就跳过
+  const tableExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='topics'"
+  ).get();
+  if (!tableExists) return { processed: 0, skipped: 'topics table not yet created' };
+
   const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
   const result = db.prepare(`
     UPDATE topics SET status = 'pending', updated_at = CURRENT_TIMESTAMP

@@ -44,10 +44,11 @@ const PAGES = [
 
 for (const p of PAGES) {
   test(`点击"${p.label}"激活对应导航项`, async () => {
-    const link = ctx.window.getByText(p.label, { exact: false }).first();
+    // 用 .nav-item 选择器精确锁侧边栏（避免和 Dashboard 的 "写新文章" 磁贴冲突）
+    const link = ctx.window.locator('.nav-item').filter({ hasText: p.label }).first();
     await expect(link).toBeVisible({ timeout: 5000 });
     await link.click();
-    // Sidebar 内部 state 切换：验证 .nav-item.active 文案匹配
+    // 验证 .nav-item.active 包含该 label
     const activeItem = ctx.window.locator('.nav-item.active');
     await expect(activeItem).toContainText(p.label, { timeout: 2000 });
   });
@@ -65,7 +66,7 @@ test('页面切换不抛 page error', async () => {
   });
 
   for (const label of ['写文章', '我的文章', '选题中心', '设置']) {
-    await ctx.window.getByText(label, { exact: false }).first().click();
+    await ctx.window.locator('.nav-item').filter({ hasText: label }).first().click();
     await ctx.window.waitForTimeout(200);
   }
 

@@ -847,11 +847,25 @@ function registerIpc() {
     ).lastInsertRowid;
 
     // 构造 prompt + 跑 skill
-    const skillBody = loadAnalysisSkill();
-    const userPrompt = buildAnalysisPrompt({ title, content, platform, author, source: source_url, domain });
-    const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
+    let skillBody;
+    let userPrompt;
+    let fullPrompt;
+    let start;
+    try {
+      skillBody = loadAnalysisSkill();
+      userPrompt = buildAnalysisPrompt({ title, content, platform, author, source: source_url, domain });
+      fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
+      start = Date.now();
+    } catch (loadErr) {
+      // 准备阶段失败（skill 找不到 / prompt 构造失败）也要写一条 failed 记录
+      db.prepare(`
+        UPDATE content_analysis
+        SET status='failed', error=?, duration_ms=?
+        WHERE id=?
+      `).run(loadErr.message || String(loadErr), 0, pendingId);
+      return { ok: false, id: pendingId, error: loadErr.message, taskId: null };
+    }
 
-    const start = Date.now();
     try {
       const { taskId, promise } = enqueueAgentRun(
         'analysis',

@@ -75,11 +75,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   schedulerRunNow: (name) => ipcRenderer.invoke('scheduler:run-now', name),
   schedulerSetInterval: (ms) => ipcRenderer.invoke('scheduler:set-interval', ms),
 
-  // 内容分析（P0）
-  runAnalysis: (params: any) => ipcRenderer.invoke('analysis:run', params),
-  getAnalysis: (id: number) => ipcRenderer.invoke('analysis:get', id),
-  listAnalyses: (params?: { limit?: number }) => ipcRenderer.invoke('analysis:list', params),
-  deleteAnalysis: (id: number) => ipcRenderer.invoke('analysis:delete', id),
+  // 内容分析（P0）-- 注意：preload 是 CJS 纯 JS，不能加 TypeScript 注解
+  runAnalysis: (params) => ipcRenderer.invoke('analysis:run', params),
+  getAnalysis: (id) => ipcRenderer.invoke('analysis:get', id),
+  listAnalyses: (params) => ipcRenderer.invoke('analysis:list', params),
+  deleteAnalysis: (id) => ipcRenderer.invoke('analysis:delete', id),
 
   // 测试钩子 —— main.cjs 在 AUTOWRITER_TEST_MODE=1 时注册对应的 test:* handler
   // preload 始终暴露这些方法（不检查 env，避免 preload process.env 不可靠的问题）

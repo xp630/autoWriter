@@ -62,38 +62,6 @@ export function WritePage() {
   const [savedQuery, setSavedQuery] = useState('');  // 保存原始关键词，大纲编辑时清空 query 也能生成
   const [referenceUrl, setReferenceUrl] = useState('');
   // 从 localStorage 恢复草稿（如果有）
-  useEffect(() => {
-    const draft = getDraft();
-    if (!draft) return;
-    setQuery(draft.query || '');
-    setReferenceUrl(draft.referenceUrl || '');
-    setReferenceText(draft.referenceText || '');
-    setOutline(draft.outline || '');
-    setOutlineDirty(!!draft.outlineDirty);
-    setChannel(draft.channel || 'wechat');
-    setPersona(draft.persona || '');
-    setStyle(draft.style || 'tech');
-    setLength(draft.length || 'medium');
-    setNeedImage(draft.needImage !== false);
-    setLogs((prev) => [...prev, {
-      type: 'info',
-      text: `📝 恢复了${draft.savedAt ? ' ' + new Date(draft.savedAt).toLocaleTimeString('zh-CN') : ''}保存的草稿`,
-      at: Date.now(),
-    }]);
-  }, []);
-
-  // 自动保存（debounced 1.5s）
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const draft: DraftState = {
-        query, referenceUrl, referenceText, outline, outlineDirty,
-        channel, persona, style, length, needImage,
-      };
-      setDraft(draft);
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, persona, style, length, needImage]);
-
   // P0 内容分析
   const [analysis, setAnalysis] = useState<ContentAnalysisResult | null>(null);
   const [analysisId, setAnalysisId] = useState<number | null>(null);
@@ -515,6 +483,39 @@ export function WritePage() {
       showToast('❌ ' + err.message);
     }
   };
+
+
+  useEffect(() => {
+    const draft = getDraft();
+    if (!draft) return;
+    setQuery(draft.query || '');
+    setReferenceUrl(draft.referenceUrl || '');
+    setReferenceText(draft.referenceText || '');
+    setOutline(draft.outline || '');
+    setOutlineDirty(!!draft.outlineDirty);
+    setChannel(draft.channel || 'wechat');
+    setPersona(draft.persona || '');
+    setStyle(draft.style || 'tech');
+    setLength(draft.length || 'medium');
+    setNeedImage(draft.needImage !== false);
+    setLogs((prev) => [...prev, {
+      type: 'info',
+      text: `📝 恢复了${draft.savedAt ? ' ' + new Date(draft.savedAt).toLocaleTimeString('zh-CN') : ''}保存的草稿`,
+      at: Date.now(),
+    }]);
+  }, []);
+
+  // 自动保存（debounced 1.5s）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const draft: DraftState = {
+        query, referenceUrl, referenceText, outline, outlineDirty,
+        channel, persona, style, length, needImage,
+      };
+      setDraft(draft);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, persona, style, length, needImage]);
 
   // ===== 解析配图占位符 =====
   const parseImagePlaceholders = (content: string): { id: string; desc: string }[] => {

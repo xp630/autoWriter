@@ -209,8 +209,8 @@ export function ArticlesPage() {
         model: settings.model || undefined,
         content: selected.content,
         instruction: polishInstruction,
-        channel: settings.channel,
-        persona: settings.persona,
+        // channel 从文章自身拿（aw_settings 里本来就没有这两个字段，属于遗留 bug）
+        channel: (selected as any).platform || undefined,
       });
       const updated = { ...selected, content: r.content, word_count: r.content.length };
       setSelected(updated);

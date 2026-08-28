@@ -21,6 +21,7 @@ function makeMockDb() {
       return [];
     },
     run: () => ({ changes: 0 }),
+    get: () => undefined,   // 表存在检查用
   };
   return {
     prepare: () => stmt,
@@ -160,11 +161,15 @@ describe('Scheduler — 内置任务（用 mock db）', () => {
     expect(processScheduledArticles(db)).toEqual({ processed: 0 });
   });
 
-  it('syncBloggers 在没数据时返回 processed:0', () => {
-    expect(syncBloggers(db)).toEqual({ processed: 0, due: [] });
+  it('syncBloggers 表不存在时跳过（不抛）', () => {
+    const r = syncBloggers(db);
+    expect(r.processed).toBe(0);
+    expect(r.skipped).toContain('bloggers');
   });
 
-  it('cleanupStaleTopics 在 mock 上不报错', () => {
-    expect(() => cleanupStaleTopics(db)).not.toThrow();
+  it('cleanupStaleTopics 表不存在时跳过（不抛）', () => {
+    const r = cleanupStaleTopics(db);
+    expect(r.processed).toBe(0);
+    expect(r.skipped).toContain('topics');
   });
 });

@@ -578,17 +578,14 @@ export function ImagesPage() {
     if (!promptInput.trim()) { showToast('请输入提示词'); return; }
     setGenerating(true);
     let providerId = '', modelId = '';
-    try {
-      const imgSettings = getImageSettings();
-      if (imgSettings) {
-        const s = JSON.parse(imgSettings);
-        providerId = s.provider || '';
-        modelId = s.model || '';
-        showToast(`生图使用: ${providerId || '自动'} / ${modelId || '默认'}`);
-      } else {
-        showToast('未找到设置，将使用默认');
-      }
-    } catch (e) { console.error('读取设置失败', e); }
+    const imgSettings = getImageSettings();
+    if (imgSettings.provider || imgSettings.model) {
+      providerId = imgSettings.provider;
+      modelId = imgSettings.model;
+      showToast(`生图使用: ${providerId || '自动'} / ${modelId || '默认'}`);
+    } else {
+      showToast('未找到设置，将使用默认');
+    }
     try {
       const r = await window.electronAPI.generateImageFor({
         articleId: 0,
@@ -652,14 +649,9 @@ export function ImagesPage() {
   const [currentProvider, setCurrentProvider] = useState('');
   const [currentModel, setCurrentModel] = useState('');
   useEffect(() => {
-    try {
-      const raw = getImageSettings();
-      if (raw) {
-        const s = JSON.parse(raw);
-        setCurrentProvider(s.provider || '');
-        setCurrentModel(s.model || '');
-      }
-    } catch {}
+    const s = getImageSettings();
+    setCurrentProvider(s.provider);
+    setCurrentModel(s.model);
   }, []);
 
   return (
