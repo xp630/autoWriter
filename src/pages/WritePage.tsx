@@ -9,6 +9,7 @@ import { Stepper } from '../components/Stepper';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
 import { showToast } from '../toast';
+import { takePendingStrategy } from '../utils/strategyHandoff';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3, Layers, Compass } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
@@ -553,6 +554,41 @@ export function WritePage() {
   useEffect(() => { setAngles(null); setAnglesStatus('idle'); setAnglesError(''); setTrackFit(null); }, [analysisId]);
 
   // ===== P0-1b：生成创作方向（走队列，复用 parseAnalysisJson）=====
+  /**
+   * 策略库→写文章页的交接（V2 §十二“从策略重新创作”）。
+   * 必须在草稿恢复 effect 之后声明：同一个 tick 里后跑的覆盖先跑的，
+   * 否则草稿里的旧 query/大纲会把刚载入的策略预填洗掉。
+   */
+  useEffect(() => {
+    const id = takePendingStrategy();
+    if (!id) return;
+    void (async () => {
+      try {
+        const s = await window.electronAPI.getStrategy(id);
+        if (!s) { showToast('❌ 策略不存在，可能已被删除'); return; }
+        // 复用历史策略也算一次采纳（1:N：同一策略可以有无数条执行记录）
+        const adopt = await window.electronAPI.adoptStrategy({ strategyId: id });
+        if (!adopt?.ok) showToast('⚠️ 采纳记录写入失败：' + (adopt?.error || ''));
+        setStrategyMode(s.mode);
+        setStrategy({
+          strategyId: id, mode: s.mode, strategy: s,
+          adoptionId: adopt?.ok ? adopt.adoptionId : undefined,
+        });
+        const parts = [s.title, s.core_point].filter(Boolean) as string[];
+        if (parts.length) setQuery(parts.join(' / '));
+        if (s.structure && s.structure.length) {
+          setOutline(s.structure.map((x, i) => '## ' + (i + 1) + '. ' + x).join('\n\n'));
+          setOutlineDirty(true);
+        }
+        setStep(1);
+        showToast(`✅ 已载入策略「${s.angle_type || s.title}」，大纲与正文会按它的立意/情绪/目标执行`);
+      } catch (err: any) {
+        showToast('❌ 载入策略失败：' + (err.message || err));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleGenerateAngles = async () => {
     if (!query.trim()) { showToast('❌ 请先填写主题'); return; }
     if (!isTopic) {

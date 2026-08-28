@@ -10,13 +10,14 @@ import { DashboardPage } from './pages/DashboardPage';
 import { WritePage } from './pages/WritePage';
 import { ArticlesPage } from './pages/ArticlesPage';
 import { TopicsPage } from './pages/TopicsPage';
+import { StrategiesPage } from './pages/StrategiesPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { ImagesPage } from './pages/ImagesPage';
 import { SettingsPage } from './pages/SettingsPage';
 
-type PageName = 'dashboard' | 'write' | 'articles' | 'topics' | 'sources' | 'images' | 'settings';
+type PageName = 'dashboard' | 'write' | 'strategies' | 'articles' | 'topics' | 'sources' | 'images' | 'settings';
 
-const PAGES: PageName[] = ['dashboard', 'write', 'articles', 'topics', 'sources', 'images', 'settings'];
+const PAGES: PageName[] = ['dashboard', 'write', 'strategies', 'articles', 'topics', 'sources', 'images', 'settings'];
 
 export default function App() {
   const [page, setPage] = useState<PageName>('dashboard');
@@ -69,6 +70,7 @@ export default function App() {
         </div>
         {page === 'dashboard' && <DashboardPage onNavigate={handleNav} />}
         {page === 'write' && <WritePage />}
+        {page === 'strategies' && <StrategiesPage onNavigate={handleNav} />}
         {page === 'articles' && <ArticlesPage />}
         {page === 'topics' && <TopicsPage />}
         {page === 'sources' && <SourcesPage />}
