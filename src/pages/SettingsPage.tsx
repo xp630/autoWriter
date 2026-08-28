@@ -550,7 +550,7 @@ export function SettingsPage() {
                   <button
                     className="btn btn-outline btn-sm"
                     onClick={() => testProvider(editingProvider, providerForm.accessToken)}
-                    disabled={!providerForm.accessToken || testingProvider}
+                    disabled={testingProvider}
                   >
                     {testingProvider ? <><Loader2 size={12} className="spin" /> 测试中…</> : '🧪 测试'}
                   </button>
