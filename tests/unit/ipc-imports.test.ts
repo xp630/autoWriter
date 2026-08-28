@@ -37,9 +37,15 @@ describe('ipc.cjs import 完整性（静态）', () => {
       const mIdx = IPC.indexOf(`require('${req}')`);
       let imported = false;
       if (mIdx !== -1) {
-        // 往前回溯最多 200 字符找解构 { ... }
-        const before = IPC.slice(Math.max(0, mIdx - 240), mIdx + req.length + 30);
-        imported = new RegExp(`[\\s,{]${name}[\\s,}]`).test(before);
+        // 找包住这个 require 的解构块：往前到最近的 `{`，往后到 `}`。
+        // 不能只回看固定 240 字符 —— 导入名一多就会把靠前的符号挤出窗口（曾经误报 parseAnalysisJson）。
+        // 形态是 `const { a, b } = require('...')` —— 闭合的 } 在 require 之前
+        const closeIdx = IPC.lastIndexOf('}', mIdx);
+        const openIdx = IPC.lastIndexOf('{', closeIdx);
+        if (openIdx !== -1 && closeIdx !== -1) {
+          const block = IPC.slice(openIdx, closeIdx + 1);
+          imported = new RegExp(`[\\s,{]${name}[\\s,}]`).test(block);
+        }
       }
 
       it(`${name}：在 ipc.cjs 中被调用则必须 import（${req}）`, () => {

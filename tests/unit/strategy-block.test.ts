@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseStrategyResult, parseAngleResult, normalizeStrategy,
-  normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
+  normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility, evidenceCoverage,
   buildStrategyBlock, buildImageStrategyHint,
 } from '../../electron/analysis.cjs';
 
@@ -130,8 +130,30 @@ describe('parseStrategyResult · 双模式返回平铺策略', () => {
     if (r.ok) {
       expect(r.track_fit).toBeNull();
       expect(r.strategies[0].feasibility.difficulty).toBe('easy');
-      expect(r.strategies[0].fact_risk).toBe('medium');
+      // V3：列了证据但一条都没勾 ready → 事实风险直接到 high
+      //（旧规则是“≥3 条才 high”，但“列 2 条全没备”显然比“列 3 条备了 2 条”更危险）
+      expect(r.strategies[0].fact_risk).toBe('high');
+      expect(r.strategies[1].fact_risk).toBe('medium');   // 没列证据的 B 策略给 medium
     }
+  });
+
+  it('V3：证据全备齐 → fact_risk 降为 low', () => {
+    const r = parseStrategyResult({
+      angles: [{
+        title: 't', core_point: 'p',
+        evidence: [{ item: '官方价格', status: 'ready' }, { item: '规格对照', status: 'ready' }],
+      }, ...mk(2)],
+    }, 'topic');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.strategies[0].fact_risk).toBe('low');
+  });
+
+  it('V3：部分备齐 → medium', () => {
+    const s = normalizeStrategy({
+      title: 't', core_point: 'p',
+      evidence: [{ item: 'A', status: 'ready' }, { item: 'B', status: 'todo' }, { item: 'C' }],
+    }, 'topic');
+    expect(s.fact_risk).toBe('medium');
   });
 
   it('少于 3 条失败（两模式一致）', () => {
@@ -207,25 +229,43 @@ describe('buildStrategyBlock · B 模式（抗幻觉）', () => {
     expect(out).toContain('部分用户');   // 允许的普遍观察措辞
   });
 
-  it('high 风险追加更强的约束', () => {
-    expect(buildStrategyBlock(b)).toContain('本角度事实风险高');
-    expect(buildStrategyBlock({ ...b, fact_risk: 'low' })).not.toContain('本角度事实风险高');
+  it('high 风险追加更强的约束；证据备齐后不再出现', () => {
+    expect(buildStrategyBlock(b)).toContain('本篇证据严重不足');
+    expect(buildStrategyBlock({ ...b, fact_risk: 'low' })).not.toContain('本篇证据严重不足');
   });
 
-  it('列出 evidence_needed 待补清单', () => {
+  it('ready 与 todo 分开下发：已准写的 vs 必须占位的', () => {
+    const out = buildStrategyBlock({
+      mode: 'topic', title: 'T', core_point: 'P', fact_risk: 'medium',
+      evidence_needed: [
+        { item: '官方价格', status: 'ready' },
+        { item: '实测记录', status: 'todo' },
+      ],
+    });
+    expect(out).toContain('证据账');
+    expect(out).toContain('成立度 1/2（50%）');
+    expect(out).toContain('用户已提供的证据，可以直接写进正文');
+    expect(out).toContain('正文里必须留「待补充」占位');
+    // 已备项不得出现在“还没给”名单里
+    const todoSection = out.split('用户还没给的素材')[1] || '';
+    expect(todoSection).not.toContain('官方价格');
+    expect(todoSection).toContain('实测记录');
+  });
+  it('列出 evidence 待补清单（旧字符串形状仍可用）', () => {
     const out = buildStrategyBlock(b);
-    expect(out).toContain('1. 待核实：十年居住成本区间');
-    expect(out).toContain('2. 一个可检索的处罚文号');
+    expect(out).toContain('证据账');
+    expect(out).toContain('待核实：十年居住成本区间');
+    expect(out).toContain('一个可检索的处罚文号');
   });
-
   it('B 模式不提"不得沿用原文"（根本没有原文）', () => {
     expect(buildStrategyBlock(b)).not.toContain('不得沿用原文');
   });
-
   it('无参考素材时也不该出现 A 的差异硬指令', () => {
     expect(buildStrategyBlock(b)).not.toContain('本文必须把这条差异真正写进内容里');
   });
+
 });
+
 
 describe('buildStrategyBlock · 空值防御', () => {
   it('null / undefined / 空对象 / 只有元数据 → 空串（不污染提示词）', () => {
@@ -267,4 +307,67 @@ describe('buildImageStrategyHint · 策略驱动配图（§十一）', () => {
     expect(buildImageStrategyHint({})).toBe('');
     expect(buildImageStrategyHint({ emotion: '扎心', goal: '私域引流' })).toBe('');
   });
+});
+
+describe('V3 拆分：主张 vs 洞察、narrative 四拍、成立度', () => {
+  it('frame/thesis 作为别名被接受，insight 独立保留', () => {
+    const s = normalizeStrategy({ frame: '制度归因', thesis: '够用 AI 在变便宜', insight: '场景匹配比追旗舰重要' }, 'topic');
+    expect(s.angle_type).toBe('制度归因');
+    expect(s.core_point).toBe('够用 AI 在变便宜');
+    expect(s.insight).toBe('场景匹配比追旗舰重要');
+  });
+
+  it('narrative 四拍被保留，并反推出 structure（旧读取方不空）', () => {
+    const s = normalizeStrategy({
+      title: 'T', core_point: 'P',
+      narrative: { hook: '价格表', explanation: '为何变便宜', framework: '四问选模', action: '列清单' },
+    }, 'topic');
+    expect(s.narrative.hook).toBe('价格表');
+    expect(s.narrative.action).toBe('列清单');
+    expect(s.structure).toEqual(['价格表', '为何变便宜', '四问选模', '列清单']);
+  });
+
+  it('中文拍名也能认（钩子/行动）', () => {
+    const s = normalizeStrategy({ title: 'T', narrative: { '钩子': 'A', '行动': 'B' } }, 'topic');
+    expect(s.narrative).toEqual({ hook: 'A', explanation: '', framework: '', action: 'B' });
+  });
+
+  it('旧 structure 数组按下标归成四拍；超出部分归入 action 不丢内容', () => {
+    expect(normalizeStrategy({ title: 'T', structure: ['h', 'e', 'f', 'a'] }, 'topic').narrative)
+      .toEqual({ hook: 'h', explanation: 'e', framework: 'f', action: 'a' });
+    expect(normalizeStrategy({ title: 'T', structure: ['h', 'e', 'f', 'a1', 'a2'] }, 'topic').narrative.action)
+      .toBe('a1；a2');
+  });
+
+  it('evidenceCoverage：新形状与旧字符串都算得出', () => {
+    expect(evidenceCoverage({ evidence_needed: [{ item: 'a', status: 'ready' }, { item: 'b', status: 'todo' }] }))
+      .toEqual({ evidence_total: 2, evidence_ready: 1, evidence_coverage: 0.5 });
+    const legacy = evidenceCoverage({ evidence_needed: ['只有字符串', '旧数据'] });
+    expect(legacy.evidence_total).toBe(2);
+    expect(legacy.evidence_ready).toBe(0);      // 没确认过的就是没素材
+    expect(evidenceCoverage({})).toEqual({ evidence_total: 0, evidence_ready: 0, evidence_coverage: null });
+  });
+
+  it('提示词里主张与洞察各一行，并强制洞察可被复述', () => {
+    const out = buildStrategyBlock({
+      mode: 'topic', core_point: '够用 AI 在变便宜', insight: '场景匹配比追旗舰重要',
+    });
+    expect(out).toContain('核心主张（全文要证明它）');
+    expect(out).toContain('独特洞察（读者要带走的那一句）');
+    expect(out).toContain('可被人复述的话');
+  });
+
+  it('narrative 存在时按四拍下发，不再用旧的“结构要求”标题', () => {
+    const out = buildStrategyBlock({
+      mode: 'topic', title: 'T',
+      narrative: { hook: '价格表', explanation: '原因', framework: '四问', action: '清单' },
+    });
+    expect(out).toContain('叙事骨架');
+    expect(out).toContain('1. 钩子：价格表');
+    expect(out).toContain('4. 行动/结尾：清单');
+    expect(out).not.toContain('结构要求');
+  });
+
+
+
 });

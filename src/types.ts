@@ -126,6 +126,14 @@ declare global {
       getStrategy: (id: number) => Promise<(Strategy & { links: StrategyLink[] }) | null>;
       deleteStrategy: (id: number) => Promise<{ ok: boolean; changes: number }>;
       setStrategyStatus: (params: { id: number; status: 'candidate' | 'adopted' | 'archived' }) => Promise<{ ok: boolean; changes: number }>;
+      /** V3 勾选某条证据为已备/未备（成立度由用户亲手抬上来） */
+      setStrategyEvidence: (params: { strategyId: number; index: number; status: 'todo' | 'ready' }) => Promise<{
+        ok: boolean;
+        evidence_total?: number;
+        evidence_ready?: number;
+        evidence_coverage?: number | null;
+        error?: string;
+      }>;
       recordStrategyResult: (params: {
         adoptionId?: number; articleId?: number;
         metrics: Partial<{ views: number; likes: number; favorites: number; comments: number; followers: number; manual_score: number; note: string }>;
@@ -242,10 +250,14 @@ export interface Strategy {
   // ▲ 决策内容
   angle_type: string;
   title: string;
-  /** 文章立意：这篇要表达什么 */
+  /** 文章立意 / thesis：这篇要证明的那句判断 */
   core_point: string;
+  /** V3 独特洞察：读者带走的那一句。与 core_point 不同：主张可以正确但无价值 */
+  insight?: string;
   target_user?: string;
   structure?: string[];
+  /** V3 四拍叙事骨架（可复用的模板，structure 只是它平面化的展示形式） */
+  narrative?: Narrative | null;
   /** 情绪策略：希望读者产生什么感觉 */
   emotion?: string;
   /** 内容目标：这篇要拿到什么结果 */
@@ -260,8 +272,12 @@ export interface Strategy {
   track_fit?: TrackFit | null;
   /** B：可写性与题目价值 */
   feasibility?: Feasibility | null;
-  /** B：素材缺口 */
-  evidence_needed?: string[];
+  /** B：素材缺口（V3 带状态，决定成立度） */
+  evidence_needed?: EvidenceItem[];
+  /** 成立度：已准写证据 / 总证据。V3 核心指标 */
+  evidence_total?: number;
+  evidence_ready?: number;
+  evidence_coverage?: number | null;
   /** B：AI 编造事实的风险，决定正文下发多强的事实约束 */
   fact_risk?: FactRisk;
 
@@ -272,6 +288,27 @@ export interface Strategy {
   /** 列表查询附带：被采纳过几次 */
   adoption_count?: number | null;
 }
+
+/**
+ * 一条证据。status='todo' 意味着正文里必须留占位、禁止编造；
+ * 'ready' 才能写进正文。前面的字段决定想写什么，这一项决定这篇能不能成立。
+ */
+export interface EvidenceItem {
+  item: string;
+  status: 'todo' | 'ready';
+}
+
+/** V3 四拍叙事骨架 */
+export interface Narrative {
+  hook: string;
+  explanation: string;
+  framework: string;
+  action: string;
+}
+
+export const NARRATIVE_BEAT_LABEL: Record<keyof Narrative, string> = {
+  hook: '钩子', explanation: '解释/论证', framework: '框架/方法', action: '行动/结尾',
+};
 
 /** A 模式最重要字段。type 六选一，instruction 要能直接当正文约束 */
 export interface Differentiator {

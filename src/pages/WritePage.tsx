@@ -627,6 +627,32 @@ export function WritePage() {
     }
   };
 
+  /**
+   * V3：在策略卡片上直接勾“这个素材我备好了”。
+   * 不光要写库，还同步本地 state：当前生效策略的 evidence 变了，
+   * 下一次生成大纲/正文下发的占位约束才会跟着变。
+   */
+  const handleToggleEvidence = async (strategyId: number, index: number, next: 'todo' | 'ready') => {
+    const r = await window.electronAPI.setStrategyEvidence({ strategyId, index, status: next });
+    if (!r.ok) { showToast('❌ ' + (r.error || '写入失败')); return; }
+    const patchList = (list: Strategy[] | null) => list?.map((s) => {
+      if (s.id !== strategyId || !s.evidence_needed) return s;
+      const ev = s.evidence_needed.map((e, i) => (i === index ? { ...e, status: next } : e));
+      return {
+        ...s,
+        evidence_needed: ev,
+        evidence_total: r.evidence_total,
+        evidence_ready: r.evidence_ready,
+        evidence_coverage: r.evidence_coverage,
+      };
+    });
+    setAngles((prev) => patchList(prev) ?? prev);
+    setStrategy((cur) => (cur && cur.strategyId === strategyId
+      ? { ...cur, strategy: patchList([cur.strategy])![0] }
+      : cur));
+    showToast(next === 'ready' ? '✅ 已备好，AI 可以把它写进正文' : '↩️ 已撤回为未备');
+  };
+
   /** 采纳一条策略开始创作：预填文本 + 真正落库为采纳记录 */
   const handleStartWithAngle = (angle: Strategy) => {
     const parts: string[] = [];
@@ -832,6 +858,7 @@ export function WritePage() {
                 anglesError={anglesError}
                 trackFit={trackFit}
                 adoptedId={strategy ? strategy.strategyId : null}
+                onToggleEvidence={(id, i, next) => void handleToggleEvidence(id, i, next)}
                 onGenerateAngles={handleGenerateAngles}
                 onSaveTopic={handleSaveTopicStub}
                 onStartWithAngle={handleStartWithAngle}

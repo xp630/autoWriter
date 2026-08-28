@@ -2489,3 +2489,41 @@ select:focus-visible {
 .sl-note { flex: 1; min-width: 160px; padding: 4px 8px; font-size: 12px; }
 .sl-result-note { margin-top: 6px; font-size: 12px; color: var(--ink-3); }
 .sl-detail-actions { display: flex; gap: 8px; }
+
+/* ===== V3 证据账（成立度闸门） ===== */
+.ev-root { display: flex; flex-direction: column; gap: 6px; }
+.ev-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ev-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+.ev-cov {
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  border-radius: 999px; padding: 2px 8px; border: 1px solid transparent;
+}
+.ev-cov-none { color: #b91c1c; background: var(--danger-soft); border-color: #fecaca; }
+.ev-cov-part { color: #92400e; background: var(--accent-soft); border-color: #fde68a; }
+.ev-cov-full { color: #047857; background: var(--line-soft); border-color: #a7f3d0; }
+.ev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ev-item { display: flex; align-items: flex-start; gap: 6px; }
+.ev-item .ev-text { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.ev-item.is-ready .ev-text { color: var(--ink-3); text-decoration: line-through; text-decoration-thickness: 1px; }
+.ev-toggle {
+  border: 0; background: none; padding: 1px; cursor: pointer; color: var(--muted);
+  display: inline-flex; align-items: center; flex: none; margin-top: 2px;
+}
+.ev-toggle:hover:not(:disabled) { color: var(--line-2); }
+.ev-toggle:disabled { cursor: default; }
+.ev-item.is-ready .ev-toggle { color: #047857; }
+.ev-hint { font-size: 11px; color: var(--ink-3); line-height: 1.5; }
+.ev-hint-ok { color: #047857; }
+.ev-compact .ev-list { gap: 3px; }
+.ev-badge { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ev-badge.ev-none { color: #b91c1c; background: var(--danger-soft); border-color: #fecaca; }
+.ev-badge.ev-part { color: #92400e; background: var(--accent-soft); border-color: #fde68a; }
+.ev-badge.ev-full { color: #047857; background: var(--line-soft); border-color: #a7f3d0; }
+.angle-insight {
+  display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px;
+  padding: 8px 10px; background: var(--line-light); border-left: 2px solid var(--line);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+.angle-insight > span:first-child { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.angle-insight > span:last-child { font-size: 13px; color: var(--ink); font-weight: 600; line-height: 1.6; }
+.gen-hint { color: var(--muted); font-size: 12px; margin-left: 4px; }

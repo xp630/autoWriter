@@ -30,13 +30,15 @@ async function seedStrategy(o: {
   const r = await execSql<{ lastInsertRowid: number }>(
     ctx.window,
     `INSERT INTO content_strategies
-     (mode, source_type, topic, profile_id, track, angle_type, title, core_point, target_user,
-      structure, emotion, goal, value_score, differentiator, feasibility, evidence_needed, fact_risk, status)
-     VALUES (?, ?, ?, ?, 'AI 与科技', ?, ?, '不愿进入低质量关系', '25-35 岁一线城市女性',
-             ?, '共鸣', '评论', 8.2,
+     (mode, source_type, topic, profile_id, track, angle_type, title, core_point, insight, target_user,
+      structure, narrative, emotion, goal, value_score, differentiator, feasibility, evidence_needed, fact_risk, status)
+     VALUES (?, ?, ?, ?, 'AI 与科技', ?, ?, '不愿进入低质量关系', '场景匹配比追旗舰更重要', '25-35 岁一线城市女性',
+             ?, '{"hook":"一张账单","explanation":"三笔经济账","framework":"四问选路","action":"先把钱挣到"}',
+             '共鸣', '评论', 8.2,
              '{"type":"new_conclusion","description":"从理解推到不必","instruction":"结论必须落在不必将就"}',
              '{"score":7.5,"difficulty":"medium","reason":"缺一手案例"}',
-             '["待核实：十年居住成本区间","一组读者真实案例"]', 'medium', ?)`,
+             '[{"item":"待核实：十年居住成本区间","status":"todo"},{"item":"一组读者真实案例","status":"todo"}]',
+             'medium', ?)`,
     [mode, mode === 'topic' ? 'topic' : 'analysis', topic, profileId, angleType, title,
      JSON.stringify(structure), status],
   );
@@ -125,8 +127,15 @@ test('详情：策略全字段 + 采用记录 + 被采用次数与关联文章�
   expect(body).toContain('差异锚点');
   expect(body).toContain('new_conclusion');
   expect(body).toContain('可写性');
-  expect(body).toContain('你需要补充');
+  // V3：证据账与成立度（一条没勾 → 0/2）
+  expect(body).toContain('证据账');
+  expect(body).toContain('0/2');
   expect(body).toContain('待核实：十年居住成本区间');
+  // V3：主张与洞察分行，洞察不再被呾进 core_point
+  expect(body).toContain('独特洞察');
+  expect(body).toContain('场景匹配比追旗舰更重要');
+  expect(body).toContain('叙事骨架');
+  expect(body).toContain('钩子');
   expect(body).toContain('不依赖分析（独立资产）');   // B 模式：analysis_id 为空
   expect(body).toContain('还没有采纳记录');
 
@@ -222,4 +231,49 @@ test('「从这条重新创作」跨页交接：写文章页被策略预填并�
     ctx.window, `SELECT COUNT(*) c FROM strategy_articles WHERE strategy_id = ?`, [sid],
   );
   expect(links[0].c).toBe(1);
+});
+
+test('V3 证据账：勾选已备 → 落库、成立度上升、列表徽标跟着变', async () => {
+  const sid = await seedStrategy({ title: '证据要勾的策略', angleType: '证据驱动视角' });
+  await goLibrary();
+  await ctx.window.locator('button:has-text("刷新")').first().click();
+
+  const card = ctx.window.locator('.sl-card').filter({ hasText: '证据要勾的策略' }).first();
+  await expect(card).toBeVisible({ timeout: 5000 });
+  await expect(card.locator('.ev-badge')).toContainText('证据 0/2');   // 初始一条都没备
+
+  await card.locator('button:has-text("详情与战绩")').click();
+  const detail = ctx.window.locator(`.sl-detail[data-strategy-id="${sid}"]`);
+  await expect(detail).toBeVisible({ timeout: 5000 });
+
+  // 勾第一条
+  await detail.locator('.ev-toggle').first().click();
+  await expect(detail.locator('.ev-cov')).toContainText('1/2', { timeout: 5000 });
+
+  // 真落库了（不能只信 UI）
+  const raw = await execSql<Array<{ evidence_needed: string }>>(
+    ctx.window, `SELECT evidence_needed FROM content_strategies WHERE id = ?`, [sid],
+  );
+  const list = JSON.parse(raw[0].evidence_needed);
+  expect(list[0].status).toBe('ready');
+  expect(list[1].status).toBe('todo');
+  expect(typeof list[0].item).toBe('string');
+
+  // 列表卡片徽标同步（成立度是跨视图一致的状态，不是局部动画）
+  await ctx.window.locator('button:has-text("刷新")').first().click();
+  await expect(
+    ctx.window.locator('.sl-card').filter({ hasText: '证据要勾的策略' }).first().locator('.ev-badge'),
+  ).toContainText('证据 1/2', { timeout: 5000 });
+
+  // 再点一次撤回 todo（可逆）
+  await ctx.window.locator(`.sl-detail[data-strategy-id="${sid}"]`).locator('.ev-toggle').first().click().catch(() => {});
+
+  // IPC 层守卫：越界与缺参必须被拒
+  const oob = await invokeIpc<{ ok: boolean; error?: string }>(ctx.window, 'strategy:setEvidenceStatus', {
+    strategyId: sid, index: 9, status: 'ready',
+  });
+  expect(oob.ok).toBe(false);
+  expect(oob.error).toMatch(/越界/);
+  expect((await invokeIpc<{ ok: boolean }>(ctx.window, 'strategy:setEvidenceStatus', { strategyId: sid })).ok).toBe(false);
+  expect((await invokeIpc<{ ok: boolean }>(ctx.window, 'strategy:setEvidenceStatus', { strategyId: 999999, index: 0 })).ok).toBe(false);
 });

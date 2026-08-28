@@ -154,10 +154,83 @@ function normalizeFeasibility(f) {
   return (out.score !== undefined || out.difficulty || out.reason) ? out : null;
 }
 
+const EVIDENCE_STATUS = ['todo', 'ready'];
+
+/**
+ * evidence 归一化：支持三种输入形状。
+ *   ['真实案例', ...]                                  ← V1 旧数据
+ *   [{item:'官方价格', status:'ready'}, ...]        ← V3 带状态
+ *   [{text:'…', done:true}, ...]                    ← 模型偶尔这么写
+ * 未知 status 一律当 todo（安全默认：没确认过的素材就是没素材）。
+ */
 function normalizeEvidence(list) {
   if (!Array.isArray(list)) return undefined;
-  const ev = list.map(str).filter(Boolean);
-  return ev.length ? ev : undefined;
+  const out = [];
+  for (const e of list) {
+    if (!e) continue;
+    if (typeof e === 'string') {
+      const item = str(e);
+      if (item) out.push({ item, status: 'todo' });
+      continue;
+    }
+    if (typeof e !== 'object') continue;
+    const item = str(e.item || e.text || e.need || e.evidence);
+    if (!item) continue;
+    let status = str(e.status || e.state).toLowerCase();
+    if (e.done === true || e.ready === true) status = 'ready';
+    if (!EVIDENCE_STATUS.includes(status)) status = 'todo';
+    out.push({ item, status });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * 成立度：已备证据 / 总证据。
+ * 这是 V3 的核心概念 —— 前面的字段决定“想写什么”，这一项决定“这篇能不能成立”。
+ */
+function evidenceCoverage(strategy) {
+  const list = Array.isArray(strategy?.evidence_needed) ? strategy.evidence_needed : [];
+  const total = list.length;
+  const ready = list.filter((e) => (typeof e === 'string' ? false : e?.status === 'ready')).length;
+  return { evidence_total: total, evidence_ready: ready, evidence_coverage: total ? ready / total : null };
+}
+
+/**
+ * narrative 四段式叙事骨架（V3）。
+ * 自由文本 structure 只能描述“一篇”，模板化的 narrative 才能复用“好多篇”。
+ * 兼容：旧 structure 数组按下标当成四拍归到同名字段。
+ */
+const NARRATIVE_BEATS = ['hook', 'explanation', 'framework', 'action'];
+// 提示词里给人看的拍名
+const BEAT_TEXT = { hook: '钩子', explanation: '解释/论证', framework: '框架/方法', action: '行动/结尾' };
+
+// 中文拍名 → 标准 beat（允许模型用中文键给）
+const BEAT_ALIAS = {
+  '钩子': 'hook', '开头钩子': 'hook', 'hook': 'hook',
+  '解释': 'explanation', '论证': 'explanation', '展开': 'explanation', 'explanation': 'explanation',
+  '框架': 'framework', '方法': 'framework', '模型': 'framework', 'framework': 'framework',
+  '行动': 'action', '结尾': 'action', '号召': 'action', 'action': 'action',
+};
+
+function normalizeNarrative(n, structure) {
+  const out = { hook: '', explanation: '', framework: '', action: '' };
+  if (n && typeof n === 'object' && !Array.isArray(n)) {
+    for (const [k, v] of Object.entries(n)) {
+      const beat = BEAT_ALIAS[str(k).toLowerCase()] || BEAT_ALIAS[str(k)];
+      const text = str(v);
+      if (beat && text && !out[beat]) out[beat] = text;
+    }
+    if (Object.values(out).some(Boolean)) return out;
+  }
+  // 数组或旧 structure：按下标归拍，超过 4 拍的全归 action（结尾类）
+  const list = Array.isArray(n) ? n : (Array.isArray(structure) ? structure : []);
+  const filled = list.map(str).filter(Boolean);
+  if (!filled.length) return null;
+  filled.forEach((v, i) => {
+    const beat = NARRATIVE_BEATS[Math.min(i, NARRATIVE_BEATS.length - 1)];
+    out[beat] = out[beat] ? `${out[beat]}；${v}` : v;
+  });
+  return out;
 }
 
 /**
@@ -166,14 +239,26 @@ function normalizeEvidence(list) {
  */
 function normalizeStrategy(a, mode = 'reference') {
   const out = {
-    angle_type: str(a.angle_type),
+    // V3：frame（归因框架）与 thesis（主张）作为 angle_type / core_point 的别名接受
+    angle_type: str(a.angle_type || a.frame),
     title: str(a.title),
-    core_point: str(a.core_point),
+    core_point: str(a.core_point || a.thesis),
   };
+  // insight（独特洞察）与 thesis（主张）是两回事：
+  // 主张可以正确但毫无价值，洞察才是读者带走的那一句。
+  const insight = str(a.insight);
+  if (insight) out.insight = insight;
   if (a.target_user) out.target_user = str(a.target_user);
   if (Array.isArray(a.structure)) {
     const st = a.structure.map(str).filter(Boolean);
     if (st.length) out.structure = st;
+  }
+  const narr = normalizeNarrative(a.narrative, a.structure);
+  if (narr) out.narrative = narr;
+  // 模型只给 narrative 时反推 structure，保证所有旧读取方（UI 列表、大纲预填）不空
+  if (!out.structure && narr) {
+    const beats = NARRATIVE_BEATS.map((b) => narr[b]).filter(Boolean);
+    if (beats.length) out.structure = beats;
   }
   if (a.reason) out.reason = str(a.reason);
   const vs = toScore(a.value_score);
@@ -185,17 +270,21 @@ function normalizeStrategy(a, mode = 'reference') {
   if (diff) out.differentiator = diff;
   const feas = normalizeFeasibility(a.feasibility);
   if (feas) out.feasibility = feas;
-  const ev = normalizeEvidence(a.evidence_needed);
+  const ev = normalizeEvidence(a.evidence_needed || a.evidence);
   if (ev) out.evidence_needed = ev;
 
-  // fact_risk：B 模式默认 medium（无参考素材，天然有编造风险），并受素材缺口影响
+  // fact_risk：显式值优先；没给则按模式 + 证据成立度推。
+  // 有缺口且一条都没备 → 风险最高；全备齐 → 可以降级。
   let fr = str(a.fact_risk).toLowerCase();
   if (!FACT_RISKS.includes(fr)) {
-    if (mode === 'topic') fr = (ev && ev.length >= 3) ? 'high' : 'medium';
-    else fr = 'low';
+    const cov = evidenceCoverage(out);
+    const noneReady = cov.evidence_total > 0 && cov.evidence_ready === 0;
+    const allReady = cov.evidence_total > 0 && cov.evidence_ready === cov.evidence_total;
+    if (allReady) fr = 'low';
+    else if (mode === 'topic') fr = noneReady ? 'high' : 'medium';
+    else fr = noneReady && cov.evidence_total >= 2 ? 'medium' : 'low';
   }
   out.fact_risk = fr;
-  void mode;
   return out;
 }
 
@@ -234,8 +323,10 @@ function buildStrategyBlock(strategy) {
   if (!strategy || typeof strategy !== 'object') return '';
   const isTopic = strategy.mode === 'topic';
   const lines = [];
-  if (strategy.angle_type) lines.push(`- **创作角度**: ${strategy.angle_type}`);
-  if (strategy.core_point) lines.push(`- **文章立意**: ${strategy.core_point}`);
+  if (strategy.angle_type) lines.push(`- **创作框架**: ${strategy.angle_type}`);
+  if (strategy.core_point) lines.push(`- **核心主张（全文要证明它）**: ${strategy.core_point}`);
+  // 主张与洞察分开写：模型只会写“正确的废话”时，是因为没人要求它给出后者。
+  if (strategy.insight) lines.push(`- **独特洞察（读者要带走的那一句）**: ${strategy.insight}`);
   if (strategy.title) lines.push(`- **标题方向**: ${strategy.title}`);
   if (strategy.target_user) lines.push(`- **目标读者**: ${strategy.target_user}`);
   const diff = normalizeDifferentiator(strategy.differentiator);
@@ -251,10 +342,19 @@ function buildStrategyBlock(strategy) {
     const g = GOAL_GUIDE[strategy.goal];
     lines.push(`- **内容目标**: ${strategy.goal}${g ? ' —— ' + g : ''}`);
   }
-  const struct = Array.isArray(strategy.structure) ? strategy.structure.filter(Boolean) : [];
-  if (struct.length) {
-    lines.push('- **结构要求**（按此顺序组织，可细化但不得丢步骤）:');
-    struct.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
+  // 叙事骨架优先用 narrative 四拍；没有再退回 structure 平铺
+  const narr = normalizeNarrative(strategy.narrative, strategy.structure);
+  if (narr && Object.values(narr).some(Boolean)) {
+    lines.push('- **叙事骨架**（按此顺序写，可细化但不得丢拍）:');
+    NARRATIVE_BEATS.forEach((b, i) => {
+      if (narr[b]) lines.push(`  ${i + 1}. ${BEAT_TEXT[b]}：${narr[b]}`);
+    });
+  } else {
+    const struct = Array.isArray(strategy.structure) ? strategy.structure.filter(Boolean) : [];
+    if (struct.length) {
+      lines.push('- **结构要求**（按此顺序组织，可细化但不得丢步骤）:');
+      struct.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
+    }
   }
   if (!lines.length) return '';
 
@@ -263,41 +363,65 @@ function buildStrategyBlock(strategy) {
     : '## 本次创作策略（用户已采纳，约束力高于参考素材）';
   const body = [head, ...lines, ''];
 
-  const ev = Array.isArray(strategy.evidence_needed) ? strategy.evidence_needed.filter(Boolean) : [];
-  const factRisk = String(strategy.fact_risk || (isTopic ? 'medium' : 'low')).toLowerCase();
-  if (isTopic) {
-    // B 模式核心风险 = 幻觉。无参考文时模型最爱编数据/人名/案例。
-    body.push(`⚠️ **事实约束（本次无参考素材，事实风险=${factRisk}，硬要求）**：`);
+  // ===== 证据账（V3 核心）=====
+  // 前面的字段决定“想写什么”，这一项决定“这篇能不能成立”。
+  // 已备→可用证据（鼓励写实）；未备→必须占位（禁止编造）。同一份清单同时管两端。
+  const rawEv = Array.isArray(strategy.evidence_needed) ? strategy.evidence_needed.filter(Boolean) : [];
+  const evList = rawEv.map((e) => (typeof e === 'string' ? { item: str(e), status: 'todo' } : { item: str(e.item || e.text), status: str(e.status) === 'ready' ? 'ready' : 'todo' }))
+    .filter((e) => e.item);
+  const ready = evList.filter((e) => e.status === 'ready');
+  const todo = evList.filter((e) => e.status === 'todo');
+  const cov = evidenceCoverage(strategy);
+  // 事实风险：显式值优先；没给时按成立度推（一条都没备 = 升高）
+  let factRisk = str(strategy.fact_risk).toLowerCase();
+  if (!FACT_RISKS.includes(factRisk)) {
+    if (cov.evidence_total > 0 && cov.evidence_ready === 0) factRisk = 'high';
+    else if (cov.evidence_total === 0) factRisk = isTopic ? 'medium' : 'low';
+    else if (cov.evidence_coverage >= 0.999) factRisk = 'low';
+    else factRisk = 'medium';
+  }
+
+  if (evList.length) {
+    const pct = cov.evidence_coverage == null ? '—' : `${Math.round(cov.evidence_coverage * 100)}%`;
+    body.push(`### 证据账（决定这篇能不能成立） 成立度 ${cov.evidence_ready}/${cov.evidence_total}（${pct}）`);
+    if (ready.length) {
+      body.push('- ✅ **用户已提供的证据，可以直接写进正文**：');
+      ready.forEach((e, i) => body.push(`  ${i + 1}. ${e.item}`));
+    }
+    if (todo.length) {
+      body.push('- ⛔ **用户还没给的素材：正文里必须留「待补充」占位，绝对不得臆造**：');
+      todo.forEach((e, i) => body.push(`  ${i + 1}. ${e.item}`));
+    }
+    body.push('');
+  }
+
+  if (factRisk !== 'low' || isTopic) {
+    body.push(`⚠️ **事实约束（事实风险=${factRisk}${isTopic ? '，本次无参考素材' : ''}，硬要求）**：`);
     body.push('- 禁止编造具体数字、百分比、日期、研究结论、人名、机构名、书名、引语、他人经历。');
-    body.push('- 需要数据/案例支撑处，若用户未提供则写「待补充」占位，不得自行臆造。');
+    if (todo.length) body.push('- 上方标为“还没给”的每一项，在需要它的地方写「待补充：XXX」，不得臆造。');
+    else body.push('- 需要数据/案例支撑而用户未提供的地方，一律写「待补充」占位。');
     body.push('- 不得替用户编造第一手经历（“我有个朋友…”、“去年我…”）。');
     body.push('- 允许用普遍观察式表述（“部分用户”、“很多人”、“一些情况下”、“普遍存在”），但不得伪装成统计结论。');
     if (factRisk === 'high') {
-      body.push('- 本角度事实风险高：全文以观点与推理为主，所有定量表述一律占位，不得为了可读性补“看起来真”的数字。');
+      body.push('- 本篇证据严重不足：全文以观点与推理为主，所有定量表述一律占位，不得为了可读性补“看起来真”的数字。');
     }
-    if (ev.length) {
-      body.push('');
-      body.push('- **本角度需要用户补充的素材（写之前先看用户有没有给；缺就保留占位并在结尾提醒）**：');
-      ev.forEach((e, i) => body.push(`  ${i + 1}. ${e}`));
-    }
+    body.push('');
+  }
+
+  if (isTopic) {
     if (strategy.core_point) {
-      body.push('');
-      body.push(`本文必须围绕上面这条「文章立意」展开，并按指定的角度、情绪、目标来写。`);
+      body.push('本文必须围绕上面这条「核心主张」展开，并按指定的框架、情绪、目标来写。');
     }
   } else {
     // A 模式核心风险 = 同质化。负向约束不够，还要正向差异锚点。
     body.push('⚠️ 上面的「参考内容分析」只是素材与市场参照，**不得沿用原文的观点、例子与结构**；');
     body.push(diff
       ? `本文必须把这条差异真正写进内容里，而不是喊口号：**${diff.description}${diff.instruction ? '（' + diff.instruction + '）' : ''}**。凡是与原文可能重合的表述、案例、结论，一律重写或删除。`
-      : '本文必须按上面指定的角度、情绪、目标重写，不得只改标题与措辞。');
-    if (strategy.core_point) {
-      body.push(`全文要围绕上面这条「文章立意」展开。`);
-    }
-    if (ev.length) {
-      body.push('');
-      body.push('- **建议补充的素材**：');
-      ev.forEach((e, i) => body.push(`  ${i + 1}. ${e}`));
-    }
+      : '本文必须按上面指定的框架、情绪、目标重写，不得只改标题与措辞。');
+    if (strategy.core_point) body.push('全文要围绕上面这条「核心主张」展开。');
+  }
+  if (strategy.insight) {
+    body.push('全文结尾前必须把「独特洞察」说成一句可被人复述的话，不要让它隐含在段落里。');
   }
   return body.join('\n');
 }
@@ -466,6 +590,7 @@ module.exports = {
   parseAnalysisJson, parseAngleResult, parseStrategyResult,
   normalizeStrategy, normalizeAngle, normalizeStrategyValue,
   normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
+  normalizeEvidence, normalizeNarrative, evidenceCoverage,
   DIFF_TYPES, DIFF_LABEL, DIFFICULTIES, FACT_RISKS,
   loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint, saveAnalysis,

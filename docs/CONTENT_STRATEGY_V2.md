@@ -145,3 +145,73 @@ article:strategyFor(articleId) → 该行策略 + adoptionId
 `src/components/AnalysisPanel.tsx`、`src/pages/WritePage.tsx`、`src/pages/StrategiesPage.tsx`（策略库）、
 `src/utils/strategyHandoff.ts`（跳页交接）、
 `tests/unit/strategy-block.test.ts`、`tests/e2e/strategy-flow.spec.ts`、`tests/e2e/strategies-library-flow.spec.ts`
+
+---
+
+# V3 增补：证据账成为闸门
+
+> 触发：产品判断——"最有价值的不是标题、结构或立意，而是'你需要补充'那部分。
+> 前面的字段决定想写什么，最后那部分决定这篇到底能不能成立。"
+
+## 1. 证据账（evidence）从软提示升级为闸门
+
+```
+evidence_needed: [ { item: "官方价格", status: "ready" }, { item: "实测记录", status: "todo" } ]
+```
+
+- 每条证据带状态，**成立度 = ready / total**，是策略的一等指标（列表徽标、详情、卡片都有）。
+- 旧数据（纯字符串数组）由迁移自动升级为 `{item, status:"todo"}`。
+- **没确认过的就是没素材**：旧数据一律算 `todo`，不做乐观假设。
+- 用户在界面上勾选，写回 `strategy:setEvidenceStatus`；成立度变化会**跨视图一致**（列表徽标同步）。
+
+## 2. 同一份清单同时管"能写什么"和"不能编什么"
+
+`buildStrategyBlock` 把证据拆成两段下发：
+
+- `ready` → "用户已提供的证据，可以直接写进正文"
+- `todo` → "正文里必须留「待补充」占位，绝对不得臆造"
+
+这把 §七 的 B 模式反幻觉约束和 §十三 的数据资产连上了：勾上越多，AI 越能写实。
+
+## 3. fact_risk 由成立度推导（不再只靠模型自报）
+
+| 情况 | fact_risk |
+|---|---|
+| 证据全备齐 | `low` |
+| 列了证据但一条没备 | `high` |
+| 部分备齐 | `medium` |
+| 没列证据 | B→`medium`，A→`low` |
+
+模型显式给了值则以它为准。`high` 时追加更强约束（定量表述一律占位）。
+
+## 4. thesis / insight 拆分
+
+`core_point` 即 **thesis（主张，全文要证明的那句判断）**；新增 `insight`（**独特洞察，读者带走的那一句**）。
+分开的理由：主张可以正确但毫无价值（"AI 越来越便宜"谁都同意），洞察才是这篇值得读的原因。
+提示词要求两者不得同义反复，并强制"结尾前把洞察说成一句可被复述的话"。
+
+## 5. narrative 四拍叙事骨架
+
+`{hook, explanation, framework, action}` 取代自由 `structure[]`：
+可复用、可比价的模板，而不是"一篇一篇的散文"。
+
+- 双向兼容：只有 `structure` 时按下标归成四拍（超出部分并入 `action`，不丢内容）；
+  只有 `narrative` 时反推出 `structure`，旧读取方（UI 列表、大纲预填）不空。
+- 中文拍名（钩子/解释/框架/行动）也认。
+
+## 6. A 模式也必须给证据
+
+此前只有 B 要求 `evidence`。但 A 的 `differentiator.type=new_evidence` 本身就承诺了"有新证据"，
+不列证据就是空头支票。现在两模式都强制产出，且 A 要把参考文里已带的证据标 `ready`。
+
+## 7. 顺手修的真实体验缺陷
+
+生成策略会 spawn 本地 Agent，实测 **30–90 秒**（日志里有 74360ms 的记录）。
+原来只有一句静态"生成中…"，用户反馈"点了没反应"、以为按钮坏了。
+现在面板里显示**实时用时**并说明"没反应不等于失败"。
+
+## 数据迁移（V3）
+
+`content_strategies` 补 `insight`、`narrative` 两列；`evidence_needed` 字符串形状升级为对象形状；
+只有 `structure` 的旧策略按下标反推四拍。全部在 `electron/db.cjs` 的 `ensureCols` 分支里，
+旧库启动即完成，失败只 warn 不阻塞启动。

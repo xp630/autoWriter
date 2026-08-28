@@ -166,9 +166,11 @@ CREATE TABLE IF NOT EXISTS content_strategies (
   -- ▲ 统一策略模型的决策内容（§四）
   angle_type      TEXT DEFAULT '',
   title           TEXT DEFAULT '',
-  core_point      TEXT DEFAULT '',                     -- 文章立意
+  core_point      TEXT DEFAULT '',                     -- 文章立意 / thesis（主张）
+  insight         TEXT DEFAULT '',                     -- V3：独特洞察。主张可以正确但无价值，洞察才是读者带走的那一句
   target_user     TEXT DEFAULT '',
-  structure       TEXT DEFAULT '[]',                   -- JSON 数组
+  structure       TEXT DEFAULT '[]',                   -- JSON 数组（兼容旧形状）
+  narrative       TEXT DEFAULT '[]',                   -- V3：{hook,explanation,framework,action} 四拍叙事骨架，可复用
   emotion         TEXT DEFAULT '',                     -- 情绪策略
   goal            TEXT DEFAULT '',                     -- 内容目标
   value_score     REAL,                                -- 0-10 推荐指数
@@ -176,7 +178,7 @@ CREATE TABLE IF NOT EXISTS content_strategies (
   differentiator  TEXT,                                -- A: {type,description,instruction} 抗同质化
   track_fit       TEXT,                                -- A: {score,reason,adapt_direction}
   feasibility     TEXT,                                -- B: {score,difficulty,reason}
-  evidence_needed TEXT,                                -- B: ["..."] 素材缺口
+  evidence_needed TEXT,                                -- B: [{item,status}] V3：带状态的证据账，决定成立度
   fact_risk       TEXT DEFAULT 'low',                  -- low|medium|high：AI 编造事实的风险
   -- ▲ 生命周期
   status          TEXT DEFAULT 'candidate',            -- candidate | adopted | archived

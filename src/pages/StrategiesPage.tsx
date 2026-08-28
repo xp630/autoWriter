@@ -9,7 +9,8 @@ import { Empty } from '../components/Empty';
 import { showToast } from '../toast';
 import { useActiveProfile } from '../hooks/useActiveProfile';
 import { setPendingStrategy } from '../utils/strategyHandoff';
-import { DIFFICULTY_LABEL, type Strategy, type StrategyLink, type StrategyMode, type StrategyStats } from '../types';
+import { DIFFICULTY_LABEL, NARRATIVE_BEAT_LABEL, type Narrative, type Strategy, type StrategyLink, type StrategyMode, type StrategyStats } from '../types';
+import { EvidenceChecklist } from '../components/EvidenceChecklist';
 
 type ModeFilter = 'all' | StrategyMode;
 type StatusFilter = 'all' | 'candidate' | 'adopted' | 'archived';
@@ -59,6 +60,16 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
   }, [profile.id, mode, status, search]);
 
   useEffect(() => { void load(); }, [load]);
+
+  /** V3：勾证据状态。成立度会变 → 事实约束会变，所以必须重拉详情 + 列表 */
+  const toggleEvidence = async (strategyId: number, index: number, next: 'todo' | 'ready') => {
+    const r = await window.electronAPI.setStrategyEvidence({ strategyId, index, status: next });
+    if (!r.ok) { showToast('❌ ' + (r.error || '写入失败')); return; }
+    showToast(next === 'ready' ? '✅ 已标为已备好，AI 可以把它写进正文' : '↩️ 已撤回为未备');
+    const got = await window.electronAPI.getStrategy(strategyId);
+    if (got) setDetail(got);
+    void load();
+  };
 
   const openDetail = async (id: number) => {
     try {
@@ -167,6 +178,14 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
                   {s.fact_risk && s.fact_risk !== 'low' && (
                     <span className={`angle-risk risk-${s.fact_risk}`}>事实风险 · {s.fact_risk === 'high' ? '高' : '中'}</span>
                   )}
+                  {(s.evidence_total ?? 0) > 0 && (
+                    <span
+                      className={`angle-chip ev-badge ev-${(s.evidence_ready ?? 0) === s.evidence_total ? 'full' : (s.evidence_ready ?? 0) === 0 ? 'none' : 'part'}`}
+                      title="证据成立度：勾上的越多，正文越能写实"
+                    >
+                      证据 {s.evidence_ready ?? 0}/{s.evidence_total}
+                    </span>
+                  )}
                   <span className={`sl-status-tag st-${s.status}`}>{STATUS_TEXT[s.status || 'candidate']}</span>
                 </div>
                 <div className="sl-meta">
@@ -200,6 +219,7 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
           onClose={() => setDetail(null)}
           onReused={() => void openDetail(detail.id!)}
           onReuse={reuse}
+          onToggleEvidence={(i, next) => detail.id && void toggleEvidence(detail.id, i, next)}
         />
       )}
     </>
@@ -212,13 +232,14 @@ function statsOf(stats: StrategyStats[], id?: number): (StrategyStats & { last_u
 }
 
 function StrategyDetail({
-  detail, stat, onClose, onReused, onReuse,
+  detail, stat, onClose, onReused, onReuse, onToggleEvidence,
 }: {
   detail: Strategy & { links: StrategyLink[] };
   stat?: StrategyStats & { last_used?: string };
   onClose: () => void;
   onReused: () => void;
   onReuse: (id: number) => void;
+  onToggleEvidence: (index: number, next: 'todo' | 'ready') => void;
 }) {
   const links = detail.links || [];
   const lastUsed = links[0]?.adopted_at;
@@ -240,7 +261,18 @@ function StrategyDetail({
         <div className="sl-facts">
           <Fact label="创作角度" value={detail.angle_type} />
           <Fact label="标题方向" value={detail.title} />
-          <Fact label="文章立意" value={detail.core_point} strong />
+          <Fact label="文章立意（主张）" value={detail.core_point} strong />
+          <Fact label="独特洞察（读者带走的那一句）" value={detail.insight} strong />
+          {detail.narrative && Object.values(detail.narrative).some(Boolean) && (
+            <div className="sl-fact-wide">
+              <div className="sl-fact-label">叙事骨架</div>
+              <ol className="analysis-list compact">
+                {(['hook', 'explanation', 'framework', 'action'] as (keyof Narrative)[])
+                  .filter((b) => detail.narrative?.[b])
+                  .map((b, i) => <li key={i}><b>{NARRATIVE_BEAT_LABEL[b]}</b>　{detail.narrative![b]}</li>)}
+              </ol>
+            </div>
+          )}
           <Fact label="目标读者" value={detail.target_user} />
           {!!detail.structure?.length && (
             <div className="sl-fact-wide">
@@ -267,10 +299,7 @@ function StrategyDetail({
           )}
           {!!detail.evidence_needed?.length && (
             <div className="sl-fact-wide">
-              <div className="sl-fact-label"><AlertTriangle size={11} /> 你需要补充（缺这些只能写成空泛观点文）</div>
-              <ul className="angle-evidence-list">
-                {detail.evidence_needed.map((e, i) => <li key={i}>{e}</li>)}
-              </ul>
+              <EvidenceChecklist items={detail.evidence_needed} onToggle={onToggleEvidence} />
             </div>
           )}
         </div>

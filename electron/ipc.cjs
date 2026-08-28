@@ -10,6 +10,7 @@ const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint, saveAnalysis,
+  evidenceCoverage, normalizeEvidence,
 } = require('./analysis.cjs');
 
 /** 把 agent 流式 chunk 推到所有 renderer 窗口 */
@@ -1014,7 +1015,7 @@ function registerIpc() {
 
   /** DB 行 → 给 renderer 的策略对象（JSON 列解析回结构） */
   function shapeStrategyRow(r) {
-    return {
+    const base = {
       id: r.id,
       mode: r.mode,
       source_type: r.source_type,
@@ -1027,8 +1028,10 @@ function registerIpc() {
       angle_type: r.angle_type || '',
       title: r.title || '',
       core_point: r.core_point || '',
+      insight: r.insight || '',
       target_user: r.target_user || '',
       structure: parseCol(r.structure, []),
+      narrative: parseCol(r.narrative, null),
       emotion: r.emotion || '',
       goal: r.goal || '',
       value_score: r.value_score ?? null,
@@ -1042,6 +1045,8 @@ function registerIpc() {
       updated_at: r.updated_at,
       adoption_count: r.adoption_count,   // list 查询才带；get 不带
     };
+    // V3：成立度随策略一起下发，列表/卡片/详情页不必各自重复计算
+    return { ...base, ...evidenceCoverage(base) };
   }
 
   const newBatchId = () =>
@@ -1050,9 +1055,9 @@ function registerIpc() {
   const INS_S = db.prepare(`
     INSERT INTO content_strategies
     (mode, source_type, analysis_id, batch_id, topic, profile_id, track, persona,
-     angle_type, title, core_point, target_user, structure, emotion, goal, value_score,
+     angle_type, title, core_point, insight, target_user, structure, narrative, emotion, goal, value_score,
      differentiator, track_fit, feasibility, evidence_needed, fact_risk, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate')
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate')
   `);
 
   async function runStrategyGenerate(params) {
@@ -1086,11 +1091,11 @@ function registerIpc() {
       };
       if (!topic) topic = row.title || '';
       skillBody = loadAngleSkill();
-      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作策略。\n每个策略必须给：angle_type、锐度 title、core_point、target_user、3-5 步 structure、value_score、emotion、goal、reason。\n**differentiator 是本模式最重要的字段**，必须给结构化对象：\n  {"type":"new_position|new_evidence|new_audience|new_scenario|new_conclusion|new_experience 选一个","description":"本稿比原文具体多给什么","instruction":"全文必须怎么落这条差异"}\n禁止 type 空着、禁止 description 写"换个说法/更深入浅出"这类空话。\n另给批次级 track_fit：{"score":0-10,"reason":"为什么适合/不适合当前账号","adapt_direction":"不适合时怎么改角度"}。\n\n输出严格合法 JSON（不要 markdown 代码块包裹）。`;
+      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作策略。\n每个策略必须给：angle_type（或 frame）、锐度 title、**core_point（主张：全文要证明的那一句判断）**、**insight（独特洞察：读者带走的那一句，不得与 core_point 同义反复）**、target_user、**narrative 四拍叙事骨架 {"hook":"…","explanation":"…","framework":"…","action":"…"}**、value_score、emotion、goal、reason。\n**evidence（证据账）A 模式也必须给**：至少 2 条用户需要去拿的具体素材，写成 {"item":"…","status":"todo"}；如果参考文里已经带了可用证据，把它标成 status:"ready"。尤其 type=new_evidence 的差异锚点，不列证据就是空头支票。\n**differentiator 是本模式最重要的字段**，必须给结构化对象：\n  {"type":"new_position|new_evidence|new_audience|new_scenario|new_conclusion|new_experience 选一个","description":"本稿比原文具体多给什么","instruction":"全文必须怎么落这条差异"}\n禁止 type 空着、禁止 description 写"换个说法/更深入浅出"这类空话。\n另给批次级 track_fit：{"score":0-10,"reason":"为什么适合/不适合当前账号","adapt_direction":"不适合时怎么改角度"}。\n\n输出严格合法 JSON（不要 markdown 代码块包裹）。`;
     } else {
       if (!topic.trim()) return { ok: false, error: '请填写主题' };
       skillBody = loadTopicSkill();
-      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 主题（唯一实质输入，**没有参考文章**）\n${topic}\n\n## 任务\n在没有任何参考素材的前提下推演，生成 5 个互斥的创作策略。\n每个策略必须给：angle_type、title、core_point（判断句、不依赖未证实数据）、target_user、structure、\n**feasibility**：{"score":0-10 这个题目在当前赛道值不值得写,"difficulty":"easy|medium|hard 用户没有一手素材时写得动的程度","reason":"把竞争情况、目标人群为何关心、结论建议合进这一句"}、\n**evidence_needed**：至少 2 条用户能去获取的具体素材（不是"需要更多资料"这种废话），\n**fact_risk**："low|medium|high"——这个角度最容易让 AI 编造事实的程度（要数据/案例/人物的越高），\n以及 value_score、emotion、goal、reason、differentiator（相对同类写法新在哪，同样用结构化对象）。\n\n铁律：不得编造具体数字、日期、人名、机构、研究结论、案例细节、第一手经历；不确定的内容一律进 evidence_needed 并标「待核实」。difficulty 要敢给 hard，不要全给 easy 讨好用户。\n\n输出严格合法 JSON（不要 markdown 代码块包裹）。`;
+      userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n人设：${persona || '（未设人设）'}\n\n## 主题（唯一实质输入，**没有参考文章**）\n${topic}\n\n## 任务\n在没有任何参考素材的前提下推演，生成 5 个互斥的创作策略。\n每个策略必须给：angle_type（或 frame）、title、**core_point（主张：全文要证明的那句判断，不依赖未证实数据）**、**insight（独特洞察：别人没想到、但读者会记住的那一句，不得与 core_point 同义反复）**、target_user、**narrative 四拍叙事骨架 {"hook":"…","explanation":"…","framework":"…","action":"…"}**、\n**feasibility**：{"score":0-10 这个题目在当前赛道值不值得写,"difficulty":"easy|medium|hard 用户没有一手素材时写得动的程度","reason":"把竞争情况、目标人群为何关心、结论建议合进这一句"}、\n**evidence（证据账，决定这篇能不能成立）**：至少 3 条用户能去获取的具体素材，每条写成 {"item":"…","status":"todo"}，禁止"需要更多资料"这种废话；\n**fact_risk**："low|medium|high"——这个角度最容易让 AI 编造事实的程度（要数据/案例/人物的越高），\n以及 value_score、emotion、goal、reason、differentiator（相对同类写法新在哪，同样用结构化对象）。\n\n铁律：不得编造具体数字、日期、人名、机构、研究结论、案例细节、第一手经历；不确定的内容一律进 evidence_needed 并标「待核实」。difficulty 要敢给 hard，不要全给 easy 讨好用户。\n\n输出严格合法 JSON（不要 markdown 代码块包裹）。`;
     }
 
     const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
@@ -1112,8 +1117,9 @@ function registerIpc() {
         INS_S.run(
           shaped.mode, shaped.mode === 'topic' ? 'topic' : 'analysis', analysisId, batchId,
           topic, profileId, track, persona,
-          s.angle_type, s.title, s.core_point, s.target_user || '',
-          JSON.stringify(s.structure || []), s.emotion || '', s.goal || '',
+          s.angle_type, s.title, s.core_point, s.insight || '', s.target_user || '',
+          JSON.stringify(s.structure || []), s.narrative ? JSON.stringify(s.narrative) : '[]',
+          s.emotion || '', s.goal || '',
           s.value_score ?? null,
           s.differentiator ? JSON.stringify(s.differentiator) : null,
           tfJson,
@@ -1206,6 +1212,30 @@ function registerIpc() {
     const res = db.prepare(`UPDATE content_strategies SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .run(status, Number(id));
     return { ok: res.changes > 0, changes: res.changes };
+  });
+
+  /**
+   * V3：勾选某条证据为已备/未备 —— 成立度要由用户亲手勾上来，不是 AI 猜的。
+   * body 只改 evidence_needed 列，其余字段不动。
+   */
+  ipcMain.handle('strategy:setEvidenceStatus', (_e, params) => {
+    const id = Number(params && params.strategyId);
+    const index = params && params.index;
+    const status = params && params.status === 'ready' ? 'ready' : 'todo';
+    if (!id || !Number.isInteger(index)) return { ok: false, error: '缺少 strategyId 或 index' };
+    const row = db.prepare('SELECT id, evidence_needed FROM content_strategies WHERE id = ?').get(id);
+    if (!row) return { ok: false, error: '策略不存在' };
+    let list = [];
+    try { list = JSON.parse(row.evidence_needed || '[]'); } catch {}
+    if (!Array.isArray(list) || index < 0 || index >= list.length) {
+      return { ok: false, error: `证据下标越界（${index} / 共 ${Array.isArray(list) ? list.length : 0} 条）` };
+    }
+    const item = typeof list[index] === 'string' ? { item: list[index], status } : { ...list[index], status };
+    list[index] = item;
+    db.prepare(`UPDATE content_strategies SET evidence_needed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(JSON.stringify(list), id);
+    const cov = evidenceCoverage({ evidence_needed: list });
+    return { ok: true, ...cov };
   });
 
   /**

@@ -1,4 +1,5 @@
 // AnalysisPanel — 展示 AI 内容分析的 7 个卡片 + 创作方向（P0-1b）
+import { useEffect, useState } from 'react';
 import {
   FileText, Globe, Hash, Lightbulb, MessageSquare,
   Sparkles, Target, Users, Wand2, XCircle, CheckCircle2, AlertTriangle, Loader2, BookmarkPlus, Star,
@@ -7,7 +8,9 @@ import type {
   ContentAnalysisResult, Angle, StrategyMode, TrackFit,
   DifferentiatorType, Strategy,
 } from '../types';
-import { DIFFERENTIATOR_LABEL, DIFFICULTY_LABEL } from '../types';
+import { DIFFERENTIATOR_LABEL, DIFFICULTY_LABEL, NARRATIVE_BEAT_LABEL } from '../types';
+import { EvidenceChecklist } from './EvidenceChecklist';
+import type { Narrative } from '../types';
 
 const FEAS_CLASS: Record<string, string> = { easy: 'easy', medium: 'mid', hard: 'hard' };
 
@@ -28,6 +31,8 @@ interface Props {
   adoptedId?: number | null;
   /** 策略模式：reference 展示分析结果 + track_fit；topic 不展示 7 个分析卡片 */
   mode?: StrategyMode;
+  /** V3：勾选证据已备/未备（成立度由用户控） */
+  onToggleEvidence?: (strategyId: number, index: number, next: 'todo' | 'ready') => void;
 }
 
 const SECTIONS = [
@@ -49,8 +54,19 @@ function kvList(arr?: string[]) {
   );
 }
 
-export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedId = null, mode = 'reference' }: Props) {
+export function AnalysisPanel({ analysis, status, error, onStartWriting, onGenerateAngles, angles, anglesStatus, anglesError, trackFit, onSaveTopic, onStartWithAngle, adoptedId = null, mode = 'reference', onToggleEvidence }: Props) {
   const isTopic = mode === 'topic';
+  /**
+   * 生成策略是“去 spawn 一个 CLI Agent”，实测要 30-90 秒。
+   * 没计时的话看起来就是“点了没反应”（用户真实反馈过），所以这里给它一个在跑的读数。
+   */
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (anglesStatus !== 'running') { setElapsed(0); return; }
+    const t0 = Date.now();
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [anglesStatus]);
   if (status === 'failed') {
     return (
       <div className="analysis-panel analysis-failed">
@@ -187,7 +203,11 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
       {(anglesStatus === 'running') && (
         <div className="gen-loading angles-loading">
           <Loader2 size={16} className="spin" />
-          <span>AI 正在从你的赛道生成 5 个创作方向…</span>
+          <span>
+            AI 正在{isTopic ? '推演这个题目的价值、角度与素材缺口' : '从你的赛道生成 5 个创作策略'}…
+            已用时 <b className="mono">{elapsed}s</b>
+            <span className="gen-hint">（这类调用要跑本地 Agent，通常 30–90 秒，没反应不等于失败）</span>
+          </span>
         </div>
       )}
 
@@ -232,6 +252,12 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
               </div>
               <div className="angle-title">{a.title}</div>
               {a.core_point && <div className="angle-core">{a.core_point}</div>}
+              {a.insight && (
+                <div className="angle-insight">
+                  <span className="viral-label">独特洞察</span>
+                  <span>{a.insight}</span>
+                </div>
+              )}
               {(a.emotion || a.goal) && (
                 <div className="angle-chips">
                   {a.emotion && <span className="angle-chip">情绪 · {a.emotion}</span>}
@@ -254,7 +280,16 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                   </div>
                 )}
                 {a.target_user && <div className="angle-row"><span className="viral-label">目标用户</span><span>{a.target_user}</span></div>}
-                {a.structure && a.structure.length > 0 && (
+                {a.narrative && Object.values(a.narrative).some(Boolean) ? (
+                  <div className="angle-row">
+                    <span className="viral-label">叙事骨架</span>
+                    <ol className="analysis-list compact">
+                      {(['hook', 'explanation', 'framework', 'action'] as (keyof Narrative)[])
+                        .filter((b) => a.narrative?.[b])
+                        .map((b, j) => <li key={j}><b>{NARRATIVE_BEAT_LABEL[b]}</b>　{a.narrative![b]}</li>)}
+                    </ol>
+                  </div>
+                ) : a.structure && a.structure.length > 0 && (
                   <div className="angle-row">
                     <span className="viral-label">推荐结构</span>
                     <ol className="analysis-list compact">{a.structure.map((s, j) => <li key={j}>{s}</li>)}</ol>
@@ -275,12 +310,13 @@ export function AnalysisPanel({ analysis, status, error, onStartWriting, onGener
                       <div className="angle-feas-reason">{a.feasibility.reason}</div>
                     )}
                     {a.evidence_needed && a.evidence_needed.length > 0 && (
-                      <>
-                        <div className="angle-evidence-label">你需要补充（缺这些就只能写成空泛观点文）</div>
-                        <ul className="angle-evidence-list">
-                          {a.evidence_needed.map((e, j) => <li key={j}>{e}</li>)}
-                        </ul>
-                      </>
+                      <EvidenceChecklist
+                        items={a.evidence_needed}
+                        compact
+                        onToggle={a.id && onToggleEvidence
+                          ? (i, next) => onToggleEvidence(a.id!, i, next)
+                          : undefined}
+                      />
                     )}
                   </div>
                 )}

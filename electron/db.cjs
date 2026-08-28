@@ -229,6 +229,53 @@ function getDb(opts = {}) {
       }
 
       if (tableExists(LEGACY_ADOPT)) db.exec(`DROP TABLE ${LEGACY_ADOPT}`);
+
+      // ===== V3 升级：content_strategies 补 insight / narrative 列，证据升级成带状态对象 =====
+      // （旧库的 content_strategies 已经存在，schema 的 CREATE IF NOT EXISTS 会跳过它，必须 ALTER）
+      if (ensureCols('content_strategies', [
+        ['insight', "TEXT DEFAULT ''"], ['narrative', "TEXT DEFAULT '[]'"],
+      ])) {
+        const { normalizeEvidence, normalizeNarrative } = require('./analysis.cjs');
+        const updInsight = db.prepare(`UPDATE content_strategies SET insight = ?, narrative = ? WHERE id = ?`);
+        const updEv = db.prepare(`UPDATE content_strategies SET evidence_needed = ? WHERE id = ?`);
+        const rowsV3 = db.prepare(`
+          SELECT id, insight, narrative, structure, evidence_needed, core_point
+          FROM content_strategies
+        `).all();
+        const v3 = db.transaction(() => {
+          let changed = 0;
+          for (const r of rowsV3) {
+            let list = [];
+            try { list = JSON.parse(r.evidence_needed || '[]'); } catch {}
+            const first = Array.isArray(list) ? list[0] : null;
+            // 字符串形状 → 带状态对象（全部当 todo：没确认过的就是没素材）
+            if (Array.isArray(list) && list.length && typeof first === 'string') {
+              const upgraded = normalizeEvidence(list);
+              if (upgraded) { updEv.run(JSON.stringify(upgraded), r.id); changed++; }
+            }
+            // 旧数据只有 structure：按下标反推四拍，让旧策略也能用 V3 的叙事骨架
+            const hasNarr = r.narrative && r.narrative !== '[]' && r.narrative !== 'null';
+            const insightAlready = r.insight && r.insight !== '';
+            if (!hasNarr || !insightAlready) {
+              let narr = null;
+              if (!hasNarr) {
+                let st = [];
+                try { st = JSON.parse(r.structure || '[]'); } catch {}
+                narr = normalizeNarrative(st, st);
+              }
+              const narrative = hasNarr ? r.narrative : (narr ? JSON.stringify(narr) : '[]');
+              // 洞察没得可推：旧数据把 core_point 当 insight 会重复，以空串上线让模新补
+              const insight = insightAlready ? r.insight : '';
+              if (narrative !== (r.narrative || '[]') || insight !== (r.insight || '')) {
+                updInsight.run(insight, narrative, r.id); changed++;
+              }
+            }
+          }
+          return changed;
+        });
+        const n3 = v3();
+        if (n3) console.log(`[db] V3 升级：${n3} 条策略已补 insight/narrative 或升级证据形状`);
+      }
     }
   } catch (e) { console.warn('[db] migration skipped:', e.message); }
 
