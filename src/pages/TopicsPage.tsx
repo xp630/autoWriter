@@ -3,9 +3,10 @@ import { useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
+import { Flame, Rss, Bookmark } from 'lucide-react';
 
 type Tab = 'hot' | 'rss' | 'library';
-const TABS: { id: Tab; label: string }[] = [
+const TABS: { id: Tab; label: string; icon: typeof Flame }[] = [
   { id: 'hot', label: '热点', icon: Flame },
   { id: 'rss', label: 'RSS', icon: Rss },
   { id: 'library', label: '我的选题库', icon: Bookmark },

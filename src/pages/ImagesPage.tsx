@@ -24,6 +24,7 @@ async function downloadImage(img: ImageRecord) {
 type SizeCategory = 'all' | 'wechat' | 'weibo' | 'xhslike' | 'zhihu' | 'toutiao' | 'bilibili' | 'portrait' | 'square' | 'landscape';
 
 import type { LucideIcon } from 'lucide-react';
+import { Image as ImageIcon, MessageCircle, Heart, Flower, Lightbulb, Newspaper, Tv, Smartphone, Square, Monitor, Camera, Layers, Globe, Palette, User, Mountain, Frame } from 'lucide-react';
 const SIZE_TABS: { key: SizeCategory; label: string; icon: LucideIcon; ratioRange?: [number, number]; note?: string }[] = [
   { key: 'all', label: '全部', icon: ImageIcon },
   { key: 'wechat', label: '公众号', icon: MessageCircle, ratioRange: [2.0, 2.7], note: '2.35:1' },
@@ -114,7 +115,7 @@ function GalleryImage({ img, onClick, selected }: { img: ImageRecord; onClick: (
         <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
           {img.source === 'ai' ? (
             <span style={{ padding: '3px 7px', background: img.provider === 'tensorart' ? 'rgba(168,85,247,0.9)' : 'rgba(34,197,94,0.9)', color: '#fff', borderRadius: 5, fontSize: 10, fontWeight: 700 }}>
-              {img.provider === 'tensorart' ? Palette : Globe}
+              <>{img.provider === 'tensorart' ? <Palette size={10} /> : <Globe size={10} />}</>
             </span>
           ) : (
             <span style={{ padding: '3px 7px', background: 'rgba(255,255,255,0.85)', color: '#666', borderRadius: 5, fontSize: 10, fontWeight: 600 }}>
