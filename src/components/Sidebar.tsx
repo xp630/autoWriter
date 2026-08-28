@@ -1,4 +1,5 @@
-// Sidebar — 仿 autosocialX 布局，3 组分类 + inline SVG
+// Sidebar — 3 组分类 + inline SVG + 底部状态卡
+import { useEffect, useState } from 'react';
 
 interface NavItem {
   id: string;
@@ -43,6 +44,25 @@ interface Props {
 }
 
 export function Sidebar({ active, onNavigate }: Props) {
+  const [stats, setStats] = useState<{ total: number; drafts: number; today: number } | null>(null);
+
+  // 拉一次文章总数 + 今日新增
+  useEffect(() => {
+    if (!window.electronAPI?.listArticles) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await window.electronAPI.listArticles({});
+        if (cancelled || !Array.isArray(all)) return;
+        const today = new Date().toDateString();
+        const todayCount = all.filter((a: any) => new Date(a.created_at).toDateString() === today).length;
+        const draftCount = all.filter((a: any) => a.status === 'draft').length;
+        setStats({ total: all.length, drafts: draftCount, today: todayCount });
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [active]);  // active 变了说明导航过，重新拉
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -56,8 +76,16 @@ export function Sidebar({ active, onNavigate }: Props) {
           {group.items.map((item) => (
             <div
               key={item.id}
-              className={`nav-item ${active === item.id ? 'active' : ''}`}
+              className={`nav-item nav-item-tab ${active === item.id ? 'active' : ''}`}
               onClick={() => onNavigate(item.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onNavigate(item.id);
+                }
+              }}
             >
               <svg className="nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 {item.icon}
@@ -70,9 +98,29 @@ export function Sidebar({ active, onNavigate }: Props) {
       ))}
 
       <div className="spacer" />
-      <div style={{ padding: '12px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--muted)' }}>
-        <kbd>Ctrl+R</kbd> 重载 · <kbd>Ctrl+Shift+I</kbd> 调试
-      </div>
+
+      {stats && (
+        <div className="sidebar-stats">
+          <div className="sidebar-stats-row">
+            <div className="sidebar-stat">
+              <div className="sidebar-stat-value">{stats.total}</div>
+              <div className="sidebar-stat-label">总文章</div>
+            </div>
+            <div className="sidebar-stat">
+              <div className="sidebar-stat-value accent">{stats.drafts}</div>
+              <div className="sidebar-stat-label">草稿</div>
+            </div>
+            <div className="sidebar-stat">
+              <div className="sidebar-stat-value hot">{stats.today}</div>
+              <div className="sidebar-stat-label">今日</div>
+            </div>
+          </div>
+          <div className="sidebar-version">
+            <span className="version-dot" />
+            <span>v0.1.0 · 3 features shipped</span>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

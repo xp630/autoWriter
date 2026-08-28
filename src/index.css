@@ -137,6 +137,85 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
   font-family: var(--font-mono);
 }
 
+/* ===== Sidebar Stats (底部状态卡) ===== */
+.sidebar-stats {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, transparent 0%, var(--bg-soft) 100%);
+}
+
+.sidebar-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.sidebar-stat {
+  text-align: center;
+  padding: 8px 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  transition: all var(--t-fast) var(--ease);
+}
+
+.sidebar-stat:hover {
+  border-color: var(--line-soft);
+  transform: translateY(-1px);
+}
+
+.sidebar-stat-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-stat-value.accent { color: var(--accent); }
+.sidebar-stat-value.hot { color: var(--line); }
+
+.sidebar-stat-label {
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 2px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sidebar-version {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.version-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  box-shadow: 0 0 0 3px var(--line-glow);
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
 .side-group {
   padding: 16px 8px 8px;
 }
@@ -168,6 +247,34 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
 .nav-item:hover {
   background: var(--bg-soft);
   color: var(--ink);
+}
+
+.nav-item:focus-visible {
+  outline: 2px solid var(--line);
+  outline-offset: 2px;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--line);
+  outline-offset: 2px;
+}
+
+.btn-outline:focus-visible {
+  outline-color: var(--line);
+}
+
+.nav-item-tab:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--line);
+  outline-offset: 1px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--line) !important;
 }
 
 .nav-item.active {
@@ -362,6 +469,74 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
   border-top: 1px solid var(--border);
 }
 
+/* ===== Info Bar (写文章页顶 Agent 指示) ===== */
+.info-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 32px 16px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, var(--line-light) 0%, var(--card) 100%);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+}
+
+.info-bar-icon {
+  color: var(--line);
+  flex-shrink: 0;
+}
+
+.info-bar-label {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.info-bar-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.info-bar-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.info-bar-spacer {
+  flex: 1;
+}
+
+/* ===== Image Hint (Step 3 检测到配图占位) ===== */
+.image-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, var(--line-light) 0%, var(--card) 100%);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+}
+
+.image-hint-icon {
+  color: var(--line);
+  flex-shrink: 0;
+}
+
+.image-hint-title {
+  font-weight: 600;
+  color: var(--line-2);
+  font-size: 13px;
+}
+
+.image-hint-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
 /* ===== Page Header ===== */
 .page-header {
   padding: 32px 32px 24px;
@@ -393,8 +568,80 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
   padding: 24px;
   box-shadow: var(--shadow);
   margin: 24px 32px;
+  position: relative;
+  overflow: hidden;
 }
 
+.card-accent-default::before,
+.card-accent-action::before,
+.card-accent-configure::before,
+.card-accent-system::before,
+.card-accent-insight::before,
+.card-accent-danger::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+}
+
+.card-accent-action::before    { background: var(--line); }   /* 绿：action / provider / creation */
+.card-accent-configure::before { background: var(--accent); } /* 琥珀：configuration / model / tuning */
+.card-accent-system::before    { background: #5e8bff; }       /* 蓝：data / storage / system */
+.card-accent-insight::before   { background: #8b5cf6; }       /* 紫：prompts / templates / knowledge */
+.card-accent-danger::before    { background: var(--danger); } /* 红：危险、删除、清除 */
+.card-accent-default::before   { background: transparent; }   /* 无 accent */
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.card-header-icon {
+  color: var(--line);
+  flex-shrink: 0;
+}
+
+.card-accent-action    .card-header-icon { color: var(--line); }
+.card-accent-configure .card-header-icon { color: var(--accent); }
+.card-accent-system    .card-header-icon { color: #5e8bff; }
+.card-accent-insight   .card-header-icon { color: #8b5cf6; }
+.card-accent-danger    .card-header-icon { color: var(--danger); }
+.card-accent-default   .card-header-icon { color: var(--ink-3); }
+
+.card-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-header-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* 旧 .card-title 兼容 */
 .card-title {
   font-size: 16px;
   font-weight: 600;
@@ -603,6 +850,11 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
   justify-content: center;
   font-size: 32px;
   box-shadow: var(--shadow-md);
+  color: var(--line);
+}
+
+.empty-action {
+  margin-top: 4px;
 }
 
 .empty-title {

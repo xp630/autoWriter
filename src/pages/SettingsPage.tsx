@@ -1,5 +1,6 @@
 // SettingsPage — Agent CLI + Model + 图片 Provider + 提示词模板 配置
 import { useEffect, useState } from 'react';
+import { Bot, Brain, Image as ImageIcon, Layers, Database, Star, RefreshCw, Save, Settings as SettingsIcon, CheckCircle2, XCircle, Loader2, Globe, Palette, Package } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
@@ -244,7 +245,7 @@ export function SettingsPage() {
       <PageHeader title="设置" subtitle="Agent CLI / Model / 图片 Provider / 提示词模板" />
 
       {/* Agent CLI 选择 */}
-      <Card title="🤖 Agent CLI（全局）">
+      <Card title="Agent CLI（全局）" icon={Bot} accent="action">
         <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
           选一个已登录的 Agent CLI。所有写文章任务都派给它。
         </p>
@@ -270,7 +271,7 @@ export function SettingsPage() {
                 }}
               >
                 <span style={{ fontSize: 18 }}>
-                  {available === undefined ? '⏳' : available ? '✅' : '❌'}
+                  {available === undefined ? <Loader2 size={14} className="spin" /> : available ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
                 </span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600 }}>{c.label}</div>
@@ -284,7 +285,7 @@ export function SettingsPage() {
       </Card>
 
       {/* Model 选择 */}
-      <Card title="🧠 Model（针对当前 CLI）">
+      <Card title="Model（针对当前 CLI）" icon={Brain} accent="configure">
         <div className="row" style={{ alignItems: 'center' }}>
           <label style={{ minWidth: 80, fontSize: 13, color: 'var(--ink-2)' }}>Model ID</label>
           <input
@@ -300,7 +301,7 @@ export function SettingsPage() {
               disabled={!status.opencode || loadingModels}
               onClick={fetchModels}
             >
-              {loadingModels ? '⏳ 拉取中…' : '🔄 拉取模型'}
+              {loadingModels ? <><Loader2 size={14} className="spin" /> 拉取中…</> : <><RefreshCw size={14} /> 拉取模型</>}
             </button>
           )}
         </div>
@@ -336,12 +337,12 @@ export function SettingsPage() {
       {/* 保存 */}
       <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 16 }}>
         <button className="btn btn-primary" onClick={save}>
-          {saved ? '✅ 已保存' : '💾 保存设置'}
+          {saved ? <><CheckCircle2 size={14} /> 已保存</> : <><Save size={14} /> 保存设置</>}
         </button>
       </div>
 
       {/* ========== 图片生图设置 ========== */}
-      <Card title="🖼️ 图片生图设置">
+      <Card title="图片生图设置" icon={ImageIcon} accent="configure">
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
           选择使用的 Provider 和模型。设置后生图将使用此配置。
         </div>
@@ -405,13 +406,13 @@ export function SettingsPage() {
         
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
           <button className="btn btn-primary btn-sm" onClick={saveImageSettings}>
-            💾 保存生图设置
+            <Save size={14} /> 保存生图设置
           </button>
         </div>
       </Card>
 
       {/* ========== 图片 Provider 配置 ========== */}
-      <Card title="🖼️ 图片 Provider（生图服务）">
+      <Card title="图片 Provider（生图服务）" icon={Layers} accent="action">
         <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
           配置图片生成服务。支持多个 Provider，失败时自动切换。按优先级排序。
         </div>
@@ -436,7 +437,7 @@ export function SettingsPage() {
                 <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 18 }}>
-                      {p.provider_id === 'pollinations' ? '🌐' : p.provider_id === 'tensorart' ? '🎨' : '📦'}
+                      {p.provider_id === 'pollinations' ? <Globe size={14} /> : p.provider_id === 'tensorart' ? <Palette size={14} /> : <Package size={14} />}
                     </span>
                     <div>
                       <div style={{ fontWeight: 600 }}>{p.name}</div>
@@ -447,7 +448,7 @@ export function SettingsPage() {
                   </div>
                   <div className="row" style={{ gap: 8 }}>
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-                      {p.enabled ? '✅ 已启用' : '❌ 已禁用'}
+                      {p.enabled ? <><CheckCircle2 size={14} /> 已启用</> : <><XCircle size={14} /> 已禁用</>}
                     </span>
                     <button
                       className="btn btn-outline btn-sm"
@@ -460,7 +461,7 @@ export function SettingsPage() {
                         });
                       }}
                     >
-                      ⚙️ 配置
+                      <SettingsIcon size={14} /> 配置
                     </button>
                   </div>
                 </div>
@@ -484,7 +485,7 @@ export function SettingsPage() {
                             color: m.is_default ? 'var(--line-2)' : 'var(--muted)',
                           }}
                         >
-                          {m.name} {m.is_default && '⭐'}
+                          {m.name} {m.is_default && <Star size={12} style={{ color: 'var(--accent)', marginLeft: 4 }} fill="currentColor" />}
                         </span>
                       ))}
                     </div>
@@ -517,7 +518,7 @@ export function SettingsPage() {
             style={{ width: 'min(480px, 92vw)', padding: 20 }}
           >
             <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ fontWeight: 600, fontSize: 16 }}>⚙️ 配置 {editingProvider.name}</div>
+              <div style={{ fontWeight: 600, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}><SettingsIcon size={18} /> 配置 {editingProvider.name}</div>
               <button className="btn btn-outline btn-sm" onClick={() => setEditingProvider(null)}>✕</button>
             </div>
 
@@ -590,7 +591,7 @@ export function SettingsPage() {
                 取消
               </button>
               <button className="btn btn-primary btn-sm" onClick={() => saveProvider(editingProvider)}>
-                💾 保存
+                <Save size={14} /> 保存
               </button>
             </div>
           </div>
@@ -598,7 +599,7 @@ export function SettingsPage() {
       )}
 
       {/* 提示词模板管理 */}
-      <Card title="🎛 提示词模板">
+      <Card title="提示词模板" icon={SettingsIcon} accent="insight">
         <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
           在线编辑写作提示词，保存后立即生效。
         </div>
@@ -622,7 +623,7 @@ export function SettingsPage() {
           <span style={{ flex: 1 }} />
           {promptDirty && <span style={{ fontSize: 11, color: 'var(--warm)' }}>未保存</span>}
           <button className="btn btn-primary btn-sm" onClick={savePrompt} style={{ marginLeft: 8 }}>
-            {promptSaved ? '✅ 已保存' : '💾 保存模板'}
+            {promptSaved ? <><CheckCircle2 size={14} /> 已保存</> : <><Save size={14} /> 保存模板</>}
           </button>
         </div>
         <textarea
@@ -636,7 +637,7 @@ export function SettingsPage() {
       </Card>
 
       {/* 数据存储 */}
-      <Card title="📦 数据存储">
+      <Card title="数据存储" icon={Database} accent="system">
         <div className="muted" style={{ fontSize: 12 }}>
           所有文章 / 设置存在本地 SQLite：
           <code className="mono" style={{ display: 'block', marginTop: 4, padding: 8, background: 'var(--bg-soft)', borderRadius: 4 }}>

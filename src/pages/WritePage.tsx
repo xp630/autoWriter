@@ -10,6 +10,8 @@ import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
 import { showToast } from '../toast';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
+import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight } from 'lucide-react';
+// (FileEdit already imported for Card icon usage)
 
 /** 本地草稿（刷新不丢）*/
 const DRAFT_KEY = 'aw_draft';
@@ -448,72 +450,30 @@ export function WritePage() {
     return Array.from(matches).map(m => ({ desc: m[1], id: m[2] }));
   };
 
-  // ===== 替换配图占位符为可点击组件 =====
-  const renderContentWithImages = (content: string) => {
-    const placeholders = parseImagePlaceholders(content);
-    if (placeholders.length === 0) return content;
-
-    let result = content;
-    placeholders.forEach(({ id, desc }) => {
-      const placeholder = `[[配图:${desc}@${id}]]`;
-      const existingImage = generatedImages[id];
-      const isGenerating = generatingImages[id];
-
-      let replacement = '';
-      if (existingImage) {
-        replacement = `<div class="article-image" style="margin: 20px 0; text-align: center;"><img src="${existingImage}" alt="${desc}" style="max-width: 100%; border-radius: 12px; box-shadow: var(--shadow-md);" /><p style="font-size: 12px; color: var(--muted); margin-top: 8px;">${desc}</p></div>`;
-      } else if (isGenerating) {
-        replacement = `<div class="article-image-placeholder generating" style="margin: 20px 0; padding: 24px; background: var(--line-light); border: 2px dashed var(--line); border-radius: 12px; text-align: center; color: var(--line-2);">⏳ 正在生成配图：${desc}</div>`;
-      } else {
-        replacement = `<div class="article-image-placeholder" onclick="generateImage('${id}', '${desc}')" style="margin: 20px 0; padding: 24px; background: var(--line-light); border: 2px dashed var(--line); border-radius: 12px; text-align: center; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='var(--line-soft)';this.style.borderColor='var(--line)'" onmouseout="this.style.background='var(--line-light)';this.style.borderColor='var(--line)'">🖼️ <strong>点击生成配图</strong><br><span style="font-size: 12px; color: var(--muted);">${desc}</span></div>`;
-      }
-      result = result.replace(placeholder, replacement);
-    });
-    return result;
-  };
-
-  // ===== 处理配图点击（通过全局事件） =====
-  useEffect(() => {
-    const handleImageClick = async (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.classList.contains('article-image-placeholder') && !target.classList.contains('generating')) {
-        const match = target.textContent?.match(/配图：([^<\n]+)/);
-        if (match) {
-          const desc = target.innerHTML.match(/<span[^>]*>([^<]+)<\/span>/)?.[1] || '';
-          const picId = Object.keys(generatingImages).find(k => !generatingImages[k] && !generatedImages[k]) || '';
-          if (picId && desc) {
-            await generateImage(picId, desc);
-          }
-        }
-      }
-    };
-    document.addEventListener('click', handleImageClick);
-    return () => document.removeEventListener('click', handleImageClick);
-  }, [generatingImages, generatedImages]);
-
   return (
     <>
       <PageHeader
         title="写文章"
-        subtitle="主题 → 大纲（可改）→ 正文（两步走，质量更高）"
+        subtitle={'主题 → 大纲（可改）→ 正文 · ' + (STEPS[step]?.label || '主题 / 参考')}
       />
 
       {/* 当前生效的 Agent 指示（从设置读，不可改）*/}
-      <div className="card" style={{ marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 13, color: 'var(--muted)' }}>🤖 当前 Agent</span>
-        <span style={{ fontWeight: 600 }}>{CLI_LABEL[settings.cli] || settings.cli}</span>
-        {settings.model && <span className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>· {settings.model}</span>}
-        <span style={{ flex: 1 }} />
-        <a className="btn btn-outline btn-sm" onClick={() => alert('去侧边栏「设置」修改')} style={{ textDecoration: 'none' }}>
-          ⚙️ 设置
-        </a>
+      <div className="info-bar">
+        <Bot size={14} className="info-bar-icon" />
+        <span className="info-bar-label">当前 Agent</span>
+        <span className="info-bar-value">{CLI_LABEL[settings.cli] || settings.cli}</span>
+        {settings.model && <span className="info-bar-meta mono">· {settings.model}</span>}
+        <span className="info-bar-spacer" />
+        <button type="button" className="btn btn-outline btn-sm" onClick={() => showToast('去侧边栏「设置」修改')}>
+          <SettingsIcon size={14} /> 设置
+        </button>
       </div>
 
       <Stepper steps={STEPS} active={step} />
 
       {/* ===== Step 1: 主题 / 参考 ===== */}
       {step === 0 && (
-        <Card title="Step 1 — 主题与参考">
+        <Card title="Step 1 — 主题与参考" icon={FileEdit} accent="action">
           <textarea
             className="textarea"
             rows={3}
@@ -557,7 +517,7 @@ export function WritePage() {
               style={{ flex: 1 }}
             />
             <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
-              {fetching ? '⏳' : '🔗'} 抓取
+              {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
             </button>
           </div>
 
@@ -639,7 +599,7 @@ export function WritePage() {
 
           <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
             <button className="btn btn-primary" disabled={!query.trim() || generating} onClick={generateOutline}>
-              {generating && stage === 'outline' ? '⏳ 生成大纲中…' : '📝 生成大纲 →'}
+              {generating && stage === 'outline' ? <><Loader2 size={14} className="spin" /> 生成大纲中…</> : <>生成大纲 <ArrowRight size={14} /></>}
             </button>
           </div>
         </Card>
@@ -647,7 +607,7 @@ export function WritePage() {
 
       {/* ===== Step 2: 编辑大纲 ===== */}
       {step === 1 && (
-        <Card title="Step 2 — 编辑大纲（可手动调整）">
+        <Card title="Step 2 — 编辑大纲（可手动调整）" icon={FileEdit} accent="action">
           <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
             💡 你可以直接修改大纲。改过的章节会被标 [已修订]，Agent 会严格遵循。
           </div>
@@ -738,16 +698,16 @@ export function WritePage() {
 
       {/* ===== Step 3: 正文结果 ===== */}
       {step === 2 && result && (
-        <Card title={`Step 3 — ${result.title}（${result.wordCount} 字 · ${(result.elapsedMs / 1000).toFixed(1)}s）`}>
+        <Card title={`Step 3 — ${result.title}（${result.wordCount} 字 · ${(result.elapsedMs / 1000).toFixed(1)}s）`} icon={Sparkles} accent="action">
           {/* 配图提示 */}
           {parseImagePlaceholders(result.content).length > 0 && (
-            <div style={{ marginBottom: 16, padding: '12px 16px', background: 'var(--line-light)', borderRadius: 10, border: '1px solid var(--line-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 20 }}>🖼️</span>
+            <div className="image-hint">
+              <ImageIcon size={20} className="image-hint-icon" />
               <div>
-                <div style={{ fontWeight: 600, color: 'var(--line-2)', fontSize: 13 }}>
+                <div className="image-hint-title">
                   检测到 {parseImagePlaceholders(result.content).length} 个配图占位符
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                <div className="image-hint-sub">
                   点击占位符可 AI 生成配图，也可导出后手动处理
                 </div>
               </div>
@@ -858,7 +818,7 @@ export function WritePage() {
                   cursor: 'pointer',
                 }}
               >
-                {polishing ? '⏳' : '✨'} 二次润色
+                {polishing ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />} 二次润色
               </button>
               <button
                 onClick={regenerateArticle}

@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
+import { FileText } from 'lucide-react';
 import { RichEditor } from '../components/RichEditor';
 import { ImageLibraryGrid } from '../components/ImageLibraryGrid';
 import { exportWord } from '../utils/export';
@@ -573,7 +574,7 @@ export function ArticlesPage() {
         {loading ? (
           <div className="skeleton" style={{ height: 80 }} />
         ) : articles.length === 0 ? (
-          <Empty emoji="📝" title="还没有文章" description="去「写文章」生成第一篇" />
+          <Empty icon={FileText} title="还没有文章" description="去「写文章」生成第一篇" />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {articles.map((a) => {
