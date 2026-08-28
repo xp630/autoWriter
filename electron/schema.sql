@@ -142,3 +142,23 @@ CREATE TABLE IF NOT EXISTS content_analysis (
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_content_analysis_created ON content_analysis(created_at DESC);
+
+-- ============================================================================
+-- P0 内容决策系统
+-- ============================================================================
+
+-- 创作方向：基于一次内容分析生成的 N 个写作角度
+CREATE TABLE IF NOT EXISTS content_angles (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  analysis_id     INTEGER NOT NULL,
+  profile_id      TEXT DEFAULT '',
+  track           TEXT DEFAULT '',
+  angles_json     TEXT NOT NULL DEFAULT '{"angles":[],"track_fit":null}',
+  status          TEXT DEFAULT 'running',   -- running|completed|failed
+  error           TEXT DEFAULT '',
+  duration_ms     INTEGER DEFAULT 0,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (analysis_id) REFERENCES content_analysis(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_content_angles_analysis ON content_angles(analysis_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_content_angles_profile ON content_angles(profile_id, created_at DESC);

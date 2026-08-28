@@ -7,11 +7,8 @@ const { loadAllSkills, buildSkillInjection } = require('./skills.cjs');
 const { renderPrompt } = require('./prompts.cjs');
 const { TaskQueue } = require('./queue.cjs');
 const {
-  parseAnalysisJson,
-  loadAnalysisSkill,
-  buildAnalysisPrompt,
-  buildAnalysisContextBlock,
-  saveAnalysis,
+  parseAnalysisJson, parseAngleResult, loadAnalysisSkill, loadAngleSkill,
+  buildAnalysisPrompt, buildAnalysisContextBlock, saveAnalysis,
 } = require('./analysis.cjs');
 
 /** 把 agent 流式 chunk 推到所有 renderer 窗口 */
@@ -943,7 +940,67 @@ function registerIpc() {
     return { ...row, analysis: parsed };
   });
 
-  ipcMain.handle('analysis:list', (_e, { limit = 20 } = {}) => {
+  // ===== 创作方向生成（P0-1）=====
+  ipcMain.handle('analysis:angles', async (_e, params) => {
+    const analysisId = Number(params && params.analysisId);
+    if (!analysisId) return { ok: false, error: '缺少 analysisId' };
+    const row = db.prepare('SELECT id, title, content, analysis_json, status FROM content_analysis WHERE id = ?').get(analysisId);
+    if (!row) return { ok: false, error: '分析记录不存在' };
+    if (row.status !== 'completed') return { ok: false, error: '分析未完成，无法生成方向' };
+
+    const track = String((params && params.track) || '');
+    const cli   = String((params && params.cli)   || 'claude');
+    const model = String((params && params.model) || '');
+    const profileId = String((params && params.profileId) || '');
+
+    let analysisObj = {};
+    try { analysisObj = JSON.parse(row.analysis_json || '{}'); } catch {}
+    const ctx = {
+      topic: analysisObj.topic,
+      basic_info: analysisObj.basic_info,
+      core_points: Array.isArray(analysisObj.core_points) ? analysisObj.core_points.slice(0, 3) : undefined,
+      viral: analysisObj.viral,
+      audience: analysisObj.audience,
+    };
+    const skillBody = loadAngleSkill();
+    const userPrompt = `## 当前创作身份\n赛道：${track || '（未设赛道）'}\n${profileId ? 'profileId: ' + profileId : ''}\n\n## 已生成的内容分析（7 维摘要）\n${JSON.stringify(ctx, null, 0)}\n\n## 原文（截前 3000 字）\n${(row.content || '').slice(0, 3000)}\n\n## 任务\n基于以上分析，**从「${track || '通用'}」赛道角度**生成 5 个互斥的创作方向。\n对每个方向：给一个锐度标题、一句话核心观点、目标用户、3-5 步推荐结构、推荐理由。\n最后给 track_fit 块：本文与当前赛道是否值得写 + 一句话说明（如果不匹配，给拉回角度建议）。\n\n输出严格合法 JSON（不要 markdown 代码块包裹，字符串引号/逗号/括号都不能错）。`;
+    const fullPrompt = skillBody + '\n\n---\n\n' + userPrompt;
+
+    const anglesId = db.prepare(`INSERT INTO content_angles (analysis_id, profile_id, track, angles_json, status) VALUES (?, ?, ?, ?, 'running')`)
+      .run(analysisId, profileId, track, JSON.stringify({ angles: [], track_fit: null })).lastInsertRowid;
+    const start = Date.now();
+    try {
+      const { taskId, promise } = enqueueAgentRun('angle',
+        `方向: ${(row.title || '未命名').slice(0, 24)}`,
+        { cli, model }, fullPrompt);
+      const { content: raw, elapsedMs } = await promise;
+      const parsed = parseAnalysisJson(raw);
+      const dur = elapsedMs || (Date.now() - start);
+      if (!parsed.ok) {
+        db.prepare(`UPDATE content_angles SET status='failed', error=?, duration_ms=?, angles_json=? WHERE id=?`)
+          .run(parsed.error, dur, JSON.stringify({ raw: parsed.raw }), anglesId);
+        return { ok: false, id: anglesId, error: parsed.error, taskId };
+      }
+      const shaped = parseAngleResult(parsed.data);
+      if (!shaped.ok) {
+        db.prepare(`UPDATE content_angles SET status='failed', error=?, duration_ms=?, angles_json=? WHERE id=?`)
+          .run(shaped.error, dur, JSON.stringify({ raw: parsed.data }), anglesId);
+        return { ok: false, id: anglesId, error: shaped.error, taskId };
+      }
+      const stored = { angles: shaped.angles, track_fit: shaped.track_fit };
+      db.prepare(`UPDATE content_angles SET status='completed', duration_ms=?, angles_json=? WHERE id=?`)
+        .run(dur, JSON.stringify(stored), anglesId);
+      return { ok: true, id: anglesId, taskId, angles: shaped.angles, track_fit: shaped.track_fit };
+    } catch (err) {
+      const dur = Date.now() - start;
+      db.prepare(`UPDATE content_angles SET status='failed', error=?, duration_ms=? WHERE id=?`)
+        .run(err.message || String(err), dur, anglesId);
+      return { ok: false, id: anglesId, error: err.message || String(err), taskId: null };
+    }
+  });
+
+
+    ipcMain.handle('analysis:list', (_e, { limit = 20 } = {}) => {
     const rows = db.prepare(`
       SELECT id, source_url, title, platform, author, status, duration_ms, created_at
       FROM content_analysis

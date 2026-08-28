@@ -75,6 +75,14 @@ declare global {
       getAnalysis: (id: number) => Promise<ContentAnalysisRecord | null>;
       listAnalyses: (params?: { limit?: number }) => Promise<Array<{ id: number; title: string; platform: string; status: string; duration_ms: number; created_at: string }>>;
       deleteAnalysis: (id: number) => Promise<{ ok: boolean; changes: number }>;
+      generateAngles: (params: { analysisId: number; track: string; profileId: string; cli: string; model?: string }) => Promise<{
+        ok: boolean;
+        id?: number;
+        taskId?: string | null;
+        angles?: Angle[];
+        track_fit?: { matches?: boolean; article_track?: string; user_track?: string; note?: string };
+        error?: string;
+      }>;
     };
   }
 }
@@ -146,6 +154,16 @@ export interface QueueSnapshot {
 }
 
 /** 内容分析结果（P0）*/
+/** 创作方向 */
+export interface Angle {
+  angle_type: string;
+  title: string;
+  core_point: string;
+  target_user?: string;
+  structure?: string[];
+  reason?: string;
+}
+
 export interface ContentAnalysisResult {
   basic_info?: {
     title?: string;

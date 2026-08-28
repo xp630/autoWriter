@@ -121,6 +121,7 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['analysis:get', '取单条分析'],
   ['analysis:list', '列出分析'],
   ['analysis:delete', '删除分析'],
+  ['analysis:angles', '生成创作方向'],
   // 测试钩子（自身）
   ['test:list-channels', '测试用：列 channels'],
   ['test:invoke', '测试用：调 handler'],

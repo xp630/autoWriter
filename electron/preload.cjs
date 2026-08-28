@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAnalysis: (id) => ipcRenderer.invoke('analysis:get', id),
   listAnalyses: (params) => ipcRenderer.invoke('analysis:list', params),
   deleteAnalysis: (id) => ipcRenderer.invoke('analysis:delete', id),
+  generateAngles: (params) => ipcRenderer.invoke('analysis:angles', params),
 
   // 测试钩子 —— main.cjs 在 AUTOWRITER_TEST_MODE=1 时注册对应的 test:* handler
   // preload 始终暴露这些方法（不检查 env，避免 preload process.env 不可靠的问题）

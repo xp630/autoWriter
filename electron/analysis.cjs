@@ -41,6 +41,23 @@ function parseAnalysisJson(text) {
   return { ok: false, error: 'no valid JSON found', raw: text.slice(0, 500) };
 }
 
+/** 读取 angle-generation skill（不依赖 skills.cjs 体系） */
+function loadAngleSkill() {
+  const p = path.resolve(__dirname, "..", "src", "skills", "analysis", "angle-generation", "SKILL.md");
+  if (!fs.existsSync(p)) throw new Error(`Angle skill not found: ${p}`);
+  return fs.readFileSync(p, "utf-8")
+    .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+}
+
+/** 角度生成结果：必须含 angles[]（≥5）与 track_fit{block}；其他字段容错 */
+function parseAngleResult(data) {
+  if (!data || typeof data !== "object") return { ok: false, error: "缺少 JSON 对象" };
+  const angles = Array.isArray(data.angles) ? data.angles.filter(a => a && (a.title || a.angle_type)) : [];
+  if (angles.length < 3) return { ok: false, error: `angles 不足（${angles.length} 个，至少要 3 个）` };
+  const tf = data.track_fit && typeof data.track_fit === "object" ? data.track_fit : null;
+  return { ok: true, angles, track_fit: tf };
+}
+
 /** 读取 content-analysis skill（不依赖 skills.cjs 的 channels/personas 体系） */
 function loadAnalysisSkill() {
   const skillPath = path.resolve(__dirname, '..', 'src', 'skills', 'analysis', 'content-analysis', 'SKILL.md');
@@ -167,9 +184,6 @@ function saveAnalysis(db, { source_url, title, platform, author, content, analys
 }
 
 module.exports = {
-  parseAnalysisJson,
-  loadAnalysisSkill,
-  buildAnalysisPrompt,
-  buildAnalysisContextBlock,
-  saveAnalysis,
+  parseAnalysisJson, parseAngleResult, loadAnalysisSkill, loadAngleSkill,
+  buildAnalysisPrompt, buildAnalysisContextBlock, saveAnalysis,
 };

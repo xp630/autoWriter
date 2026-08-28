@@ -61,6 +61,11 @@ function getDb(opts = {}) {
       if (aCols.length > 0 && !aCols.includes('image_id')) {
         db.exec('ALTER TABLE article_images ADD COLUMN image_id INTEGER NOT NULL DEFAULT 0');
       }
+      // content_analysis 若缺 profile_id（P0 内容决策·身份隔离）
+      const caCols = db.prepare(`PRAGMA table_info(content_analysis)`).all().map(c => c.name);
+      if (caCols.length > 0 && !caCols.includes('profile_id')) {
+        try { db.exec(`ALTER TABLE content_analysis ADD COLUMN profile_id TEXT DEFAULT ''`); } catch {}
+      }
     }
   } catch (e) { console.warn('[db] migration skipped:', e.message); }
 
