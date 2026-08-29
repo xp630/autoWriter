@@ -2569,4 +2569,4 @@ select:focus-visible {
 .qc-rest { margin: 10px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .qc-rest-item { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
 .qc-ok { margin-top: 10px; font-size: 12px; color: #047857; line-height: 1.6; }
- 转发指标 + 图片角色（只做三种）)
+/* V4：转发指标 + 图片角色（只做三种）*/
