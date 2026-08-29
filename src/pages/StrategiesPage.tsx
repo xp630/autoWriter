@@ -1,7 +1,7 @@
 // StrategiesPage — 策略库（V2 §十二）：让策略成为可浏览、可检索、可复用的资产
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Layers, Compass, Star, Search, Archive, Trash2, RefreshCw,
+  Layers, Compass, Star, Search, Archive, RotateCcw, Trash2, RefreshCw,
   FileText, CheckCircle2, AlertTriangle, Lightbulb, Users, Target, TrendingUp,
 } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
@@ -13,7 +13,7 @@ import { DIFFICULTY_LABEL, NARRATIVE_BEAT_LABEL, type Narrative, type Strategy, 
 import { EvidenceChecklist } from '../components/EvidenceChecklist';
 
 type ModeFilter = 'all' | StrategyMode;
-type StatusFilter = 'all' | 'candidate' | 'adopted' | 'archived';
+type StatusFilter = 'all' | 'unarchived' | 'candidate' | 'adopted' | 'archived';
 
 const MODE_TEXT: Record<StrategyMode, string> = { reference: '借势拆解', topic: '命题策划' };
 const STATUS_TEXT: Record<string, string> = { candidate: '候选', adopted: '已采纳', archived: '已归档' };
@@ -34,7 +34,8 @@ function timeAgo(s?: string | null): string {
 export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => void }) {
   const profile = useActiveProfile();
   const [mode, setMode] = useState<ModeFilter>('all');
-  const [status, setStatus] = useState<StatusFilter>('all');
+  // 默认看「未归档」：归档的意义就是不出现在眼前。想看归档的选「已归档」或「全部状态」。
+  const [status, setStatus] = useState<StatusFilter>('unarchived');
   const [search, setSearch] = useState('');
   const [list, setList] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,7 +48,7 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
       const rows = await window.electronAPI.listStrategies({
         profileId: profile.id,
         mode: mode === 'all' ? undefined : mode,
-        status: status === 'all' ? undefined : status,
+        status,
         search: search.trim() || undefined,
         limit: 100,
       });
@@ -83,9 +84,10 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
     }
   };
 
-  const archive = async (id: number) => {
-    const r = await window.electronAPI.setStrategyStatus({ id, status: 'archived' });
-    showToast(r.ok ? '📦 已归档' : '❌ 归档失败');
+  const archive = async (id: number, to: 'archived' | 'candidate' = 'archived') => {
+    const r = await window.electronAPI.setStrategyStatus({ id, status: to });
+    if (!r.ok) { showToast('❌ 状态更新失败'); return; }
+    showToast(to === 'archived' ? '📦 已归档（默认视图不再显示，可在「已归档」找回）' : '↩️ 已取消归档');
     if (detail?.id === id) setDetail(null);
     void load();
   };
@@ -140,6 +142,7 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
             onChange={(e) => setSearch(e.target.value)}
           />
           <select className="input sl-status" value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
+            <option value="unarchived">未归档</option>
             <option value="all">全部状态</option>
             <option value="candidate">候选</option>
             <option value="adopted">已采纳</option>
@@ -199,8 +202,13 @@ export function StrategiesPage({ onNavigate }: { onNavigate?: (page: string) => 
                   <button className="btn btn-primary btn-sm" type="button" onClick={() => s.id && reuse(s.id)}>
                     从这条重新创作
                   </button>
-                  <button className="btn btn-ghost btn-sm sl-icon-btn" type="button" title="归档" onClick={() => s.id && void archive(s.id)}>
-                    <Archive size={13} />
+                  <button
+                    className="btn btn-ghost btn-sm sl-icon-btn"
+                    type="button"
+                    title={s.status === 'archived' ? '取消归档（放回未归档视图）' : '归档（从默认视图隐藏，保留采纳与战绩）'}
+                    onClick={() => s.id && void archive(s.id, s.status === 'archived' ? 'candidate' : 'archived')}
+                  >
+                    {s.status === 'archived' ? <RotateCcw size={13} /> : <Archive size={13} />}
                   </button>
                   <button className="btn btn-ghost btn-sm sl-icon-btn danger" type="button" title="删除" onClick={() => s.id && void remove(s.id)}>
                     <Trash2 size={13} />
