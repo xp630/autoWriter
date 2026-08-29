@@ -9,8 +9,9 @@ const { TaskQueue } = require('./queue.cjs');
 const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
-  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint, saveAnalysis,
-  evidenceCoverage, normalizeEvidence,
+  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
+  buildImageRoleHint, saveAnalysis,
+  evidenceCoverage, normalizeEvidence, strategyGate,
 } = require('./analysis.cjs');
 
 /** 把 agent 流式 chunk 推到所有 renderer 窗口 */
@@ -57,6 +58,14 @@ function registerIpc() {
    * Strategy-Driven Workflow 的根基：润色、配图、导出、发布、效果回填都发生在
    * renderer 状态之外（文章已入库、或在另一个页面），所以必须能从 DB 读回决策。
    */
+  /** 按 id 取权威策略行（生成守卫专用，不信客户端传来的文本） */
+  function strategyById(id) {
+    const nid = Number(id);
+    if (!nid) return null;
+    const row = db.prepare('SELECT * FROM content_strategies WHERE id = ?').get(nid);
+    return row ? shapeStrategyRow(row) : null;
+  }
+
   function strategyForArticle(articleId) {
     const id = Number(articleId);
     if (!id) return null;
@@ -275,6 +284,18 @@ function registerIpc() {
     if (!outline) throw new Error('缺少大纲，请先生成大纲');
     // 关键词可为空：只要有大纲（从链接/参考文进来的流程，主题已凝在大纲里）
     if ((!keywords || !keywords.length) && !outline && !reference_text) throw new Error('关键词、大纲、参考文至少一个');
+
+    // V4 生成守卫①：凡带策略生成正文，三问未答完就拦下。
+    // 故意做在主进程：UI 能被绕过（草稿恢复、旧数据、直接 invoke），而这条规则的价值就在于绕不过。
+    const stgForGate = strategy || strategyForArticle(params.articleId);
+    if (stgForGate && (stgForGate.strategyId || stgForGate.adoptionId || stgForGate.id)) {
+      // 以库为准：renderer 传上来的 belief 文本不能自证清白（否则客户端填三个宇就当答完了）
+      const authoritative = strategyById(stgForGate.strategyId || stgForGate.id);
+      const gate = strategyGate(authoritative || stgForGate);
+      if (!gate.pass) {
+        throw new Error(`生成守卫未通过，请先在策略卡答完三问：${gate.missing.join('、')}`);
+      }
+    }
 
     const ctx = buildPromptContext({ keywords, style, length, channel, persona, title, reference_text, track });
     const analysisBlock = buildAnalysisContextBlock(analysis);
@@ -610,8 +631,9 @@ function registerIpc() {
 
     // 策略驱动配图：情绪定画面气质、目标定图像作用。
     // 从 articleId 反查策略（图库里手动新建的图无 articleId → 自然不加约束）。
-    // 拼在 AI 扩写之前，让扩写模型把风格约一并在内，而不是事后追加互相矛盾。
-    const imgHint = buildImageStrategyHint(strategyForArticle(articleId));
+    // V4 再加一层“画面角色”：从占位描述里推断对比/流程/框架，角色先于美学。
+    // 拼在 AI 扩写之前，让风格约束被一并展开，而不是事后追加互相矛盾。
+    const imgHint = buildImageStrategyHint(strategyForArticle(articleId)) + buildImageRoleHint(prompt);
 
     // 可选：用 AI 双层扩写（standard + 模型优化）
     let finalPrompt = (prompt || '') + imgHint;
@@ -1036,6 +1058,9 @@ function registerIpc() {
       title: r.title || '',
       core_point: r.core_point || '',
       insight: r.insight || '',
+      belief_before: r.belief_before || '',
+      belief_after: r.belief_after || '',
+      belief_source: r.belief_source || '',
       target_user: r.target_user || '',
       structure: parseCol(r.structure, []),
       narrative: parseCol(r.narrative, null),
@@ -1063,8 +1088,9 @@ function registerIpc() {
     INSERT INTO content_strategies
     (mode, source_type, analysis_id, batch_id, topic, profile_id, track, persona,
      angle_type, title, core_point, insight, target_user, structure, narrative, emotion, goal, value_score,
-     differentiator, track_fit, feasibility, evidence_needed, fact_risk, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate')
+     differentiator, track_fit, feasibility, evidence_needed, fact_risk,
+     belief_before, belief_after, belief_source, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate')
   `);
 
   async function runStrategyGenerate(params) {
@@ -1133,6 +1159,8 @@ function registerIpc() {
           s.feasibility ? JSON.stringify(s.feasibility) : null,
           s.evidence_needed ? JSON.stringify(s.evidence_needed) : null,
           s.fact_risk || (shaped.mode === 'topic' ? 'medium' : 'low'),
+          // 三问：存 AI 提的候选（可空）。闸门只认用户确认后的值，所以 AI 填了也不代表能生成。
+          s.belief_before || '', s.belief_after || '', s.belief_source || '',
         ).lastInsertRowid,
       ))();
 
@@ -1207,7 +1235,7 @@ function registerIpc() {
     const row = db.prepare('SELECT * FROM content_strategies WHERE id = ?').get(Number(id));
     if (!row) return null;
     const links = db.prepare(`
-      SELECT id, article_id, adopted_at, views, likes, favorites, comments, followers, manual_score, note
+      SELECT id, article_id, adopted_at, shares, views, likes, favorites, comments, followers, manual_score, note
       FROM strategy_articles WHERE strategy_id = ? ORDER BY adopted_at DESC
     `).all(row.id);
     return { ...shapeStrategyRow(row), links };
@@ -1251,13 +1279,35 @@ function registerIpc() {
   });
 
   /**
+   * V4：回答三问（生成守卫的写入孔）。
+   * 这三句故意不记 AI 自填的默认值：必须是人确认的内容，所以单独一个窄接口。
+   */
+  ipcMain.handle('strategy:setBelief', (_e, params) => {
+    const id = Number(params && params.strategyId);
+    if (!id) return { ok: false, error: '缺少 strategyId' };
+    const row = db.prepare('SELECT id FROM content_strategies WHERE id = ?').get(id);
+    if (!row) return { ok: false, error: '策略不存在' };
+    const clean = (v) => String(v == null ? '' : v).trim().slice(0, 500);
+    const bb = clean(params.beliefBefore ?? params.belief_before);
+    const ba = clean(params.beliefAfter ?? params.belief_after);
+    const bs = clean(params.beliefSource ?? params.belief_source);
+    db.prepare(`
+      UPDATE content_strategies
+      SET belief_before = ?, belief_after = ?, belief_source = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(bb, ba, bs, id);
+    const fresh = db.prepare('SELECT * FROM content_strategies WHERE id = ?').get(id);
+    return { ok: true, strategy: shapeStrategyRow(fresh), gate: strategyGate(shapeStrategyRow(fresh)) };
+  });
+
+  /**
    * 效果回填（§十三）：把发布后的真实数据写回那条「策略×文章」执行记录。
    * 没有这一环，策略只是提示词片段；有了它，策略才会被真实结果校正。
    */
   ipcMain.handle('strategy:recordResult', (_e, params) => {
     const p = params || {};
     const metrics = p.metrics || {};
-    const cols = ['views', 'likes', 'favorites', 'comments', 'followers', 'manual_score'];
+    const cols = ['shares', 'views', 'likes', 'favorites', 'comments', 'followers', 'manual_score'];
     const sets = [], vals = [];
     for (const c of cols) {
       if (metrics[c] === undefined) continue;
@@ -1292,6 +1342,7 @@ function registerIpc() {
       SELECT strategy_id,
              COUNT(*) AS times_adopted,
              SUM(CASE WHEN views IS NOT NULL THEN 1 ELSE 0 END) AS reported,
+             AVG(shares) AS avg_shares,
              AVG(views) AS avg_views, AVG(comments) AS avg_comments,
              AVG(favorites) AS avg_favorites, AVG(followers) AS avg_followers,
              AVG(manual_score) AS avg_manual_score

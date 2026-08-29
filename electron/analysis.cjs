@@ -248,6 +248,13 @@ function normalizeStrategy(a, mode = 'reference') {
   // 主张可以正确但毫无价值，洞察才是读者带走的那一句。
   const insight = str(a.insight);
   if (insight) out.insight = insight;
+  // V4 生成守卫三问：容忍多种写法，但绝不自己编造默认值
+  const bb = str(a.belief_before || a.beliefBefore || a.reader_before);
+  if (bb) out.belief_before = bb;
+  const ba = str(a.belief_after || a.beliefAfter || a.target_belief);
+  if (ba) out.belief_after = ba;
+  const bs = str(a.belief_source || a.belief_before_source);
+  if (bs) out.belief_source = bs;
   if (a.target_user) out.target_user = str(a.target_user);
   if (Array.isArray(a.structure)) {
     const st = a.structure.map(str).filter(Boolean);
@@ -315,6 +322,25 @@ const GOAL_GUIDE = {
 };
 
 /**
+ * V4 生成守卫（①）：三问未答完 → 禁止生成正文。
+ *
+ * 为什么放在主进程而不是只靠 UI：UI 可以绕过（草稿恢复、旧策略、脚本 invoke），
+ * 而这条规则的意义就是“输入烂不配被生成掩盖”，所以必须是硬拦。
+ *
+ * 证据只认 status=ready：列了 5 条但一条没备，等于没证据。
+ */
+function strategyGate(strategy) {
+  const s = strategy && typeof strategy === 'object' ? strategy : {};
+  const missing = [];
+  if (!str(s.belief_before)) missing.push('读者原本怎么想');
+  if (!str(s.belief_after)) missing.push('你希望读者改怎么想');
+  const ev = Array.isArray(s.evidence_needed) ? s.evidence_needed : [];
+  const ready = ev.filter((e) => (typeof e === 'string' ? false : str(e && e.status) === 'ready')).length;
+  if (ready === 0) missing.push('至少一条已备好的证据（证据账里勾上 ready）');
+  return { pass: missing.length === 0, missing, ready_evidence: ready };
+}
+
+/**
  * 把用户采纳的角度渲染成提示词里的“创作策略”块（双模式）。
  * 与 buildAnalysisContextBlock 的区分：那边是“参考素材是什么”，这边是“用户已决定怎么写”。
  * @param {Object} [strategy] 来自 renderer 的已采纳角度（Angle 字段 + mode/anglesId/index）
@@ -327,6 +353,11 @@ function buildStrategyBlock(strategy) {
   if (strategy.core_point) lines.push(`- **核心主张（全文要证明它）**: ${strategy.core_point}`);
   // 主张与洞察分开写：模型只会写“正确的废话”时，是因为没人要求它给出后者。
   if (strategy.insight) lines.push(`- **独特洞察（读者要带走的那一句）**: ${strategy.insight}`);
+  // V4：认知位移——本文存在的全部理由。写不出位移的文章只会充“正确的废话”
+  if (strategy.belief_before || strategy.belief_after) {
+    lines.push(`- **认知位移（本文要完成的事）**: 读者原本认为「${strategy.belief_before || '…'}」→ 读完后应认为「${strategy.belief_after || '…'}」`);
+    if (strategy.belief_source) lines.push(`- **旧认知的出处（不得生造共识）**: ${strategy.belief_source}`);
+  }
   if (strategy.title) lines.push(`- **标题方向**: ${strategy.title}`);
   if (strategy.target_user) lines.push(`- **目标读者**: ${strategy.target_user}`);
   const diff = normalizeDifferentiator(strategy.differentiator);
@@ -532,9 +563,52 @@ function buildAnalysisContextBlock(analysis) {
 }
 
 /**
+ * V4 图片角色（只做三种 + 一个兵底）。故意不做五套体系：
+ * 2 粉阶段“低质量但承担任务的图 > 高质量但没任务的图”——角色先于美学。
+ * 图的职责是降低阅读成本（标题负责点击），所以提示词重心在“一眼看懂”，不在好看。
+ */
+const IMAGE_ROLES = {
+  compare: {
+    label: '对比图',
+    hint: '左右或上下两栏对比结构，两侧体量相当，中间有明显分隔，标出关键差异项；不要装饰性背景',
+  },
+  flow: {
+    label: '流程图',
+    hint: '从左到右或从上到下的步骤链路，节点用方框、箭头明确指向下一步，总数控制在 3–5 步，不画多余元素',
+  },
+  framework: {
+    label: '框架图',
+    hint: '把概念分成几个并列区块（如 2×2 或四象限），区块标题要能读，区块之间关系用连线或包含表示',
+  },
+  scene: {
+    label: '场景图（兵底）',
+    hint: '仅当内容真的需要一个具体场景时才用；以真实、具体、可读为先，不要炫技法',
+  },
+};
+
+/**
+ * 从占位描述里推角色。关键词命中优先级：对比 > 流程 > 框架 > 场景。
+ * @returns {{ role: string, label: string, hint: string } | null}
+ */
+function inferImageRole(promptText) {
+  const t = String(promptText || '').toLowerCase();
+  const raw = String(promptText || '');
+  if (/(vs|对比|相较|两种|前者后者|贵价|便宜档|之前.{0,4}之后)/i.test(t)) return { role: 'compare', ...IMAGE_ROLES.compare };
+  if (/(流程|步骤|链路|阶段|从.{0,6}到|→|-&gt;)/.test(raw)) return { role: 'flow', ...IMAGE_ROLES.flow };
+  if (/(框架|模型|四象限|矩阵|四问|分层|体系|清单)/.test(raw)) return { role: 'framework', ...IMAGE_ROLES.framework };
+  // 没命中任何结构关键词时不强行扣角色：一句无用的“请以流程图画”比不指导更坏
+  return null;
+}
+
+/** 图片角色提示（接在策略约束之后） */
+function buildImageRoleHint(promptText) {
+  const r = inferImageRole(promptText);
+  if (!r) return '';
+  return `\n\n【画面角色：${r.label}】${r.hint}。职责是降低阅读成本，不追求艺术效果；文字标签要清楚可读。`;
+}
+
+/**
  * 策略→配图提示词（情绪定画面气质，目标定图的作用）。
- * 放在 analysis.cjs 是为了能单测；主进程只负责拼到生图 prompt 上。
- * @returns {string} 追加到原 prompt 后面的风格后缀（无策略时返回空串）
  */
 function buildImageStrategyHint(strategy) {
   if (!strategy || typeof strategy !== 'object') return '';
@@ -590,8 +664,9 @@ module.exports = {
   parseAnalysisJson, parseAngleResult, parseStrategyResult,
   normalizeStrategy, normalizeAngle, normalizeStrategyValue,
   normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
-  normalizeEvidence, normalizeNarrative, evidenceCoverage,
+  normalizeEvidence, normalizeNarrative, evidenceCoverage, strategyGate,
   DIFF_TYPES, DIFF_LABEL, DIFFICULTIES, FACT_RISKS,
   loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
-  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint, saveAnalysis,
+  buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
+  buildImageRoleHint, inferImageRole, saveAnalysis,
 };

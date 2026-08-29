@@ -236,6 +236,13 @@ function getDb(opts = {}) {
 
       if (tableExists(LEGACY_ADOPT)) db.exec(`DROP TABLE ${LEGACY_ADOPT}`);
 
+      // ===== V4：生成守卫三问字段 + 回填只加一个指标（转发）=====
+      ensureCols('content_strategies', [
+        ['belief_before', "TEXT DEFAULT ''"], ['belief_after', "TEXT DEFAULT ''"], ['belief_source', "TEXT DEFAULT ''"],
+      ]);
+      // 旧策略没有三问字段 → 保持空，由闸门拦住让用户补填（而不是默认为通过）
+      ensureCols('strategy_articles', [['shares', 'INTEGER']]);
+
       // ===== V3 升级：content_strategies 补 insight / narrative 列，证据升级成带状态对象 =====
       // （旧库的 content_strategies 已经存在，schema 的 CREATE IF NOT EXISTS 会跳过它，必须 ALTER）
       if (ensureCols('content_strategies', [

@@ -14,6 +14,8 @@ import { assessReference, referenceQualityNote } from '../utils/referenceGuard';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
 import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3, Layers, Compass, XCircle } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
+import { BeliefGate, gateOf } from '../components/BeliefGate';
+import { QualityPanel } from '../components/QualityPanel';
 import { ArticleViewer } from '../components/ArticleViewer';
 import type { ContentAnalysisResult, Strategy, StrategySelection, StrategyMode, TrackFit } from '../types';
 import { getAgentSettings } from '../utils/storage';
@@ -352,10 +354,9 @@ export function WritePage() {
   const CLI_LABEL: Record<string, string> = { pi: 'pi', claude: 'Claude Code', opencode: 'opencode', codex: 'Codex CLI' };
 
   // ===== 二次润色 =====
-  const polishArticle = async () => {
+  /** 执行润色。指令由调用方给定（手写 或 体检面板一键生成） */
+  const runPolish = async (instruction: string) => {
     if (!result) return;
-    const instruction = prompt('润色指令（例：让语言更口语化 / 加上数据论据 / 压缩到 1500 字）', '让语言更犀利、有金句感');
-    if (!instruction) return;
     setPolishing(true);
     setLogs((prev) => [...prev, { type: 'info', text: `✨ 二次润色: ${instruction}`, at: Date.now() }]);
     try {
@@ -385,6 +386,24 @@ export function WritePage() {
       currentTaskIdRef.current = null;
       setPolishing(false);
     }
+  };
+
+  /** 手动润色：弹框让本人写/改指令 */
+  const polishArticle = async () => {
+    if (!result) return;
+    const instruction = prompt('润色指令（例：让语言更口语化 / 加上数据论据 / 压缩到 1500 字）', '让语言更犀利、有金句感');
+    if (!instruction) return;
+    await runPolish(instruction);
+  };
+
+  /**
+   * 一键修正：直接用体检给出的指令跑润色。
+   * 保留一次确认：它会花一次真 Agent 调用，不能隐式触发。
+   */
+  const polishWithIssue = async (title: string, fix: string) => {
+    if (!window.confirm(`将按下面指令润色（会跑一次本地 Agent，约 30–90 秒）：\n\n${fix}`)) return;
+    setLogs((prev) => [...prev, { type: 'info', text: `🧪 体检修正·${title}`, at: Date.now() }]);
+    await runPolish(fix);
   };
 
   // ===== 复制全文 =====
@@ -1091,13 +1110,29 @@ export function WritePage() {
             </div>
           </div>
 
+          {/* V4 生成守卫：带策略写作时必须先答完三问。前端灰住按钮只是提验，
+              真正的拦在主进程 article:article 里（防绕过） */}
+          {strategy && (
+            <BeliefGate
+              strategy={strategy.strategy}
+              onPassed={(s) => setStrategy((cur) => (cur ? { ...cur, strategy: s } : cur))}
+            />
+          )}
+
           <div className="row" style={{ marginTop: 12, justifyContent: 'space-between' }}>
             <button className="btn btn-outline btn-sm" onClick={() => setStep(0)}>← 返回 Step 1</button>
-            <div className="row">
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
               <button className="btn btn-outline btn-sm" disabled={generating} onClick={generateOutline}>
                 🔄 重生成大纲
               </button>
-              <button className="btn btn-primary" disabled={!outline.trim() || generating} onClick={generateArticle}>
+              <button
+                className="btn btn-primary"
+                disabled={!outline.trim() || generating || (strategy != null && !gateOf(strategy.strategy).pass)}
+                title={strategy && !gateOf(strategy.strategy).pass
+                  ? `生成守卫未通过：还缺 ${gateOf(strategy.strategy).missing.join('、')}`
+                  : undefined}
+                onClick={generateArticle}
+              >
                 {generating && stage === 'article' ? '⏳ 生成正文中…' : '✍️ 生成正文 →'}
               </button>
             </div>
@@ -1108,6 +1143,22 @@ export function WritePage() {
       {/* ===== Step 3: 正文结果 ===== */}
       {step === 2 && result && (
         <Card title={`Step 3 — ${result.title}（${result.wordCount} 字 · ${(result.elapsedMs / 1000).toFixed(1)}s）`} icon={Sparkles} accent="action">
+          {/* V4 发布前四检 + 成稿体检 */}
+          <QualityPanel
+            md={result.content}
+            ctx={{
+              length,
+              goal: strategy?.strategy.goal,
+              emotion: strategy?.strategy.emotion,
+              beliefBefore: strategy?.strategy.belief_before,
+              beliefAfter: strategy?.strategy.belief_after,
+              pendingEvidence: (strategy?.strategy.evidence_needed || [])
+                .filter((e) => e.status !== 'ready')
+                .map((e) => e.item),
+            }}
+            busy={polishing}
+            onFix={(title, fix) => void polishWithIssue(title, fix)}
+          />
           {/* 配图提示 */}
           {parseImagePlaceholders(result.content).length > 0 && (
             <div className="image-hint">

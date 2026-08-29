@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseStrategyResult, parseAngleResult, normalizeStrategy,
   normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility, evidenceCoverage,
-  buildStrategyBlock, buildImageStrategyHint,
+  buildStrategyBlock, buildImageStrategyHint, inferImageRole, buildImageRoleHint,
 } from '../../electron/analysis.cjs';
 
 describe('normalizeDifferentiator · A 模式核心字段', () => {
@@ -370,4 +370,47 @@ describe('V3 拆分：主张 vs 洞察、narrative 四拍、成立度', () => {
 
 
 
+});
+
+describe('V4 图片角色：角色先于美学（只做三种 + 兜底）', () => {
+  it('对比：vs / 对比 / 贵价便宜档 都归到对比图', () => {
+    expect(inferImageRole('GPT vs 轻量模型').role).toBe('compare');
+    expect(inferImageRole('两种方案的对比').role).toBe('compare');
+    expect(inferImageRole('贵价和便宜档的差别').role).toBe('compare');
+  });
+
+  it('流程：步骤 / 从…到… / 箭头 归到流程图', () => {
+    expect(inferImageRole('需求到结果的流程').role).toBe('flow');
+    expect(inferImageRole('四步工作流步骤图').role).toBe('flow');
+  });
+
+  it('框架：四问 / 象限 / 矩阵 / 分层 归到框架图', () => {
+    expect(inferImageRole('四问选模框架').role).toBe('framework');
+    expect(inferImageRole('2×2 矩阵').role).toBe('framework');
+  });
+
+  it('命中优先级：同一句里"对比"优先于"流程"（避免含糊时乱扣角色）', () => {
+    expect(inferImageRole('对比两种流程').role).toBe('compare');
+  });
+
+  it('纯场景描述不硬扣角色 —— 宁可不指导，也不给一句无用的话', () => {
+    expect(inferImageRole('深圳南山写字楼夜景')).toBeNull();
+    expect(buildImageRoleHint('深圳南山写字楼夜景')).toBe('');
+    expect(inferImageRole('')).toBeNull();
+    expect(inferImageRole(null)).toBeNull();
+  });
+
+  it('角色提示写清职责是"降低阅读成本"，不是好看', () => {
+    const h = buildImageRoleHint('便宜档与贵价档对比');
+    expect(h).toContain('画面角色：对比图');
+    expect(h).toContain('两栏对比');
+    expect(h).toContain('降低阅读成本');
+    expect(h).toContain('文字标签要清楚可读');
+  });
+
+  it('角色提示与策略提示互不覆盖，可叠加', () => {
+    const hint = buildImageStrategyHint({ emotion: '愤怒', goal: '评论' }) + buildImageRoleHint('两种路线对比');
+    expect(hint).toContain('创作策略约束');
+    expect(hint).toContain('画面角色：对比图');
+  });
 });

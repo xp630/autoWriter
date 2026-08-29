@@ -11,6 +11,7 @@ import { useActiveProfile } from '../hooks/useActiveProfile';
 import { setPendingStrategy } from '../utils/strategyHandoff';
 import { DIFFICULTY_LABEL, NARRATIVE_BEAT_LABEL, type Narrative, type Strategy, type StrategyLink, type StrategyMode, type StrategyStats } from '../types';
 import { EvidenceChecklist } from '../components/EvidenceChecklist';
+import { BeliefGate } from '../components/BeliefGate';
 
 type ModeFilter = 'all' | StrategyMode;
 type StatusFilter = 'all' | 'unarchived' | 'candidate' | 'adopted' | 'archived';
@@ -268,6 +269,10 @@ function StrategyDetail({
       <div className="sl-detail-body">
         <div className="sl-facts">
           <Fact label="创作角度" value={detail.angle_type} />
+          {/* V4 三问：在库里也能补答/改答，不一定要回写文章页才能填 */}
+          <div className="sl-fact-wide">
+            <BeliefGate strategy={detail} onPassed={() => void onReused()} />
+          </div>
           <Fact label="标题方向" value={detail.title} />
           <Fact label="文章立意（主张）" value={detail.core_point} strong />
           <Fact label="独特洞察（读者带走的那一句）" value={detail.insight} strong />
@@ -316,6 +321,7 @@ function StrategyDetail({
           <span><Target size={13} /> 被采用 <b>{stat?.times_adopted ?? links.length}</b> 次</span>
           <span><Users size={13} /> 关联文章 <b>{links.filter(l => l.article_id != null).length}</b> 篇</span>
           <span>最近一次使用 <b>{timeAgo(lastUsed)}</b></span>
+          {typeof stat?.avg_shares === 'number' && <span>平均转发 <b>{stat.avg_shares.toFixed(1)}</b></span>}
           {typeof stat?.avg_views === 'number' && <span>平均阅读 <b>{Math.round(stat.avg_views)}</b></span>}
           {typeof stat?.avg_comments === 'number' && <span>平均评论 <b>{Math.round(stat.avg_comments)}</b></span>}
           {typeof stat?.avg_favorites === 'number' && <span>平均收藏 <b>{Math.round(stat.avg_favorites)}</b></span>}
@@ -354,6 +360,7 @@ function Fact({ label, value, strong }: { label: string; value?: string | null; 
 /** 一条采用记录 + 内联的效果回填表单 */
 function ResultRow({ link, onSaved }: { link: StrategyLink; onSaved: () => void }) {
   const FIELDS: Array<[keyof StrategyLink, string, string]> = [
+    ['shares', '转发', 'number'],
     ['views', '阅读', 'number'], ['likes', '点赞', 'number'], ['favorites', '收藏', 'number'],
     ['comments', '评论', 'number'], ['followers', '涨粉', 'number'], ['manual_score', '主观分', 'number'],
   ];

@@ -162,7 +162,10 @@ test('§十三 效果回填：手动录入指标，重开仍在并被汇总', as
   const detail = ctx.window.locator(`.sl-detail[data-strategy-id="${sid}"]`);
   await expect(detail).toBeVisible({ timeout: 5000 });
 
-  await detail.locator('.sl-num').first().fill('15000');            // 阅读
+  // 必须按 aria-label 定位：字段集合会随指标增减（V4 加了"转发"排第一位），
+  // 用 .sl-num.first() 这类位置选择器会在加字段时静默填错框。
+  await detail.locator('input[aria-label="转发"]').fill('96');
+  await detail.locator('input[aria-label="阅读"]').fill('15000');
   await detail.locator('input[aria-label="评论"]').fill('420');
   await detail.locator('input[aria-label="涨粉"]').fill('86');
   await detail.locator('.sl-note').fill('评论区站队很明显');
@@ -171,14 +174,16 @@ test('§十三 效果回填：手动录入指标，重开仍在并被汇总', as
 
   // 落库确认（不能只信 UI）
   const row = await execSql<Array<Record<string, unknown>>>(
-    ctx.window, `SELECT views, comments, followers FROM strategy_articles WHERE strategy_id = ?`, [sid],
+    ctx.window, `SELECT shares, views, comments, followers FROM strategy_articles WHERE strategy_id = ?`, [sid],
   );
+  expect(Number(row[0].shares)).toBe(96);      // V4：转发是唯一优先指标
   expect(Number(row[0].views)).toBe(15000);
   expect(Number(row[0].comments)).toBe(420);
   expect(Number(row[0].followers)).toBe(86);
 
   // 汇总统计出现在详情里
   const body = await detail.innerText();
+  expect(body).toContain('96');      // 平均转发（V4 优先指标）
   expect(body).toContain('15000');   // 平均阅读
   expect(body).toContain('420');     // 平均评论
   expect(body).toContain('86');      // 平均涨粉
