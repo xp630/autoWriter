@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=0">
+<meta name="theme-color" content="#ffffff">
+<title>找了一篇硬核文章问 AI 能不能写，AI 说"它不背这个锅"</title>
+<style>
+  /* ========== 排版：手机阅读优先，可打印 ========== */
+  :root {
+    --ink: #1a1a1a;
+    --ink-2: #4a4a4a;
+    --ink-3: #6b6b6b;
+    --muted: #8b8b8b;
+    --line: #e8e8e8;
+    --line-soft: #f0f0f0;
+    --bg: #ffffff;
+    --bg-soft: #fafafa;
+    --accent: #b91c1c;
+    --quote-bar: #c8c8c8;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "kern", "palt";
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans CN",
+      "Noto Sans CJK SC", "WenQuanYi Micro Hei", sans-serif;
+    font-size: 17px;
+    line-height: 1.85;
+    letter-spacing: 0.01em;
+  }
+  .article {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 56px 28px 96px;
+  }
+  /* ===== 标题区 ===== */
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  .meta-dot {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--muted);
+  }
+  h1.title {
+    font-size: 26px;
+    line-height: 1.45;
+    font-weight: 800;
+    color: var(--ink);
+    letter-spacing: 0.005em;
+    margin: 0 0 28px;
+  }
+  .deck {
+    font-size: 14px;
+    color: var(--ink-3);
+    line-height: 1.7;
+    border-left: 3px solid var(--line);
+    padding: 4px 0 4px 14px;
+    margin: 0 0 44px;
+  }
+  /* ===== 正文 ===== */
+  p { margin: 0 0 1.2em; color: var(--ink); }
+  p.lead { font-size: 18px; color: var(--ink-2); }
+  hr.divider {
+    border: 0; height: 1px;
+    background: var(--line-soft);
+    margin: 36px auto;
+    width: 48px;
+  }
+  /* ===== 强调 ===== */
+  strong { font-weight: 700; color: var(--ink); }
+  /* ===== 引用：金句位 ===== */
+  blockquote {
+    margin: 28px 0;
+    padding: 4px 0 4px 18px;
+    border-left: 4px solid var(--quote-bar);
+    color: var(--ink-2);
+    font-size: 17px;
+  }
+  blockquote .gold {
+    font-weight: 700;
+    color: var(--ink);
+    font-size: 18px;
+    letter-spacing: 0.005em;
+  }
+  /* ===== CTA ===== */
+  .cta {
+    margin: 40px 0 0;
+    padding: 22px 24px;
+    background: var(--bg-soft);
+    border-radius: 6px;
+    font-size: 16px;
+    color: var(--ink-2);
+    line-height: 1.85;
+  }
+  .cta p { margin: 0 0 0.9em; }
+  .cta p:last-child { margin: 0; }
+  .cta strong { color: var(--accent); }
+  /* ===== 文末署名 ===== */
+  .footer {
+    margin-top: 56px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+  /* ===== 移动端 ===== */
+  @media (max-width: 480px) {
+    body { font-size: 16.5px; line-height: 1.85; }
+    .article { padding: 36px 20px 64px; }
+    h1.title { font-size: 23px; }
+    blockquote { font-size: 16.5px; padding-left: 14px; }
+    blockquote .gold { font-size: 17px; }
+  }
+  /* ===== 打印 ===== */
+  @media print {
+    body { font-size: 12pt; line-height: 1.7; }
+    .article { max-width: none; padding: 0; }
+    .cta { background: transparent; border: 1px solid var(--line); }
+    blockquote { page-break-inside: avoid; }
+    p { page-break-inside: avoid; orphans: 3; widows: 3; }
+  }
+</style>
+</head>
+<body>
+<article class="article">
+
+  <div class="meta">
+    <span>随笔</span>
+    <span class="meta-dot"></span>
+    <span>2026-08-29</span>
+    <span class="meta-dot"></span>
+    <span>约 1300 字 · 5 分钟</span>
+  </div>
+
+  <h1 class="title">找了一篇硬核文章问 AI 能不能写，AI 说"它不背这个锅"</h1>
+
+  <div class="deck">
+    三个月前我做了一个 AI 写作工具。4 个版本、12 个按钮之后，我自己都不会用了。
+  </div>
+
+  <p class="lead">三个月前，我想靠公众号挣杯奶茶钱。</p>
+
+  <p>每次发文要花两小时：找主题、理大纲、写正文、找图、排版、复制粘贴到后台。我想着，要是能让 AI 替我做完这些流程，我<strong>躺着就能把钱挣了</strong>。</p>
+
+  <p>其实想做这事想了挺久，但一直没动。直到有天看到<strong>媳妇的公众号收入了第一笔一分钱</strong>——一篇文章带来的。一分钱。一分也是"第一桶金"。那天晚上我就把电脑打开了。</p>
+
+  <hr class="divider">
+
+  <p>然后我没刹住车。</p>
+
+  <p>"能不能分析参考文"——我加了策略层，5 种互斥角度。</p>
+
+  <p>"能不能防止 AI 编"——我加了证据账，没备的强制留占位。</p>
+
+  <p>"能不能让我先想清楚写什么"——我加了三问必答。</p>
+
+  <p>"能不能让我发之前自检"——我加了成稿体检四检。</p>
+
+  <p>4 个版本下来，系统里 12 个按钮，流程走了 9 步。</p>
+
+  <p>老实说，我<strong>从来没觉得任何一版"完美"过</strong>。每发完一个版本，我就看到一个"还不够"的地方——再加一层闸门、再让 AI 多问自己几个问题、再加个体检。我<strong>机械地追求完美</strong>，以为它是一个加得够多就能到的地方。</p>
+
+  <hr class="divider">
+
+  <p>直到我自己想发一篇。</p>
+
+  <p>打开系统，看着满屏按钮——模式切换、抓取、粘贴、分析、生成策略、采纳、跳过策略……<strong>我自己都不知道下一步点什么</strong>。</p>
+
+  <p>我是这个工具的作者。</p>
+
+  <hr class="divider">
+
+  <p>那之后我做了一件事：<strong>找了一篇深度硬核的技术长文</strong>，让 AI 帮我分析、参考、然后仿写一篇。</p>
+
+  <p>我问它："你能写出这种文章吗？"</p>
+
+  <blockquote>
+    <span class="gold">它回我三个字——"系统不背这个锅"。</span>
+  </blockquote>
+
+  <p>那一刻我才意识到：<strong>工具一直很清楚它能做什么、不能做什么</strong>。是我在假装它能替我做"想说什么"这件事。</p>
+
+  <hr class="divider">
+
+  <p>我不再问"工具能加什么功能"。</p>
+
+  <p>我开始问自己另一句话——<strong>"我今天想说什么？"</strong></p>
+
+  <p>如果我说不出，那今天就不写。</p>
+
+  <blockquote>
+    <span class="gold">工具能放大我已经有的，给不了我还没有的。</span><br>
+    <span class="gold">内核还是人。</span>
+  </blockquote>
+
+  <div class="cta">
+    <p>你最近一次想写但写不出是什么时候？是被工具卡住了，还是本来就没想好要说什么？</p>
+    <p><strong>留言说说你的那一秒</strong>。</p>
+    <p>如果你也被"功能太多"困住，<strong>转发给那个朋友看看</strong>——他可能正在加第 13 个按钮。</p>
+  </div>
+
+  <div class="footer">
+    本文由作者撰写，AI 辅助起草与润色
+  </div>
+
+</article>
+</body>
+</html>
