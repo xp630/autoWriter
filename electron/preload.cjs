@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteStrategy: (id) => ipcRenderer.invoke('strategy:delete', id),
   setStrategyStatus: (params) => ipcRenderer.invoke('strategy:setStatus', params),
   setStrategyEvidence: (params) => ipcRenderer.invoke('strategy:setEvidenceStatus', params),
+  setStrategyBelief: (params) => ipcRenderer.invoke('strategy:setBelief', params),
   recordStrategyResult: (params) => ipcRenderer.invoke('strategy:recordResult', params),
   strategyStats: (ids) => ipcRenderer.invoke('strategy:stats', ids),
   articleStrategy: (articleId) => ipcRenderer.invoke('article:strategyFor', articleId),

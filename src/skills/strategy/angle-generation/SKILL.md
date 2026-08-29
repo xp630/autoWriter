@@ -34,6 +34,9 @@ tags: [strategy, angle, track_fit, differentiator, reference]
       "angle_type": "<赛道切角，如'女性成长视角' / '婚姻风险视角' / '反常识观点视角' / '故事案例视角' / '社会观察视角' / '数据深度视角'>",
       "title": "<推荐标题，15-30 字，必须有锐度/悬念/反差>",
       "core_point": "<核心主张：全文要证明的那一句判断，15-30 字>",
+      "belief_before": "<读者原本怎么想（本文要推翻的那个认知）>",
+      "belief_after": "<读完后希望他怎么想；必须与 belief_before 构成真实位移>",
+      "belief_source": "<belief_before 的出处：谁在这么想、在哪看到（评论区/同行文/行业报道）>",
       "insight": "<独特洞察：读者带走的那一句。不得与 core_point 同义反复——主张回答'你信什么'，洞察回答'为什么这篇值得读'>",
       "target_user": "<目标读者画像，如'25-35 岁一线城市职场女性'>",
       "narrative": {
@@ -82,6 +85,8 @@ tags: [strategy, angle, track_fit, differentiator, reference]
 9. **fact_risk 要诚实**：某个角度必须靠数据/案例/人名才能成立、而你又没有来源时给 high；系统会据此向正文下发更强的事实约束。
 10. **evidence 是 A 模式的硬要求**（最容易被忽略、却决定本文能不能站住）：至少 2 条，且参考文里已经提供的要标 `ready`、还需要用户去查的要标 `todo`。`differentiator.type=new_evidence` 的角度若不给 evidence，就是空头支票。
 11. **严格 JSON**：字符串引号/逗号/括号都不能错；不要 markdown 围栏；不要在 JSON 外加任何解释文字。
+
+11. **belief_before / belief_after 是必填项，不是注释**：三问里任何一项缺失，用户就无法通过生成守卫（系统会禁止生成正文）。`belief_source` 尤其重要——写不出处的旧认知，基本是生造的稻草人，宁可不给也别编。
 
 ## 输出去向
 

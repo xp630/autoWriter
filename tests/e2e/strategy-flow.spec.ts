@@ -349,3 +349,90 @@ test('消费点齐全：大纲、正文、润色三个模板都含 strategyBlock
   const polish = await invokeIpc<{ content?: string }>(ctx.window, 'prompts:get', 'polish');
   expect(polish!.content).toContain('不得改掉上方创作策略');
 });
+
+test('V4 生成守卫：三问未答完时正文生成被硬拦，且不信客户端传来的 belief', async () => {
+  const sid = await seedStrategy({ topic: '要被闸门拦住' });
+
+  const call = () => invokeIpc<{ ok?: boolean }>(ctx.window, 'article:article', {
+    cli: '__nonexistent_cli__',
+    outline: '# 大纲\n\n段落',
+    keywords: ['守卫'],
+    // 故意伪造客户端 belief：闸门必须以库为准，否则前端填三个字就能绕过
+    strategy: {
+      strategyId: sid, mode: 'topic',
+      belief_before: '客户端伪造', belief_after: '客户端伪造',
+      evidence_needed: [{ item: '伪造', status: 'ready' }],
+    },
+  });
+
+  let msg = '';
+  try { await call(); } catch (e: any) { msg = String(e?.message || e); }
+  expect(msg, '必须被生成守卫拦下（且发生在调用 Agent 之前）').toContain('生成守卫未通过');
+  expect(msg).toMatch(/读者原本怎么想|你希望读者改怎么想|已备好的证据/);
+});
+
+test('V4 setBelief：答完三问前闸门不开，勾上证据后才通过', async () => {
+  const sid = await seedStrategy({ topic: '要答三问的策略' });
+
+  // 1) 只答两问：证据仍为 0 条 ready（夹具是旧字符串形状，一律算未备）
+  const r1 = await invokeIpc<{ ok: boolean; gate?: { pass: boolean; missing: string[] } }>(
+    ctx.window, 'strategy:setBelief',
+    { strategyId: sid, beliefBefore: 'AI 创业靠模型能力', beliefAfter: 'AI 创业靠渠道能力' },
+  );
+  expect(r1.ok).toBe(true);
+  expect(r1.gate?.pass).toBe(false);
+  expect(r1.gate?.missing).toContain('至少一条已备好的证据（证据账里勾上 ready）');
+
+  // 2) 落库确认（不能只看返回体）
+  const raw = await execSql<Array<{ belief_before: string; belief_after: string }>>(
+    ctx.window, `SELECT belief_before, belief_after FROM content_strategies WHERE id = ?`, [sid],
+  );
+  expect(raw[0].belief_before).toBe('AI 创业靠模型能力');
+  expect(raw[0].belief_after).toBe('AI 创业靠渠道能力');
+
+  // 3) 勾一条证据 → 闸门开
+  const ev = await invokeIpc<{ ok: boolean; evidence_ready: number }>(
+    ctx.window, 'strategy:setEvidenceStatus', { strategyId: sid, index: 0, status: 'ready' },
+  );
+  expect(ev.ok).toBe(true);
+  expect(ev.evidence_ready).toBe(1);
+
+  const r2 = await invokeIpc<{ gate?: { pass: boolean; missing: string[] } }>(
+    ctx.window, 'strategy:setBelief',
+    { strategyId: sid, beliefBefore: 'AI 创业靠模型能力', beliefAfter: 'AI 创业靠渠道能力' },
+  );
+  expect(r2.gate?.pass).toBe(true);
+  expect(r2.gate?.missing).toEqual([]);
+
+  // 4) 空白答案不算已回答（不能靠敲空格过关）
+  const r3 = await invokeIpc<{ gate?: { pass: boolean } }>(
+    ctx.window, 'strategy:setBelief', { strategyId: sid, beliefBefore: '   ', beliefAfter: '\t' },
+  );
+  expect(r3.gate?.pass).toBe(false);
+
+  // 5) 不存在的策略 / 缺 id 必须被拒
+  expect((await invokeIpc<{ ok: boolean }>(ctx.window, 'strategy:setBelief', { strategyId: 999999 })).ok).toBe(false);
+  expect((await invokeIpc<{ ok: boolean }>(ctx.window, 'strategy:setBelief', {})).ok).toBe(false);
+});
+
+test('V4 回填：转发作为独立指标可写可读', async () => {
+  const sid = await seedStrategy({ topic: '要录转发的策略' });
+  const art = await seedArticle('有转发的一篇');
+  const adopt = await invokeIpc<{ adoptionId: number }>(ctx.window, 'strategy:adopt', { strategyId: sid, articleId: art });
+
+  const r = await invokeIpc<{ ok: boolean }>(ctx.window, 'strategy:recordResult', {
+    adoptionId: adopt.adoptionId, metrics: { shares: 137 },
+  });
+  expect(r.ok).toBe(true);
+
+  const row = await execSql<Array<{ shares: number | null }>>(
+    ctx.window, `SELECT shares FROM strategy_articles WHERE id = ?`, [adopt.adoptionId],
+  );
+  expect(Number(row[0].shares)).toBe(137);
+
+  const got = await invokeIpc<{ links: Array<{ shares: number | null }> }>(ctx.window, 'strategy:get', sid);
+  expect(Number(got.links[0].shares)).toBe(137);
+
+  const stats = await invokeIpc<Array<{ avg_shares: number | null }>>(ctx.window, 'strategy:stats', [sid]);
+  expect(Number(stats[0].avg_shares)).toBe(137);
+});

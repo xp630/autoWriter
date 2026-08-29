@@ -169,6 +169,11 @@ CREATE TABLE IF NOT EXISTS content_strategies (
   title           TEXT DEFAULT '',
   core_point      TEXT DEFAULT '',                     -- 文章立意 / thesis（主张）
   insight         TEXT DEFAULT '',                     -- V3：独特洞察。主张可以正确但无价值，洞察才是读者带走的那一句
+  -- ▲ 生成守卫三问（1）。任意为空 → 禁止生成正文。故意要用户自己填：
+  --   AI 可以给候选，但“读者原本怎么想 / 我要他怎么想”必须是人的判断。
+  belief_before   TEXT DEFAULT '',                     -- 1. 读者原本怎么想
+  belief_after    TEXT DEFAULT '',                     -- 2. 我希望读者改怎么想
+  belief_source   TEXT DEFAULT '',                     -- belief_before 的出处（评论区/同行文/常见说法）——防生造稻草人共识
   target_user     TEXT DEFAULT '',
   structure       TEXT DEFAULT '[]',                   -- JSON 数组（兼容旧形状）
   narrative       TEXT DEFAULT '[]',                   -- V3：{hook,explanation,framework,action} 四拍叙事骨架，可复用
@@ -202,6 +207,7 @@ CREATE TABLE IF NOT EXISTS strategy_articles (
   strategy_id   INTEGER NOT NULL,
   article_id    INTEGER,
   adopted_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  shares        INTEGER,                                 -- 转发/分享——2粉阶段唯一优先看的指标（阅读≠认可，转发≈传播价值）
   views         INTEGER,
   likes         INTEGER,
   favorites     INTEGER,

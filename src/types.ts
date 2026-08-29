@@ -129,6 +129,10 @@ declare global {
       deleteStrategy: (id: number) => Promise<{ ok: boolean; changes: number }>;
       setStrategyStatus: (params: { id: number; status: 'candidate' | 'adopted' | 'archived' }) => Promise<{ ok: boolean; changes: number }>;
       /** V3 勾选某条证据为已备/未备（成立度由用户亲手抬上来） */
+      /** V4：回答三问（生成守卫写入孔）。返回最新策略与闸门状态 */
+      setStrategyBelief: (params: {
+        strategyId: number; beliefBefore?: string; beliefAfter?: string; beliefSource?: string;
+      }) => Promise<{ ok: boolean; strategy?: Strategy; gate?: StrategyGate; error?: string }>;
       setStrategyEvidence: (params: { strategyId: number; index: number; status: 'todo' | 'ready' }) => Promise<{
         ok: boolean;
         evidence_total?: number;
@@ -138,7 +142,8 @@ declare global {
       }>;
       recordStrategyResult: (params: {
         adoptionId?: number; articleId?: number;
-        metrics: Partial<{ views: number; likes: number; favorites: number; comments: number; followers: number; manual_score: number; note: string }>;
+        /** shares（转发）放最前：2 粉阶段唯一优先看的指标 */
+        metrics: Partial<{ shares: number; views: number; likes: number; favorites: number; comments: number; followers: number; manual_score: number; note: string }>;
       }) => Promise<{ ok: boolean; adoptionId?: number; error?: string }>;
       strategyStats: (ids: number[]) => Promise<StrategyStats[]>;
       /** 策略反查口：跨页面（导出/发布/回填/详情）靠它拿回“这篇文章当时定了什么策略” */
@@ -285,6 +290,15 @@ export interface Strategy {
   /** B：AI 编造事实的风险，决定正文下发多强的事实约束 */
   fact_risk?: FactRisk;
 
+  /**
+   * V4 生成守卫三问：任意为空 → 主进程禁止生成正文。
+   * 故意要求人确认：AI 可以提候选，但“读者原本怎么想 / 我要他怎么想”必须是人的判断。
+   */
+  belief_before?: string;
+  belief_after?: string;
+  /** belief_before 的出处（谁在这么想），防生造稻草人共识 */
+  belief_source?: string;
+
   // ▲ 生命周期
   status?: 'candidate' | 'adopted' | 'archived';
   created_at?: string;
@@ -352,10 +366,19 @@ export const DIFFICULTY_LABEL: Record<string, string> = {
 export type FactRisk = 'low' | 'medium' | 'high';
 
 /** 策略 : 文章 = 1:N 的执行记录（含 §十三 效果回填字段） */
+/** V4 生成闸门结果 */
+export interface StrategyGate {
+  pass: boolean;
+  missing: string[];
+  ready_evidence: number;
+}
+
 export interface StrategyLink {
   id: number;
   article_id: number | null;
   adopted_at: string;
+  /** 转发/分享 —— 2 粉阶段唯一优先看的指标（阅读≠认可，转发≈传播价值） */
+  shares: number | null;
   views: number | null;
   likes: number | null;
   favorites: number | null;
@@ -370,6 +393,7 @@ export interface StrategyStats {
   strategy_id: number;
   times_adopted: number;
   reported: number;
+  avg_shares?: number | null;
   avg_views: number | null;
   avg_comments: number | null;
   avg_favorites: number | null;

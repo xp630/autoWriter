@@ -324,7 +324,6 @@ select:focus-visible {
   position: relative;
 }
 
-
 /* ===== 生成骨架 loading ===== */
 .gen-loading {
   border: 1px solid var(--border);
@@ -574,7 +573,6 @@ select:focus-visible {
   flex: 1;
 }
 
-
 /* ===== ImageSlot（配图槽，两页共用）===== */
 /* 复制友好：配图槽的操作壳不参与选区复制，手选正文 Ctrl+C 只带走干净的 <img> */
 .img-slot-caption,
@@ -586,7 +584,6 @@ select:focus-visible {
 .img-slot-lib-overlay,
 .img-slot-generating { -webkit-user-select: none; user-select: none; }
 .img-slot-img { user-select: text; }
-
 
 .img-slot-generating { display: flex; flex-direction: column; gap: 8px; padding: 20px 22px; background: var(--line-light); border: 1px solid var(--line-soft); border-radius: 12px; }
 .img-slot-gen-head { display: flex; align-items: center; gap: 8px; color: var(--line-2); font-weight: 600; font-size: 13px; }
@@ -1009,7 +1006,6 @@ select:focus-visible {
   background: var(--bg-soft);
   color: var(--ink);
 }
-
 
 /* ===== 顶栏右侧容器（身份切换 + 队列徽章）===== */
 .topbar-right {
@@ -2537,3 +2533,40 @@ select:focus-visible {
 }
 .ref-error-hint { color: var(--ink-2); flex-basis: 100%; }
 .ref-paste { margin-top: 8px; font-size: 12px; line-height: 1.7; }
+
+/* ===== V4 生成守卫：三问必答 ===== */
+.bg-card { border: 1px solid var(--border); border-radius: var(--r); padding: 12px 14px; margin-top: 14px; background: var(--bg-soft); }
+.bg-card.bg-block { border-color: #fecaca; background: #fff7f7; }
+.bg-card.bg-pass { border-color: #a7f3d0; background: var(--line-light); }
+.bg-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); margin-bottom: 10px; }
+.bg-state { color: var(--ink-3); font-weight: 400; margin-left: 4px; }
+.bg-fields { display: flex; flex-direction: column; gap: 10px; }
+.bg-field { display: flex; flex-direction: column; gap: 4px; }
+.bg-field > span { font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.bg-source { font-size: 12px; }
+.bg-hint { font-style: normal; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.bg-evidence { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.bg-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.bg-block-hint { font-size: 11px; color: #b91c1c; }
+
+/* ===== V4 成稿体检（发布前四检） ===== */
+.qc-card { border: 1px solid var(--border); border-radius: var(--r); padding: 12px 14px; margin-bottom: 14px; background: var(--card); }
+.qc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink); }
+.qc-score { font-weight: 800; font-variant-numeric: tabular-nums; }
+.qc-score.qc-good { color: #047857; }
+.qc-score.qc-fair { color: #92400e; }
+.qc-score.qc-poor { color: #b91c1c; }
+.qc-checks { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.qc-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 3px 9px; border: 1px solid transparent; }
+.qc-chip.pass { color: #047857; background: var(--line-soft); border-color: #a7f3d0; }
+.qc-chip.fail { color: #b91c1c; background: var(--danger-soft); border-color: #fecaca; }
+.qc-issues { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.qc-row { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; }
+.qc-row-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.qc-row-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.qc-row-detail { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.qc-meta { font-size: 12px; color: var(--muted); }
+.qc-rest { margin: 10px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.qc-rest-item { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.qc-ok { margin-top: 10px; font-size: 12px; color: #047857; line-height: 1.6; }
+ 转发指标 + 图片角色（只做三种）)
