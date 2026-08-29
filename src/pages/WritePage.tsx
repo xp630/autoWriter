@@ -19,7 +19,7 @@ import { QualityPanel } from '../components/QualityPanel';
 import { ArticleViewer } from '../components/ArticleViewer';
 import type { ContentAnalysisResult, Strategy, StrategySelection, StrategyMode, TrackFit } from '../types';
 import { getAgentSettings } from '../utils/storage';
-import { getDraft, setDraft, clearDraft, type DraftState } from '../utils/storage';
+import { getDraft, setDraft, clearDraft, hasDraft, type DraftState } from '../utils/storage';
 import { useActiveProfile } from '../hooks/useActiveProfile';
 // (FileEdit already imported for Card icon usage)
 
@@ -98,6 +98,26 @@ export function WritePage() {
   // 派生：参考文是否值得送去分析（烂输入不该有资格消耗一次 AI 调用）
   const refAssess = assessReference(referenceText);
   const refNote = referenceQualityNote(referenceText);
+  // 是否存在未清理的草稿——控制「清空草稿」按钮可见性
+  const [hasDraftState, setHasDraftState] = useState<boolean>(() => hasDraft());
+
+  /** 一键清空草稿 + 所有写作状态 + 回到 Step 1。被自动保存前会被 setDraft 覆盖。 */
+  const handleResetDraft = () => {
+    const ok = window.confirm('确认清空草稿？\n\n将清掉：主题 / URL / 参考文 / 大纲 / 风格 / 渠道 / 分析 / 策略。\n\n已入库的文章不受影响。');
+    if (!ok) return;
+    setQuery(''); setSavedQuery('');
+    setReferenceUrl(''); setReferenceText('');
+    setOutline(''); setOutlineDirty(false);
+    setChannel('wechat'); setStyle('tech'); setLength('medium'); setNeedImage(true);
+    setAnalysis(null); setAnalysisId(null); setAnalysisStatus('idle'); setAnalysisError('');
+    setAngles(null); setAnglesStatus('idle'); setAnglesError('');
+    setTrackFit(null); setStrategy(null);
+    setResult(null);
+    setStep(0);
+    clearDraft();
+    setHasDraftState(false);
+    showToast('🧹 草稿已清空');
+  };
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');   // 抓取失败单独存，不污染 referenceText
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -574,6 +594,13 @@ export function WritePage() {
     setStyle(draft.style || 'tech');
     setLength(draft.length || 'medium');
     setNeedImage(draft.needImage !== false);
+    // V2.2：恢复分析/策略/角度，避免「参考文回来了但分析丢了」的不对称。
+    if (draft.analysis) setAnalysis(draft.analysis);
+    if (draft.analysisId) setAnalysisId(draft.analysisId);
+    if (draft.analysis) setAnalysisStatus('completed');  // 有内容=已成功
+    if (draft.strategy) setStrategy(draft.strategy);
+    if (draft.angles) setAngles(draft.angles);
+    if (typeof draft.step === 'number' && draft.step >= 0 && draft.step <= 2) setStep(draft.step);
     setLogs((prev) => [...prev, {
       type: 'info',
       text: `📝 恢复了${draft.savedAt ? ' ' + new Date(draft.savedAt).toLocaleTimeString('zh-CN') : ''}保存的草稿`,
@@ -584,14 +611,19 @@ export function WritePage() {
   // 自动保存（debounced 1.5s）
   useEffect(() => {
     const timer = setTimeout(() => {
+      // V2.2：草稿一并保存分析/策略/角度，避免「参考文回来了但分析没了」的不对称。
+      // angles 可能很大，但 localStorage 一般有 5MB 上限；5 条策略 ≈ < 30KB。
       const draft: DraftState = {
         query, referenceUrl, referenceText, outline, outlineDirty,
         channel, style, length, needImage,
+        analysis, analysisId, strategy, angles, step,
       };
       setDraft(draft);
+      setHasDraftState(true);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, style, length, needImage]);
+  }, [query, referenceUrl, referenceText, outline, outlineDirty, channel, style, length, needImage,
+      analysis, analysisId, strategy, angles, step]);
 
   // 分析记录变化时清空旧方向，避免串号
   useEffect(() => { setAngles(null); setAnglesStatus('idle'); setAnglesError(''); setTrackFit(null); }, [analysisId]);
@@ -757,6 +789,11 @@ export function WritePage() {
         <span className="info-bar-value">{CLI_LABEL[settings.cli] || settings.cli}</span>
         {settings.model && <span className="info-bar-meta mono">· {settings.model}</span>}
         <span className="info-bar-spacer" />
+        {hasDraftState && (
+          <button type="button" className="btn btn-outline btn-sm btn-reset-draft" onClick={handleResetDraft} title="清空当前草稿：主题/URL/参考文/大纲/分析/策略">
+            🧹 清空草稿
+          </button>
+        )}
         <button type="button" className="btn btn-outline btn-sm" onClick={() => showToast('去侧边栏「设置」修改')}>
           <SettingsIcon size={14} /> 设置
         </button>

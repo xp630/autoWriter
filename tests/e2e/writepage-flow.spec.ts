@@ -309,3 +309,67 @@ test('写文章页：首次引导横幅显示，点了「知道了」后 localSt
   await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
   await expect(ctx.window.locator('.intro-banner')).toHaveCount(0);
 });
+
+test('写文章页：有草稿时显示「清空草稿」按钮，点击后清掉所有字段并消失', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+
+  // 干净状态：按钮不应存在
+  await expect(ctx.window.locator('.btn-reset-draft')).toHaveCount(0);
+
+  // 填点东西，触发自动保存
+  const queryBox = ctx.window.locator('.textarea').first();
+  await queryBox.fill('测试一下清空按钮');
+  await ctx.window.waitForTimeout(2000);  // 超过 1.5s 的 debounce
+
+  // 现在按钮应出现
+  await expect(ctx.window.locator('.btn-reset-draft')).toBeVisible();
+
+  // 弹窗 confirm 选 "OK"
+  ctx.window.on('dialog', (d) => d.accept());
+  await ctx.window.locator('.btn-reset-draft').click();
+
+  // 按钮消失，主题框回到空，localStorage 清空
+  await expect(ctx.window.locator('.btn-reset-draft')).toHaveCount(0);
+  await expect(queryBox).toHaveValue('');
+  const has = await ctx.window.evaluate(() => localStorage.getItem('aw_draft'));
+  expect(has).toBeNull();
+
+  // 刷新后状态依然干净
+  await ctx.window.reload({ waitUntil: 'domcontentloaded' });
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+  await expect(ctx.window.locator('.btn-reset-draft')).toHaveCount(0);
+  await expect(ctx.window.locator('.textarea').first()).toHaveValue('');
+});
+
+test('写文章页：草稿恢复后，分析/策略也一起回来（修复不对称）', async () => {
+  // 制造一个 v2 草稿，含 referenceText + analysis + analysisId（不实际跑 AI 调用）
+  await ctx.window.evaluate(() => {
+    localStorage.setItem('aw_draft', JSON.stringify({
+      v: 2,
+      query: '上次写的主题',
+      referenceUrl: 'https://example.com/last',
+      referenceText: '上次抓回来的参考文内容，要够长（>200字）才能触发自动分析。'.repeat(20),
+      outline: '',
+      outlineDirty: false,
+      channel: 'wechat', style: 'tech', length: 'medium', needImage: true,
+      analysis: { summary: '上次 AI 跑出来的 7 维分析' },
+      analysisId: 42,
+      strategy: { strategyId: 7, title: '上次采纳的策略' },
+      angles: [{ title: '上次角度 1' }, { title: '上次角度 2' }],
+      step: 1,
+      savedAt: Date.now(),
+    }));
+  });
+  await ctx.window.reload({ waitUntil: 'domcontentloaded' });
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+
+  // 参考文应已就绪
+  await expect(ctx.window.locator('text=参考文已就绪')).toBeVisible();
+  // 主题框恢复
+  await expect(ctx.window.locator('.textarea').first()).toHaveValue('上次写的主题');
+  // 应自动进到 Step 2（因 draft.step=1）
+  await expect(ctx.window.locator('text=Step 2')).toBeVisible({ timeout: 5000 });
+});

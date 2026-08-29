@@ -5,7 +5,7 @@ import {
   getAgentSettings, setAgentSettings,
   getImageSettings, setImageSettings,
   getOpenArticleId, setOpenArticleId,
-  getDraft, setDraft, clearDraft,
+  getDraft, setDraft, clearDraft, hasDraft,
   listAwKeys,
   listProfiles, getActiveProfile, setActiveProfileId, addProfile, deleteProfile, updateActiveProfile,
 } from '../../src/utils/storage';
@@ -170,17 +170,31 @@ describe('storage — draft (草稿自动保存)', () => {
 
   it('字段类型不对时降级', () => {
     localStorage.setItem('aw_draft', JSON.stringify({
-      v: 1,
+      v: 2,
       query: 12345,                // 应该是 string，降级到 ''
       outlineDirty: 'yes',         // 字符串通过 !! 变成 true（JS 行为，文档化）
       channel: 'wechat',
       needImage: 0,                // 非 boolean，降级到默认 true
+      analysisId: 'not-a-number',  // 非 number，降级到 null
     }));
     const loaded = getDraft();
     expect(loaded?.query).toBe('');
     expect(loaded?.outlineDirty).toBe(true);   // !!'yes' === true
     expect(loaded?.channel).toBe('wechat');
     expect(loaded?.needImage).toBe(true);      // 默认 true
+    expect(loaded?.analysisId).toBeNull();
+  });
+
+  it('v1 旧版本草稿被丢弃（避免不对称状态被带回来）', () => {
+    localStorage.setItem('aw_draft', JSON.stringify({
+      v: 1, query: 'old query', referenceUrl: 'https://x', referenceText: '长文...',
+    }));
+    expect(getDraft()).toBeNull();
+    // raw key 还在（hasDraft 返回 true），但 getDraft() 拒绝反序列化。
+    // 这就是为什么补了「清空草稿」按钮——升级路径上用户要手动丢。
+    expect(hasDraft()).toBe(true);
+    clearDraft();
+    expect(hasDraft()).toBe(false);
   });
 
   it('clearDraft 真的清除', () => {

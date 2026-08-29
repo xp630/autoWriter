@@ -80,6 +80,12 @@ export interface DraftState {
   style: string;
   length: string;
   needImage: boolean;
+  /** V2.2：补上上次会话的分析 / 策略状态，避免「参考文回来了但分析丢了」的不对称 */
+  analysis?: any | null;
+  analysisId?: number | null;
+  strategy?: any | null;
+  angles?: any | null;
+  step?: number;
   savedAt?: number;
 }
 
@@ -283,7 +289,7 @@ export function setOpenArticleId(id: number | null): void {
 // WritePage 草稿（刷新不丢）
 // ============================================================================
 
-const DRAFT_VERSION = 1;
+const DRAFT_VERSION = 2;  // v2：加上 analysis/strategy/angles/step，修旧 v1 不全的会丢
 
 export function getDraft(): DraftState | null {
   return safeGet<DraftState | null>(KEYS.draft, null, (raw) => {
@@ -299,6 +305,11 @@ export function getDraft(): DraftState | null {
       style: typeof raw.style === 'string' ? raw.style : 'tech',
       length: typeof raw.length === 'string' ? raw.length : 'medium',
       needImage: typeof raw.needImage === 'boolean' ? raw.needImage : true,
+      analysis: raw.analysis ?? null,
+      analysisId: typeof raw.analysisId === 'number' ? raw.analysisId : null,
+      strategy: raw.strategy ?? null,
+      angles: raw.angles ?? null,
+      step: typeof raw.step === 'number' ? raw.step : undefined,
       savedAt: typeof raw.savedAt === 'number' ? raw.savedAt : undefined,
     };
   });
@@ -310,6 +321,11 @@ export function setDraft(d: DraftState): void {
 
 export function clearDraft(): void {
   try { localStorage.removeItem(KEYS.draft); } catch {}
+}
+
+/** 是否有未清理的草稿（按钮可见性用——避免反序列化全表） */
+export function hasDraft(): boolean {
+  try { return localStorage.getItem(KEYS.draft) !== null; } catch { return false; }
 }
 
 // ============================================================================
