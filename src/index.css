@@ -2527,3 +2527,13 @@ select:focus-visible {
 .angle-insight > span:first-child { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .angle-insight > span:last-child { font-size: 13px; color: var(--ink); font-weight: 600; line-height: 1.6; }
 .gen-hint { color: var(--muted); font-size: 12px; margin-left: 4px; }
+
+/* ===== 参考文输入完整性（约束输入） ===== */
+.ref-error {
+  display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap;
+  margin-top: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6;
+  color: #b91c1c; background: var(--danger-soft); border: 1px solid #fecaca;
+  border-radius: var(--r-sm);
+}
+.ref-error-hint { color: var(--ink-2); flex-basis: 100%; }
+.ref-paste { margin-top: 8px; font-size: 12px; line-height: 1.7; }
