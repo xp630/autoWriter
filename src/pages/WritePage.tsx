@@ -62,6 +62,9 @@ export function WritePage() {
 
   // ===== 流程 state =====
   const [step, setStep] = useState(0);
+  // 首次进入引导横幅（localStorage 一次）。点“知道了”后不再出现。
+  const [showIntro, setShowIntro] = useState(() => typeof localStorage !== 'undefined' && localStorage.getItem('aw_writepage_intro_v1_dismissed') !== '1');
+  const dismissIntro = () => { try { localStorage.setItem('aw_writepage_intro_v1_dismissed', '1'); } catch {} setShowIntro(false); };
   const [query, setQuery] = useState('');
   const [savedQuery, setSavedQuery] = useState('');  // 保存原始关键词，大纲编辑时清空 query 也能生成
   const [referenceUrl, setReferenceUrl] = useState('');
@@ -760,6 +763,25 @@ export function WritePage() {
       </div>
 
       <Stepper steps={STEPS} active={step} />
+
+      {showIntro && (
+        <div className="intro-banner" role="note">
+          <span className="intro-banner-text">
+            <strong>不知道点哪个？</strong> 先在主题框填一句话 → 切「命题策划」→ 点「✨ 生成创作策略」。
+            <span className="intro-banner-sub">完整按钮表与示例场景在 USER_GUIDE §2.4 / §3，折叠区（高级设置 / 三问闹门 / 成稿体检）都是可选的。</span>
+          </span>
+          <span className="intro-banner-actions">
+            <a
+              className="btn btn-ghost btn-sm"
+              href="https://github.com/xp630/autoWriter/blob/develop/docs/USER_GUIDE.md#24-写文章--10-秒速通先看这一节再看-§3-详情"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            >去看文档 →</a>
+            <button type="button" className="btn btn-outline btn-sm" onClick={dismissIntro}>知道了</button>
+          </span>
+        </div>
+      )}
 
       {/* ===== Step 1: 主题 / 参考 ===== */}
       {step === 0 && (

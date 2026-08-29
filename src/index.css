@@ -2570,3 +2570,15 @@ select:focus-visible {
 .qc-rest-item { font-size: 12px; color: var(--ink-2); line-height: 1.6; }
 .qc-ok { margin-top: 10px; font-size: 12px; color: #047857; line-height: 1.6; }
 /* V4：转发指标 + 图片角色（只做三种）*/
+
+/* ===== 写文章页首次引导横幅（localStorage 一次） ===== */
+.intro-banner {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 0 14px; padding: 10px 14px;
+  background: var(--line-light); border: 1px solid #a7f3d0; border-radius: var(--r);
+  font-size: 13px; line-height: 1.6; color: var(--ink-2);
+}
+.intro-banner-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.intro-banner-text strong { color: var(--ink); font-weight: 700; }
+.intro-banner-sub { font-size: 11px; color: var(--muted); }
+.intro-banner-actions { display: flex; gap: 6px; flex-shrink: 0; }

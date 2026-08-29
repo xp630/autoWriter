@@ -289,3 +289,23 @@ test('约束输入：粘贴正文可用，且短/垃圾内容仍被拦住', asyn
   await paste.fill('');
   await expect(trigger).toBeDisabled();
 });
+
+test('写文章页：首次引导横幅显示，点了「知道了」后 localStorage 持久化不再出现', async () => {
+  // 重置 localStorage 以确保是「首次」状态
+  await ctx.window.evaluate(() => localStorage.removeItem('aw_writepage_intro_v1_dismissed'));
+  await ctx.window.reload({ waitUntil: 'domcontentloaded' });
+
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+  await expect(ctx.window.locator('.intro-banner')).toBeVisible();
+
+  // 点了「知道了」
+  await ctx.window.locator('.intro-banner button:has-text("知道了")').click();
+  await expect(ctx.window.locator('.intro-banner')).toHaveCount(0);
+
+  // 刷新一次验证 localStorage 持久化
+  await ctx.window.reload({ waitUntil: 'domcontentloaded' });
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+  await expect(ctx.window.locator('.intro-banner')).toHaveCount(0);
+});
