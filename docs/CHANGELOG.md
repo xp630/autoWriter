@@ -1,7 +1,7 @@
 # autoWriter-desktop · Changelog & Roadmap
 
 > 单一文档追踪：**已完成方案** + **关键设计决策** + **后续计划（带勾选框）**
-> 代码基线：`develop` 分支 · 51 单元测试 / 3 E2E 全过
+> 代码基线：`develop` 分支 · 152 单元测试 / 104 E2E 全过
 
 ---
 
@@ -56,6 +56,16 @@
 
 ---
 
+- [x] **内容策略层 V1（P0-1/P0-2）** — 分析→5 个创作方向（analysis:angles）+ 采纳后 `{{strategyBlock}}` 注入大纲与正文 + `angles:adopt` · commits `f673ace` `dd034cd` `da88e11`
+- [x] **内容策略系统 V2** — `content_angles` 重构为 `content_strategies`（**一行 = 一个策略**）+ `strategy_articles` 支撑策略:文章 **1:N** + `analysis_id` 可空（双模式）+ `differentiator`/`track_fit`/`feasibility`/`evidence`/`fact_risk` 全部结构化 + 润色与配图也注入策略 + 反查口 `article:strategyFor` · commit `239450b`
+- [x] **策略库页 + 效果回填录入（P0+P1）** — 浏览/筛选/搜索/详情/采用记录/战绩汇总/从策略重新创作 + 六项指标手动回填写入 `strategy_articles` · commits `cfa5f45` `94e0b5f`
+- [x] **内容策略 V3：证据账成为闸门** — `evidence{item,status}` + 成立度 + ready/todo 分开下发约束 + `fact_risk` 改由成立度推导 + thesis/insight 拆分 + narrative 四拍骨架 · commit `c50b002`
+- [x] **文章身份隔离** — `article_drafts.profile_id` + 列表按身份过滤（历史空值不隐身）+ 三处读入口与两处写入口全部透传 · commit `af4c180`
+- [x] **⚠ e2e 会清空用户真实生产库（严重）** — `_electron.launch` 不隔离 Electron userData，harness 建了临时目录却没传给 app → `test:reset-db` 每次跑都在 `DELETE FROM` 真实库。现真传 `--user-data-dir` + 启动后硬断言 userData 必须等于临时目录，否则中止
+- [x] **⚠ 旧库启动即崩（严重）** — 把引用迁移新列的索引写进 `schema.sql`，而 `getDb()` 顺序是 exec(schema) → 再 ALTER → 旧库 `CREATE INDEX` 找不到刚要补的列 → `no such column` → app 起不来。索引全部改到补列之后建
+- [x] **⚠ `analysis:run` 硬编码 claude** — 忽略调用方 cli/model → 「分析内容」永远用 claude，用户选的 Agent 不生效（而 `analysis:angles` 反而收 cli，不一致）
+- [x] **⚠ `content_analysis.profile_id` 写了不读** — 列存在但从未写入、列表从未过滤 → 分析记录的账号隔离是假的，两个身份互见全部分析
+
 ### 🩹 E2E 补全 + 致命 bug 修复（commit `324efbd`）
 
 用户实测「页面打不开」，定位到之前没跑 E2E 就提交的多个致命 bug，
@@ -83,6 +93,104 @@
 | `dashboard-flow.spec.ts` | 10 | KPI×4 / Agent / 快速开始 / 空态 / 最近文章 / 磁贴跳转 |
 
 **教训**：以后声称"完成"前必须实际跑 `npx playwright test` + `npx vitest run`，不能只看 build 通过。
+
+---
+
+## 📦 v0.3.0 · 内容策略层（进行中）
+
+### 🎯 定位变化
+
+从 “AI 写作工具” 变成 **AI Content Strategist + AI Writer**。
+
+核心认知：**策略不是大纲，也不是正文，而是“这一篇文章的决策记录”**，
+因此必须贯穿整个生命周期，而不是“生成个大纲就结束”：
+
+```
+ContentStrategy
+├── 大纲生成   ✅ {{strategyBlock}}
+├── 正文生成   ✅ {{strategyBlock}}
+├── 二次润色   ✅ 注入 + 禁改五要素
+├── AI 配图    ✅ emotion→画面气质，goal→图像作用
+├── 导出       ⚠️ 可反查，未附策略摘要
+├── 发布       ⚠️ 可反查，未做发布前检查清单
+├── 效果回填   ✅ 表 + IPC + 录入 UI
+└── 策略库     ✅
+```
+
+### 🧬 两种模式（关键设计：它们的风险完全不同）
+
+| | A 借势拆解 `reference` | B 命题策划 `topic` |
+|---|---|---|
+| 输入 | 参考文 URL / 正文 | 一个题目 |
+| 核心能力 | **迁移** | **规划** |
+| 核心风险 | **同质化** | **AI 幻觉** |
+| 对应抓手 | `differentiator` 差异锚点 | `evidence` 证据账 + `fact_risk` |
+| 依赖分析 | 是 | 否（`analysis_id` 为 NULL） |
+
+> 入口不再是“把分析按钮放开”：策略是大纲的**前置闸门**——未采纳策略时，
+> Step 1 主按钮就是「生成创作策略」，“跳过策略”降为次按钮。
+
+### 🏛️ 数据模型（两次重构）
+
+```
+content_strategies     一行 = 一个策略（不是一行装一批候选）
+                       mode / source_type / analysis_id(nullable) / batch_id
+                       angle_type / title / core_point / insight / target_user
+                       structure / narrative / emotion / goal / value_score
+                       differentiator / track_fit / feasibility / evidence_needed / fact_risk
+                       status(candidate|adopted|archived)
+strategy_articles      策略 : 文章 = 1:N，带效果回填字段
+```
+
+为什么一行一个：策略要能被单独检索、复用、回填战绩——**策略是资产，文章是执行结果**。
+
+迁移链（三级，全部在 `exec(schema)` 之后的 `ensureCols`/炸开阶段完成）：
+`content_angles`（一行一批）→ V1 `content_strategies.strategy_json` → V2/V3 平铺列；
+旧采纳的 `(批次, angle_index)` 重映射到新行，历史不丢。
+
+### 🔐 V3 关键点：证据账是闸门，不是注释
+
+```
+evidence_needed: [{ item: "官方价格", status: "ready" },
+                  { item: "实测记录", status: "todo" }]
+成立度 = ready / total   →   卡片/详情/列表徒标
+```
+
+- `ready` → 提示词：“用户已提供的证据，可以直接写进正文”
+- `todo` → 提示词：“必须留「待补充」占位，绝对不得臆造”
+- **未确认就是没素材**：旧字符串数据一律升级成 `todo`，不做乐观假设
+- `fact_risk` 由成立度推导（全备→low / 一条没备→high / 部分→medium）
+
+同时拆开两个被混用的概念：`core_point` = **主张**（要证明的），`insight` = **洞察**
+（读者带走的那句）。分开是因为**主张可以正确但毫无价值**。
+`narrative` 四拍（hook/explanation/framework/action）取代自由 `structure[]`：
+可复用、可比价的模板，而不是“一篇一篇的散文”。
+
+### 🧭 身份（profile）隔离，不是赛道隔离
+
+| | 按什么 | 性质 |
+|---|---|---|
+| 赛道 `track` | 内容领域 | 筛选维度，不做墙 |
+| 身份 `profile_id` | 谁在用这台机器 | 隔离边界 |
+
+`content_analysis` / `content_strategies` / `article_drafts` 三表统一规则：
+传 `profileId` → 本身份 + 历史空值（不隐身）；不传 → 全量（调度器等系统任务）。
+
+### 🧪 测试
+
+| 套件 | 用例 | 覆盖 |
+|---|---|---|
+| `strategy-block.test.ts` | 47 | 归一化三模式/成立度/ready-todo 分开下发/narrative 四拍 |
+| `strategy-flow.spec.ts` | 9 | 三级迁移、1:N、回填写入与聚合、反查口、双模式守卫 |
+| `strategies-library-flow.spec.ts` | 8 | 策略库 UI：筛选、详情、战绩、证据勾选、跨页交接 |
+| `article-isolation.spec.ts` | 4 | 文章身份隔离 + 写入口静态守卫 |
+
+### 📌 本节带出的四个严重 bug（全部已修）
+
+1. **e2e 每次跑都清空用户真实生产库**（Playwright 不隔离 Electron userData）
+2. **旧库启动即崩**（索引引用了尚未补上的列）
+3. **`analysis:run` 硬编码 claude**（用户选的 Agent 对分析无效）
+4. **`content_analysis.profile_id` 写了不读**（身份隔离形同不存在）
 
 ---
 
@@ -258,6 +366,18 @@ function parseAnalysisJson(text) {
 
 E2E：3 用例（IPC 注册表 / handler smoke / UI smoke）
 
+### v0.3.0 新增（策略层相关）
+
+| 套件 | 用例数 | 覆盖 |
+|---|---|---|
+| `strategy-block.test.ts` | 47 | 字段归一化、成立度、双模式提示词渲染、配图约束 |
+| `strategy-flow.spec.ts` | 9 | 三级迁移、1:N 采纳、效果回填与聚合、反查口、入参守卫 |
+| `strategies-library-flow.spec.ts` | 8 | 策略库 UI 全链路（含跨页交接、证据勾选） |
+| `article-isolation.spec.ts` | 4 | 文章身份隔离 + 写入口静态守卫 |
+| `angle-result.test.ts` / `ipc-imports.test.ts` | — | 旧用例随 V2/V3 契约更新；静态守卫改为定位真正的解构块边界 |
+
+当前总量：**152 单元测试 / 104 E2E**（整局 1.8 分钟）
+
 ---
 
 ## 📝 维护规则
@@ -274,7 +394,9 @@ E2E：3 用例（IPC 注册表 / handler smoke / UI smoke）
 ## 🔗 相关文档
 
 - `docs/FEATURES.md` — 能力矩阵（静态，长期稳定）
-- `docs/USER_GUIDE.md` — 用户使用说明
+- `docs/USER_GUIDE.md` — 用户使用说明（§10 内容策略与策略库）
+- `docs/STRATEGY_LIBRARY.md` — **策略库功能清单与操作说明**（字段含义、证据账、回填、复用）
+- `docs/CONTENT_STRATEGY_V2.md` — 内容策略系统 V2/V3 设计与实现细节
 - `docs/MODULE_STATUS.md` — 模块完成度审计（基于代码事实）
 - `DESIGN.md` — 设计规范
 - `README.md` — 项目门面
