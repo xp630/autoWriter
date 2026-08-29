@@ -120,7 +120,9 @@ declare global {
         error?: string;
       }>;
       listStrategies: (params?: {
-        profileId?: string; mode?: StrategyMode; status?: 'candidate' | 'adopted' | 'archived';
+        profileId?: string; mode?: StrategyMode;
+        /** 'unarchived' = 默认视图（排除已归档）；'all' 或不传 = 不加状态条件 */
+        status?: 'all' | 'unarchived' | 'candidate' | 'adopted' | 'archived';
         track?: string; search?: string; limit?: number;
       }) => Promise<Strategy[]>;
       getStrategy: (id: number) => Promise<(Strategy & { links: StrategyLink[] }) | null>;

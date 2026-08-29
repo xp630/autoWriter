@@ -184,23 +184,57 @@ test('§十三 效果回填：手动录入指标，重开仍在并被汇总', as
   expect(body).toContain('86');      // 平均涨粉
 });
 
-test('归档：状态变为已归档并可被筛出', async () => {
+test('归档：默认视图真的隐掉，可从「已归档」找回并取消归档', async () => {
   const sid = await seedStrategy({ title: '要归档的策略' });
   await goLibrary();
   await ctx.window.locator('button:has-text("刷新")').first().click();
   const card = ctx.window.locator('.sl-card').filter({ hasText: '要归档的策略' }).first();
   await expect(card).toBeVisible({ timeout: 5000 });
-  await card.locator('button[title="归档"]').click();
+  // 默认就是「未归档」视图（修前默认是全部状态，归档几乎等于没作用）。
+  // 先离开再回来：StrategiesPage 是条件挂载的，拿到一个干净的初始状态，
+  // 不会被同一文件里上一条用例留下的筛选影响。
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await ctx.window.waitForTimeout(300);
+  await goLibrary();
+  await expect(ctx.window.locator('.sl-status')).toHaveValue('unarchived');
 
+  const card2 = ctx.window.locator('.sl-card').filter({ hasText: '要归档的策略' }).first();
+  await expect(card2).toBeVisible({ timeout: 5000 });
+  await card2.locator('button[title^="归档"]').click();
+
+  // 1) 归档后从默认视图消失
+  await ctx.window.locator('button:has-text("刷新")').first().click();
+  await expect(ctx.window.locator('.sl-card').filter({ hasText: '要归档的策略' })).toHaveCount(0);
+
+  // 2) 切到「已归档」能找回，并且按钮变成可逆的「取消归档」
   await ctx.window.locator('.sl-status').selectOption('archived');
   await ctx.window.waitForTimeout(500);
-  const titles = await ctx.window.locator('.sl-title').allTextContents();
-  expect(titles.some((t) => t.includes('要归档的策略'))).toBe(true);
-  const dbStatus = await execSql<Array<{ status: string }>>(
+  const archivedCard = ctx.window.locator('.sl-card').filter({ hasText: '要归档的策略' }).first();
+  await expect(archivedCard).toBeVisible({ timeout: 5000 });
+  const dbArchived = await execSql<Array<{ status: string }>>(
     ctx.window, `SELECT status FROM content_strategies WHERE id = ?`, [sid],
   );
-  expect(dbStatus[0].status).toBe('archived');
+  expect(dbArchived[0].status).toBe('archived');
+  await expect(archivedCard.locator('button[title^="取消归档"]')).toBeVisible();
+
+  // 3) 取消归档 → 回到未归档视图（不能只能进不能出）
+  await archivedCard.locator('button[title^="取消归档"]').click();
+  await ctx.window.locator('.sl-status').selectOption('unarchived');
+  await ctx.window.waitForTimeout(600);
+  await expect(
+    ctx.window.locator('.sl-card').filter({ hasText: '要归档的策略' }).first(),
+  ).toBeVisible({ timeout: 5000 });
+
+  // 4) 「全部状态」仍然能看到归档项（没削掉这个能力）
+  await ctx.window.locator(`.sl-card`).first().waitFor({ state: 'visible' });
+  await ctx.window.locator('.sl-status').selectOption('archived');
+  await ctx.window.waitForTimeout(500);
+  const still = await ctx.window.locator('.sl-card').filter({ hasText: '要归档的策略' }).count();
+  // 已取消归档，所以「已归档」视图不该再有它
+  expect(still).toBe(0);
   await ctx.window.locator('.sl-status').selectOption('all');
+  await ctx.window.waitForTimeout(500);
+  expect(await ctx.window.locator('.sl-card').count()).toBeGreaterThan(0);
 });
 
 test('「从这条重新创作」跨页交接：写文章页被策略预填并进入大纲步', async () => {

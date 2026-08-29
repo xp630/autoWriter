@@ -1183,7 +1183,12 @@ function registerIpc() {
     // 身份隔离：传 profileId 则只看本身份 + 历史空身份记录
     if (pid) { where.push(`(profile_id = ? OR profile_id = '' OR profile_id IS NULL)`); vals.push(pid); }
     if (mode === 'topic' || mode === 'reference') { where.push(`mode = ?`); vals.push(mode); }
-    if (status === 'candidate' || status === 'adopted' || status === 'archived') { where.push(`status = ?`); vals.push(status); }
+    if (status === 'unarchived') {
+      // 默认视图：“归档”应当真的隐东西，否则归档几乎等于没作用
+      where.push(`status != 'archived'`);
+    } else if (status === 'candidate' || status === 'adopted' || status === 'archived') {
+      where.push(`status = ?`); vals.push(status);
+    }
     if (track) { where.push(`track = ?`); vals.push(String(track)); }
     const q = String(search || '').trim();
     if (q) { where.push(`(title LIKE ? OR topic LIKE ? OR angle_type LIKE ? OR core_point LIKE ?)`); vals.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`); }
