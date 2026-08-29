@@ -10,8 +10,9 @@ import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
 import { showToast } from '../toast';
 import { takePendingStrategy } from '../utils/strategyHandoff';
+import { assessReference, referenceQualityNote } from '../utils/referenceGuard';
 import { exportArticle, EXPORT_OPTIONS } from '../utils/export';
-import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3, Layers, Compass } from 'lucide-react';
+import { Sparkles, Settings as SettingsIcon, Bot, Link2, FileEdit, Wand2, Image as ImageIcon, Loader2, ArrowRight, BarChart3, Layers, Compass, XCircle } from 'lucide-react';
 import { AnalysisPanel } from '../components/AnalysisPanel';
 import { ArticleViewer } from '../components/ArticleViewer';
 import type { ContentAnalysisResult, Strategy, StrategySelection, StrategyMode, TrackFit } from '../types';
@@ -89,7 +90,12 @@ export function WritePage() {
     : undefined;
   const analysisDomain = settings.track;   // 账号级赛道（设置页配）
   const [referenceText, setReferenceText] = useState('');
+  // 派生：参考文是否值得送去分析（烂输入不该有资格消耗一次 AI 调用）
+  const refAssess = assessReference(referenceText);
+  const refNote = referenceQualityNote(referenceText);
   const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState('');   // 抓取失败单独存，不污染 referenceText
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   // ===== 每次生成可变的参数（保留写文章页）=====
   const persona = settings.persona;   // 账号级人设（设置页配）
@@ -152,19 +158,31 @@ export function WritePage() {
   const fetchUrl = async () => {
     if (!referenceUrl.trim()) return;
     setFetching(true);
+    setFetchError('');
     setLogs([]); setStage('idle');
     setLogs((prev) => [...prev, { type: 'info', text: `📡 抓取 ${referenceUrl}`, at: Date.now() }]);
 
     try {
       const r = await window.electronAPI.fetchUrl(referenceUrl);
       const header = `# ${r.title}\n\n来源：${r.url}\n${r.byline ? '作者：' + r.byline + '\n' : ''}字数：${r.wordCount}\n抓取方式：${r.usedSelector || 'auto'}\n\n---\n\n`;
-      setReferenceText(header + r.text);
+      const fetched = header + r.text;
+      const assess = assessReference(fetched);
+      if (!assess.usable) {
+        // 抓回来了但不像正文（登录页/目录页/残片）：照样不填充，避免污染下游
+        setFetchError(assess.reason || '抓回来的内容不可用');
+        setPasteOpen(true);
+        setLogs((prev) => [...prev, { type: 'error', text: `⛔ ${assess.reason}；${assess.hint || '请换链接或粘贴正文'}`, at: Date.now() }]);
+        return;
+      }
+      setReferenceText(fetched);
       setLogs((prev) => [...prev, { type: 'info', text: `✅ 抓取成功（${r.wordCount} 字 · ${r.usedSelector || 'auto'}）`, at: Date.now() }]);
       // 自动提炼写作框架
       await analyzeFramework(header + r.text);
     } catch (err: any) {
       setLogs((prev) => [...prev, { type: 'error', text: `❌ ${err.message}`, at: Date.now() }]);
-      setReferenceText(`# 抓取失败\n\nURL：${referenceUrl}\n错误：${err.message}\n\n请改用「参考文本」字段直接粘贴`);
+      // 故意不把失败文案塞进 referenceText：一旦塞进去，「分析内容」就会从灰变亮，
+      // AI 会认真地分析一段错误信息并产出一本正经的 7 维分析，整条链被静默污染。
+      setFetchError(err.message || String(err));
     } finally {
       setFetching(false);
     }
@@ -481,8 +499,9 @@ export function WritePage() {
 
   // P0：跑内容分析（参考文 → AI 拆解 → 结构化结果）
   const runAnalysis = async () => {
-    if (!referenceText || !referenceText.trim()) {
-      showToast('❌ 先抓取或粘贴参考内容');
+    const assess = assessReference(referenceText);
+    if (!assess.usable) {
+      showToast(`❌ ${assess.reason}。${assess.hint || ''}`);
       return;
     }
     setAnalysisStatus('running');
@@ -795,20 +814,56 @@ export function WritePage() {
                 <button className="btn btn-outline btn-sm" disabled={!referenceUrl || fetching} onClick={fetchUrl}>
                   {fetching ? <Loader2 size={14} className="spin" /> : <Link2 size={14} />} 抓取
                 </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  type="button"
+                  onClick={() => setPasteOpen((v) => !v)}
+                  title="抓取被登录墙/反爬挡住时的逃生口：直接粘正文进来"
+                >
+                  {pasteOpen ? '收起粘贴' : '粘贴正文'}
+                </button>
               </div>
+
+              {fetchError && (
+                <div className="ref-error">
+                  <XCircle size={13} /> 抓取失败：{fetchError}
+                  <span className="ref-error-hint">参考文没被填充（避免把错误信息当正文送去分析）。
+                    可以换个链接，或点上方「粘贴正文」直接粘。</span>
+                </div>
+              )}
+
+              {(pasteOpen || (!referenceText && !!referenceUrl)) && (
+                <textarea
+                  className="textarea ref-paste"
+                  rows={4}
+                  placeholder="把参考文正文粘到这里（无需 URL）。至少 200 字才能支撑 7 维分析"
+                  value={referenceText}
+                  onChange={(e) => { setReferenceText(e.target.value); setFetchError(''); }}
+                />
+              )}
 
               <div className="analysis-row">
                 <button
                   className="write-analysis-trigger"
-                  disabled={!referenceText || analysisStatus === 'running'}
+                  disabled={!refAssess.usable || analysisStatus === 'running'}
                   onClick={runAnalysis}
-                  title="用 AI 拆解参考内容（主题/观点/爆点/结构/用户画像/可借鉴）"
+                  title={refAssess.usable
+                    ? '用 AI 拆解参考内容（主题/观点/爆点/结构/用户画像/可借鉴）'
+                    : refAssess.reason || '参考文不可用'}
                 >
                   {analysisStatus === 'running' ? <Loader2 size={12} className="spin" /> : <BarChart3 size={12} />}
                   {analysisStatus === 'running' ? '分析中…' : '分析内容'}
                 </button>
-                {analysisStatus === 'idle' && !referenceText && (
-                  <span className="analysis-hint">借势拆解需先抓取或粘贴参考文；只有一个题目请切到「命题策划」</span>
+                {/* 不只要告诉用户“不能点”，还要告诉他为什么不能、下一步做什么 */}
+                {analysisStatus === 'idle' && !refAssess.usable && (
+                  <span className="analysis-hint">
+                    {referenceText
+                      ? <>⛔ {refAssess.reason}{refAssess.hint ? `——${refAssess.hint}` : ''}</>
+                      : <>借势拆解需先抓取或粘贴参考文；只有一个题目请切到「命题策划」</>}
+                  </span>
+                )}
+                {analysisStatus === 'idle' && refAssess.usable && refNote && (
+                  <span className="analysis-hint">ℹ️ {refNote}</span>
                 )}
               </div>
             </>

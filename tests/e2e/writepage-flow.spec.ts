@@ -237,3 +237,55 @@ test('OnAgentChunk 事件订阅能收到推送', async () => {
   // 这个测试只验证订阅机制能跑通，不强断收到 chunk（因为没真任务在跑）
   expect(received.ok).toBe(true);
 });
+test('约束输入：抓取失败不污染参考文，且有可用的粘贴逃生口', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+
+  const trigger = ctx.window.locator('.write-analysis-trigger').first();
+  await expect(trigger).toBeDisabled();          // 起手：没有参考文
+
+  // 抓一个必然失败的地址（本机无监听端口，立刻失败）
+  const urlBox = ctx.window.locator('input.url-input');
+  await urlBox.fill('http://127.0.0.1:9/nope');
+  await ctx.window.locator('button:has-text("抓取")').first().click();
+
+  // 失败必须被单独显示，而不是把错误文案塞进 referenceText
+  await expect(ctx.window.locator('.ref-error')).toBeVisible({ timeout: 10000 });
+  await expect(ctx.window.locator('.ref-error')).toContainText('抓取失败');
+  await expect(trigger).toBeDisabled();          // 关键：分析按钮绝不能因此变亮
+  // 且页面不能出现“参考文已就绪”（旧代码会把它当正文）
+  expect(await ctx.window.locator('text=参考文已就绪').count()).toBe(0);
+});
+
+test('约束输入：粘贴正文可用，且短/垃圾内容仍被拦住', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
+  const trigger = ctx.window.locator('.write-analysis-trigger').first();
+
+  await ctx.window.locator('button:has-text("粘贴正文")').first().click();
+  const paste = ctx.window.locator('textarea.ref-paste').first();
+  await expect(paste).toBeVisible({ timeout: 5000 });
+
+  // 1) 粘一段错误页文案：不可用，并说明原因
+  await paste.fill('抓取失败 URL：https://example.com 错误：403 Forbidden 请改用参考文本字段直接粘贴');
+  await expect(trigger).toBeDisabled();
+  await expect(ctx.window.locator('.analysis-hint')).toContainText('不像正文');
+
+  // 2) 粘太短：不可用，引导去命题策划
+  await paste.fill('AI 发展很快，企业都在应用。');
+  await expect(trigger).toBeDisabled();
+  await expect(ctx.window.locator('.analysis-hint')).toContainText('不足以支撑');
+
+  // 3) 粘真实正文：可用
+  await paste.fill([
+    '轻量模型与贵价模型之间怎么选，这个问题被问得太多了，但多数回答都在复述参数表。',
+    '我把三个常用任务分别跑在两档上，按官方标价折算，一整天用量下来不到一杯豆浆钱，省下来的数字其实不大。',
+    '真正的成本在于：你并不知道便宜档能不能过，于是默认全用贵的，而这个默认值本身就要钱，它表现为反复重跑的下午。',
+    '四问可以结束这场争论：输出能否机器校验，错一次代价多大，有没有更便宜的能过，以及最后谁来为错误兜底。',
+    '答完这四问，多数场景都会落到一个够用档；真正答不上来的那部分，才值得继续留给贵价去解决。',
+  ].join('\n\n'));
+  await expect(trigger).toBeEnabled({ timeout: 5000 });
+
+  // 清空，别影响后面的用例
+  await paste.fill('');
+  await expect(trigger).toBeDisabled();
+});
