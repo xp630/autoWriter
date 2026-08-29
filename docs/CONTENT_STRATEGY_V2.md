@@ -132,7 +132,7 @@ article:strategyFor(articleId) → 该行策略 + adoptionId
 2. **导出附策略摘要**、**发布前按 goal 生成检查清单**
 3. 「保存为选题」仍是占位：选题应降级为策略的一个来源（`source_type='manual'`），
    与策略库合并，不再做并列页面
-4. `article_drafts` 仍无 `profile_id` → 「我的文章」两个账号混在一起（待决策）
+4. ~~`article_drafts` 仍无 `profile_id`~~ **已完成**：文章按身份隔离（见下节）
 5. `listAnalyses` 在 renderer 无调用方 → 刷新不恢复上次分析
 6. e2e 偶发：`articles-flow:51` 与 `dashboard-flow:29` 在 CPU 抢严重时超时（
    单跑必过），应改成等就绪而不是依赖默认 5s expect 超时
@@ -215,3 +215,27 @@ evidence_needed: [ { item: "官方价格", status: "ready" }, { item: "实测记
 `content_strategies` 补 `insight`、`narrative` 两列；`evidence_needed` 字符串形状升级为对象形状；
 只有 `structure` 的旧策略按下标反推四拍。全部在 `electron/db.cjs` 的 `ensureCols` 分支里，
 旧库启动即完成，失败只 warn 不阻塞启动。
+
+
+## 身份（profile）隔离，不是赛道隔离
+
+刻意区分两件事：
+
+| | 按什么 | 性质 |
+|---|---|---|
+| 赛道 `track` | 内容领域 | **筛选维度**，不该做成墙（同一个人换赛道写很正常） |
+| 身份 `profile_id` | 谁在用这台机器 | **隔离边界**，夫妻两人共用一台机器时互不可见 |
+
+现在 `content_analysis`、`content_strategies`、`article_drafts` 三张表都带 `profile_id`，
+列表接口统一规则：
+
+```
+传 profileId → 本身份 + profile_id='' 的历史记录（不隐身）
+不传 profileId → 全量（调度器等系统任务用）
+```
+
+写入口：`article:article` 接受 `profileId`，WritePage 两处正文生成（首次 + 重生成）都传当前身份；
+读入口：`ArticlesPage` / `Sidebar` 统计 / `DashboardPage` KPI 都按当前身份过滤，切身份时数字跟着变。
+
+迁移：`article_drafts` 补列 + 补索引（同样在 `ALTER` 之后建，避免 no such column 起不来）。
+现有历史文章 `profile_id=''`，所以**升级后不会有任何文章消失**，只是从现在开始新写的才归位。

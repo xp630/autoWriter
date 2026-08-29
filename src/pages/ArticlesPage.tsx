@@ -9,6 +9,7 @@ import { FileText } from 'lucide-react';
 import { RichEditor } from '../components/RichEditor';
 import { ImageLibraryGrid } from '../components/ImageLibraryGrid';
 import { ArticleViewer } from '../components/ArticleViewer';
+import { useActiveProfile } from '../hooks/useActiveProfile';
 import { exportWord } from '../utils/export';
 
 /** 渲染图片：本地路径走 IPC 读 dataUrl，绕开 aw-img 协议中文问题 */
@@ -88,16 +89,19 @@ export function ArticlesPage() {
   const [allPlaceholders, setAllPlaceholders] = useState<{desc: string, id: string, index: number, done?: boolean}[]>([]);  // 所有占位符
   const [pickerPlaceholder, setPickerPlaceholder] = useState<{desc: string, id: string, index: number} | null>(null);  // 当前选择的占位符
 
+  const profile = useActiveProfile();
+
   const load = () => {
     if (!window.electronAPI?.listArticles) return;
     setLoading(true);
-    window.electronAPI.listArticles({ status: filter, search }).then((rows) => {
+    // 身份隔离：只看当身份的 + 历史记录（旧文章 profile_id 为空，不隐身）
+    window.electronAPI.listArticles({ status: filter, search, profileId: profile.id }).then((rows) => {
       setArticles(rows as Article[]);
       setLoading(false);
     });
   };
 
-  useEffect(load, [filter]);
+  useEffect(load, [filter, profile.id]);
 
   // 点击外部关闭更多菜单
   useEffect(() => {

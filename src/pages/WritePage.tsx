@@ -291,6 +291,7 @@ export function WritePage() {
         need_image: needImage,
         analysis: analysis || undefined,
         strategy: strategyPayload,
+        profileId: profile.id,   // 文章归属到当前身份
       });
       currentTaskIdRef.current = r.taskId;
       setResult(r);
@@ -427,6 +428,7 @@ export function WritePage() {
         need_image: needImage,
         analysis: analysis || undefined,
         strategy: strategyPayload,
+        profileId: profile.id,   // 文章归属到当前身份
       });
       currentTaskIdRef.current = r.taskId;
       setResult(r);

@@ -322,8 +322,8 @@ function registerIpc() {
     const result = db.prepare(`
       INSERT INTO article_drafts
       (title, outline, content, status, style, length, keywords, reference_source,
-       word_count, generation_time, model, provider, platform)
-      VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       word_count, generation_time, model, provider, platform, profile_id)
+      VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       extractedTitle || '(无标题)',
       outline,
@@ -337,6 +337,7 @@ function registerIpc() {
       model || cli,
       cli,
       channel || 'wechat',
+      String(params.profileId || ''),
     );
 
     // 策略→文章闭环（V2 §八 1:N）：正文入库后回填这次执行记录的 article_id。
@@ -372,9 +373,15 @@ function registerIpc() {
   });
 
   // ===== 文章列表 / 详情 =====
-  ipcMain.handle('article:list', (_e, { status, search } = {}) => {
+  ipcMain.handle('article:list', (_e, { status, search, profileId } = {}) => {
     let sql = 'SELECT * FROM article_drafts WHERE 1=1';
     const params = [];
+    // 身份隔离：传 profileId 则只看本身份 + 历史记录（profile_id 为空的旧文章不隐身）
+    const pid = String(profileId || '');
+    if (pid) {
+      sql += ` AND (profile_id = ? OR profile_id = '' OR profile_id IS NULL)`;
+      params.push(pid);
+    }
     if (status && status !== 'all') {
       if (status === 'scheduled') sql += ' AND scheduled_at IS NOT NULL AND published_at IS NULL';
       else if (status === 'published') sql += ' AND published_at IS NOT NULL';

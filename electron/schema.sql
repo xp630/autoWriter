@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS article_drafts (
   model            TEXT DEFAULT '',
   provider         TEXT DEFAULT '',
   platform         TEXT DEFAULT 'wechat',
+  profile_id       TEXT DEFAULT '',                     -- 身份（账号）隔离；旧库由 db.cjs 迁移补列，历史记录为空=不隐身
   parent_id        INTEGER,
   scheduled_at     DATETIME,
   published_at     DATETIME,

@@ -93,9 +93,15 @@ function getDb(opts = {}) {
       // 索引必须在补列之后建：旧库的表可能还没这些列
       const ensureIdx = (sql) => { try { db.exec(sql); } catch (e) { console.warn('[db] index skipped:', e.message); } };
 
+      // 分析记录的身份隔离
       if (ensureCols('content_analysis', [['profile_id', "TEXT DEFAULT ''"]])) {
         ensureIdx(`CREATE INDEX IF NOT EXISTS idx_content_analysis_profile ON content_analysis(profile_id, created_at DESC)`);
       }
+      // 文章的身份隔离（同一台机器多人共用：各人的文章互相看不见；历史记录 profile_id 为空 → 不隐身）
+      if (ensureCols('article_drafts', [['profile_id', "TEXT DEFAULT ''"]])) {
+        ensureIdx(`CREATE INDEX IF NOT EXISTS idx_article_profile ON article_drafts(profile_id, updated_at DESC)`);
+      }
+
       // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
       // 兼容两代旧结构：
       //   _legacy_content_angles （P0-1a/P0-2 中间态：angles_json + adopted_index + article_id）

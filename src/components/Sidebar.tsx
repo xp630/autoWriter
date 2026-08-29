@@ -1,5 +1,6 @@
 // Sidebar — 3 组分类 + inline SVG + 底部状态卡
 import { useEffect, useState } from 'react';
+import { useActiveProfile } from '../hooks/useActiveProfile';
 
 interface NavItem {
   id: string;
@@ -53,15 +54,16 @@ interface Props {
 }
 
 export function Sidebar({ active, onNavigate }: Props) {
+  const profile = useActiveProfile();
   const [stats, setStats] = useState<{ total: number; drafts: number; today: number } | null>(null);
 
-  // 拉一次文章总数 + 今日新增
+  // 拉一次文章总数 + 今日新增（按当身份，切身份后数字要跟着变）
   useEffect(() => {
     if (!window.electronAPI?.listArticles) return;
     let cancelled = false;
     (async () => {
       try {
-        const all = await window.electronAPI.listArticles({});
+        const all = await window.electronAPI.listArticles({ profileId: profile.id });
         if (cancelled || !Array.isArray(all)) return;
         const today = new Date().toDateString();
         const todayCount = all.filter((a: any) => new Date(a.created_at).toDateString() === today).length;
@@ -70,7 +72,7 @@ export function Sidebar({ active, onNavigate }: Props) {
       } catch { /* ignore */ }
     })();
     return () => { cancelled = true; };
-  }, [active]);  // active 变了说明导航过，重新拉
+  }, [active, profile.id]);  // active 变了重新拉；切身份时数字也要跟着变
 
   return (
     <aside className="sidebar">

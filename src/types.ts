@@ -45,7 +45,7 @@ declare global {
       listPrompts: () => Promise<{ name: string; label: string; path: string }[]>;
       getPrompt: (name: string) => Promise<{ name: string; content: string }>;
       savePrompt: (params: { name: string; content: string }) => Promise<{ ok: boolean; name: string }>;
-      listArticles: (params?: { status?: string; search?: string }) => Promise<Article[]>;
+      listArticles: (params?: { status?: string; search?: string; profileId?: string }) => Promise<Article[]>;
       getArticle: (id: number) => Promise<Article | null>;
       scheduleArticle: (params: { id: number; scheduled_at: string }) => Promise<{ ok: boolean }>;
       unscheduleArticle: (id: number) => Promise<{ ok: boolean }>;
@@ -172,6 +172,8 @@ export interface GenerateParams {
   persona?: string;
   /** 账号级赛道，决定选题角度/案例/受众 */
   track?: string;
+  /** 当前创作身份：正文入库时写进 article_drafts.profile_id，实现文章归属隔离 */
+  profileId?: string;
   reference_text?: string;
   reference_urls?: string[];
   /** AI 对参考内容的分析结果（如有），会注入到 prompt 作为上下文 */
@@ -487,6 +489,8 @@ export interface ImageRecord {
 
 export interface Article {
   id: number;
+  /** 归属的创作身份；历史记录为空（对所有人可见） */
+  profile_id?: string;
   title: string;
   content?: string;
   outline?: string;

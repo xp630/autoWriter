@@ -6,6 +6,7 @@
 // - 快速操作
 import { useEffect, useState } from 'react';
 import { getAgentSettings } from '../utils/storage';
+import { useActiveProfile } from '../hooks/useActiveProfile';
 import {
   ArrowRight,
   Bot,
@@ -53,6 +54,7 @@ function timeAgo(iso: string): string {
 }
 
 export function DashboardPage({ onNavigate }: Props) {
+  const profile = useActiveProfile();
   const [articles, setArticles] = useState<Article[]>([]);
   const [queue, setQueue] = useState<QueueSnapshot | null>(null);
   const [settings, setSettings] = useState<{ cli: string; model: string }>({ cli: 'claude', model: '' });
@@ -67,7 +69,7 @@ export function DashboardPage({ onNavigate }: Props) {
       try {
         // 文章
         if (window.electronAPI?.listArticles) {
-          const rows = await window.electronAPI.listArticles({});
+          const rows = await window.electronAPI.listArticles({ profileId: profile.id });
           if (!cancelled) setArticles(Array.isArray(rows) ? rows : []);
         }
         // agent 可用性
@@ -87,7 +89,7 @@ export function DashboardPage({ onNavigate }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [profile.id]);   // 切身份后 KPI / 最近编辑 要重拉
 
   // 订阅队列状态
   useEffect(() => {
