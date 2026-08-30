@@ -15,15 +15,25 @@ import { SourcesPage } from './pages/SourcesPage';
 import { ImagesPage } from './pages/ImagesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { QuickPublishPage } from './pages/QuickPublishPage';
+import { EpisodePage } from './pages/EpisodePage';
 
-type PageName = 'dashboard' | 'write' | 'strategies' | 'articles' | 'topics' | 'sources' | 'images' | 'settings' | 'quick-publish';
+type PageName = 'dashboard' | 'write' | 'strategies' | 'articles' | 'topics' | 'sources' | 'images' | 'settings' | 'quick-publish' | 'episode';
 
-const PAGES: PageName[] = ['dashboard', 'write', 'strategies', 'articles', 'topics', 'sources', 'images', 'settings', 'quick-publish'];
+const PAGES: PageName[] = ['dashboard', 'write', 'strategies', 'articles', 'topics', 'sources', 'images', 'settings', 'quick-publish', 'episode'];
 
 export default function App() {
   const [page, setPage] = useState<PageName>('dashboard');
+  const [selectedEpisodeId, setSelectedEpisodeId] = useState<number | null>(null);
 
   const handleNav = (id: string) => {
+    if (id.startsWith('episode:')) {
+      const eid = Number(id.slice('episode:'.length));
+      if (Number.isFinite(eid) && eid > 0) {
+        setSelectedEpisodeId(eid);
+        setPage('episode');
+      }
+      return;
+    }
     if (PAGES.includes(id as PageName)) {
       setPage(id as PageName);
     }
@@ -78,6 +88,7 @@ export default function App() {
         {page === 'images' && <ImagesPage />}
         {page === 'settings' && <SettingsPage />}
           {page === 'quick-publish' && <QuickPublishPage />}
+          {page === 'episode' && selectedEpisodeId && <EpisodePage episodeId={selectedEpisodeId} onBack={() => setPage('dashboard')} onOpenPublish={() => setPage('quick-publish')} />}
       </main>
     </div>
   );

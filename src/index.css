@@ -2662,3 +2662,18 @@ select:focus-visible {
 .ep-status-drafting    { color: #4b5563; background: var(--bg-soft); border-color: var(--line); }
 .ep-status-published   { color: #047857; background: var(--line-soft); border-color: #a7f3d0; }
 .ep-status-archived    { color: var(--muted); background: var(--bg-soft); border-color: var(--line); }
+
+/* ===== Episode 编辑页 (P0) ===== */
+.ep-actions-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.ep-actions-row .ep-status-pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+.ep-filled { color: var(--ink-3); font-size: 12px; }
+.ep-title-input {
+  font-size: 16px; font-weight: 600; padding: 10px 12px;
+}
+.ep-hint {
+  font-size: 12px; margin: 8px 0 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  color: var(--ink-3);
+}
+.ep-hint svg { vertical-align: middle; }
