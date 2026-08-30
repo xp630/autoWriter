@@ -425,6 +425,133 @@ function registerIpc() {
   // 不依赖 renderer状态（跨页面、跨时间时它是唯一可靠来源）。
   ipcMain.handle('article:strategyFor', (_e, articleId) => strategyForArticle(articleId));
 
+  // ===== P0 Week 1：Season + Episode 管理（Episode-centric）=====
+  // 设计原则："不锁死"。所有字段宽松，新表是补充不替代。
+  // 用户/文章/Episode 三者解耦，可任意组合：EP 不必带 Article，Article 不必挂 EP。
+
+  // --- Season ---
+  ipcMain.handle('season:list', (_e, { status = 'active', profileId } = {}) => {
+    let sql = 'SELECT * FROM seasons WHERE 1=1';
+    const params = [];
+    if (status && status !== 'all') { sql += ' AND status=?'; params.push(status); }
+    const pid = String(profileId || '');
+    if (pid) {
+      sql += ' AND (profile_id = ? OR profile_id = \'\' OR profile_id IS NULL)';
+      params.push(pid);
+    }
+    sql += ' ORDER BY created_at DESC LIMIT 20';
+    return db.prepare(sql).all(...params);
+  });
+
+  ipcMain.handle('season:get', (_e, id) => {
+    if (!id) return null;
+    const row = db.prepare('SELECT * FROM seasons WHERE id=?').get(id);
+    if (!row) return null;
+    // 顺手算一下这个 season 下有多少 episode
+    const epCount = db.prepare('SELECT COUNT(*) AS n FROM episodes WHERE season_id=?').get(id);
+    row.episode_count = epCount ? epCount.n : 0;
+    return row;
+  });
+
+  ipcMain.handle('season:save', (_e, params = {}) => {
+    const { id, title, subtitle, description, status, started_at, ended_at, profileId } = params;
+    if (!title) throw new Error('缺少 title');
+    const now = new Date().toISOString();
+    if (id) {
+      db.prepare(`UPDATE seasons SET title=?, subtitle=?, description=?, status=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`)
+        .run(title, subtitle || '', description || '', status || 'active', started_at || null, ended_at || null, now, id);
+      return { ok: true, id, updated_at: now };
+    }
+    const r = db.prepare(`INSERT INTO seasons (title, subtitle, description, status, started_at, ended_at, profile_id, created_at, updated_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(title, subtitle || '', description || '', status || 'active', started_at || null, ended_at || null, profileId || '', now, now);
+    return { ok: true, id: r.lastInsertRowid, created_at: now };
+  });
+
+  ipcMain.handle('season:archive', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare(`UPDATE seasons SET status='archived', updated_at=? WHERE id=?`)
+      .run(new Date().toISOString(), id);
+    return { ok: true };
+  });
+
+  // --- Episode ---
+  ipcMain.handle('episode:list', (_e, { seasonId, status, profileId } = {}) => {
+    let sql = `SELECT e.*, s.title AS season_title
+               FROM episodes e
+               LEFT JOIN seasons s ON e.season_id = s.id
+               WHERE 1=1`;
+    const params = [];
+    if (seasonId) { sql += ' AND e.season_id=?'; params.push(seasonId); }
+    if (status && status !== 'all') { sql += ' AND e.status=?'; params.push(status); }
+    const pid = String(profileId || '');
+    if (pid) {
+      sql += ' AND (e.profile_id = ? OR e.profile_id = \'\' OR e.profile_id IS NULL)';
+      params.push(pid);
+    }
+    sql += ' ORDER BY COALESCE(e.order_in_season, 0) ASC, e.updated_at DESC LIMIT 100';
+    return db.prepare(sql).all(...params);
+  });
+
+  ipcMain.handle('episode:get', (_e, id) => {
+    if (!id) return null;
+    const row = db.prepare(`SELECT e.*, s.title AS season_title
+                            FROM episodes e
+                            LEFT JOIN seasons s ON e.season_id = s.id
+                            WHERE e.id=?`).get(id);
+    return row || null;
+  });
+
+  ipcMain.handle('episode:save', (_e, params = {}) => {
+    const {
+      id, season_id, title, slug, status,
+      observation, question, insight,
+      draft, publish_url, published_at,
+      order_in_season, profileId,
+    } = params;
+    const now = new Date().toISOString();
+    if (id) {
+      db.prepare(`UPDATE episodes SET
+        season_id=?, title=?, slug=?, status=?,
+        observation=?, question=?, insight=?,
+        draft=?, publish_url=?, published_at=?,
+        order_in_season=?, profile_id=?, updated_at=?
+        WHERE id=?`).run(
+          season_id || null, title || '', slug || '', status || 'observation',
+          observation || '', question || '', insight || '',
+          draft || '', publish_url || '', published_at || null,
+          Number(order_in_season) || 0, profileId || '', now, id,
+        );
+      return { ok: true, id, updated_at: now };
+    }
+    const r = db.prepare(`INSERT INTO episodes (
+      season_id, title, slug, status,
+      observation, question, insight,
+      draft, publish_url, published_at,
+      order_in_season, profile_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      season_id || null, title || '', slug || '', status || 'observation',
+      observation || '', question || '', insight || '',
+      draft || '', publish_url || '', published_at || null,
+      Number(order_in_season) || 0, profileId || '', now, now,
+    );
+    return { ok: true, id: r.lastInsertRowid, created_at: now };
+  });
+
+  ipcMain.handle('episode:delete', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare('DELETE FROM episodes WHERE id=?').run(id);
+    return { ok: true };
+  });
+
+  ipcMain.handle('episode:linkArticle', (_e, { episodeId, articleId }) => {
+    if (!episodeId || !articleId) throw new Error('缺少 episodeId/articleId');
+    db.prepare('UPDATE article_drafts SET episode_id=? WHERE id=?').run(episodeId, articleId);
+    db.prepare('UPDATE episodes SET publish_url=(SELECT publish_url FROM article_drafts WHERE id=?) WHERE id=?')
+      .run(articleId, episodeId);
+    return { ok: true };
+  });
+
   // 更新文章（用于保存润色结果）
   ipcMain.handle('article:update', (_e, { id, content }) => {
     if (!id) throw new Error('缺少 id');

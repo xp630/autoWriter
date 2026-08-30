@@ -101,6 +101,15 @@ function getDb(opts = {}) {
       if (ensureCols('article_drafts', [['profile_id', "TEXT DEFAULT ''"]])) {
         ensureIdx(`CREATE INDEX IF NOT EXISTS idx_article_profile ON article_drafts(profile_id, updated_at DESC)`);
       }
+      // ===== P0 Week 1：Season + Episode 关联（不锁死原则）=====
+      // article_drafts 是 Episode 的"已发布快照"，EP 不必建 Article，Article 也不必挂 EP。
+      if (ensureCols('article_drafts', [
+        ['season_id', 'INTEGER'],
+        ['episode_id', 'INTEGER'],
+      ])) {
+        ensureIdx('CREATE INDEX IF NOT EXISTS idx_article_season ON article_drafts(season_id)');
+        ensureIdx('CREATE INDEX IF NOT EXISTS idx_article_episode ON article_drafts(episode_id)');
+      }
 
       // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
       // 兼容两代旧结构：

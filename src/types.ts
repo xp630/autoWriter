@@ -562,4 +562,62 @@ export interface ImageModel {
   created_at: string;
 }
 
+// ===== P0 Week 1：Season + Episode（Episode-centric 数据模型）=====
+// 设计原则："不锁死"。所有字段宽松，不强制 EP ↔ Article 关联。
+
+export type SeasonStatus = 'active' | 'archived';
+
+export interface Season {
+  id: number;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  status: SeasonStatus;
+  started_at?: string | null;
+  ended_at?: string | null;
+  profile_id?: string;
+  created_at: string;
+  updated_at: string;
+  /** 顺手算的：本 season 下的 episode 数（来自 season:get）*/
+  episode_count?: number;
+}
+
+export type EpisodeStatus =
+  | 'observation'   // Q1: 刚记观察
+  | 'questioning'   // Q2: 在停顿/追问
+  | 'thinking'      // Q3: 在提炼
+  | 'drafting'      // 正在写
+  | 'published'     // 已发
+  | 'archived';     // 归档
+
+export interface Episode {
+  id: number;
+  season_id?: number | null;
+  season_title?: string;       // 来自 join
+  title: string;
+  slug?: string;
+  status: EpisodeStatus;
+  observation: string;          // Q1
+  question: string;             // Q2
+  insight: string;              // Q3
+  draft: string;                // 草稿 markdown
+  publish_url?: string;
+  published_at?: string | null;
+  read_count: number;
+  likes: number;
+  comments: number;
+  order_in_season: number;
+  profile_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Dashboard 主页要展示的"创作主线"摘要 */
+export interface SeasonSummary {
+  season: Season;
+  episode_count: number;
+  published_count: number;
+  latest_episode?: Episode;
+}
+
 export {};

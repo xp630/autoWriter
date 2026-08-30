@@ -220,3 +220,59 @@ CREATE TABLE IF NOT EXISTS strategy_articles (
 );
 CREATE INDEX IF NOT EXISTS idx_strategy_articles_strategy ON strategy_articles(strategy_id, adopted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_strategy_articles_article ON strategy_articles(article_id);
+
+-- ============================================================================
+-- P0 (Week 1): Season + Episode 数据结构
+-- 设计原则（"不锁死"）：
+--   1. 新表是补充，不是替代；article_drafts 保留作为 Episode 的"已发布快照"
+--   2. 所有新字段 nullable；不强制 EP 必须有 Article，反之亦然
+--   3. observation/question/insight/draft 都是 TEXT（不用 JSON 列），灵活
+--   4. article_drafts 加 season_id + episode_id 列，可空，不建外键约束
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS seasons (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  title        TEXT NOT NULL,                     -- "AutoWriter Season 1"
+  subtitle     TEXT DEFAULT '',                  -- "一个程序员用 AI 重构写作和思考的真实记录"
+  description  TEXT DEFAULT '',
+  status       TEXT DEFAULT 'active',            -- active / archived
+  started_at   DATETIME,
+  ended_at     DATETIME,
+  profile_id   TEXT DEFAULT '',
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_seasons_status ON seasons(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_seasons_profile ON seasons(profile_id, status);
+
+-- Episode 是 Season 下的核心对象
+-- 状态机：observation → questioning → thinking → drafting → published → archived
+CREATE TABLE IF NOT EXISTS episodes (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  season_id       INTEGER,                       -- 可空：未归入 Season 的 episode
+  title           TEXT DEFAULT '',               -- 短标题，如"我以为自己没有观点"
+  slug            TEXT DEFAULT '',               -- 友好 ID 如 ep-002，未来可作 URL
+  status          TEXT DEFAULT 'observation',    -- observation/questioning/thinking/drafting/published/archived
+  -- 3 问审问器的核心字段（按"不锁死"原则，全是 TEXT 不强结构）
+  observation     TEXT DEFAULT '',               -- Q1：今天你观察到了什么
+  question        TEXT DEFAULT '',               -- Q2：今天有什么事让你停顿了 3 秒
+  insight         TEXT DEFAULT '',               -- Q3：你最想说的一句话是什么
+  -- 写
+  draft           TEXT DEFAULT '',               -- 草稿（markdown）
+  -- 发布后
+  publish_url     TEXT DEFAULT '',               -- 公众号文章 URL
+  published_at    DATETIME,
+  -- 反馈
+  read_count      INTEGER DEFAULT 0,
+  likes           INTEGER DEFAULT 0,
+  comments        INTEGER DEFAULT 0,
+  -- 元
+  order_in_season INTEGER DEFAULT 0,             -- Season 内顺序
+  profile_id      TEXT DEFAULT '',               -- 身份隔离
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_episodes_season ON episodes(season_id, order_in_season);
+CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_episodes_profile ON episodes(profile_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_slug ON episodes(slug) WHERE slug != '';
