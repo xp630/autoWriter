@@ -26,7 +26,7 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
-import type { Article, QueueSnapshot } from '../types';
+import type { Article, Episode, QueueSnapshot, Season } from '../types';
 
 interface Props {
   onNavigate: (page: string) => void;
@@ -53,6 +53,18 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString('zh-CN');
 }
 
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'observation': return '观察';
+    case 'questioning': return '疑问';
+    case 'thinking':    return '思考';
+    case 'drafting':    return '草稿';
+    case 'published':   return '已发';
+    case 'archived':    return '归档';
+    default:             return status;
+  }
+}
+
 export function DashboardPage({ onNavigate }: Props) {
   const profile = useActiveProfile();
   const [articles, setArticles] = useState<Article[]>([]);
@@ -61,6 +73,9 @@ export function DashboardPage({ onNavigate }: Props) {
   const [agentStatus, setAgentStatus] = useState<Record<string, boolean> | null>(null);
   const [imageCount, setImageCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  // P0 Week 1：Season + Episode（创作主线）
+  const [season, setSeason] = useState<Season | null>(null);
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -84,6 +99,18 @@ export function DashboardPage({ onNavigate }: Props) {
         }
         // 设置（从 localStorage 读）
         if (!cancelled) setSettings(getAgentSettings());
+        // P0 Season + Episode：创作主线
+        if (window.electronAPI?.listSeasons) {
+          const seasons = await window.electronAPI.listSeasons({ profileId: profile.id });
+          const active = Array.isArray(seasons) && seasons.length > 0 ? seasons[0] : null;
+          if (!cancelled) setSeason(active);
+          if (active && window.electronAPI?.listEpisodes) {
+            const eps = await window.electronAPI.listEpisodes({ seasonId: active.id, profileId: profile.id });
+            if (!cancelled) setEpisodes(Array.isArray(eps) ? eps : []);
+          } else if (!cancelled) {
+            setEpisodes([]);
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -141,6 +168,56 @@ export function DashboardPage({ onNavigate }: Props) {
           </button>
         </div>
       )}
+
+      {/* ===== P0 Week 1：创作主线（Season + Episode）=====
+          第一层卡片：用户打开 app 第一眼看到的不再是"新建文章"，而是他的创作主线。 */}
+      <Card title={season ? `${season.title}` : '还没有创作主线'} icon={Layers} accent="insight">
+        {season?.subtitle && <div className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>{season.subtitle}</div>}
+        {!season && !loading && (
+          <Empty
+            icon={Layers}
+            title="还没有 Season"
+            description="Season 是你一段时间的创作主线。比如：AutoWriter Season 1（半年）。点下方按钮开第一季。"
+            action={
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => onNavigate('write')}>
+                <Plus size={14} /> 开始第一季
+              </button>
+            }
+          />
+        )}
+        {season && episodes.length === 0 && !loading && (
+          <Empty
+            icon={PenLine}
+            title="Season 已开，还没有 Episode"
+            description="Episode 是主线上的每一段。从一个观察开始——记下今天让你停顿了三秒的事。"
+            action={
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => onNavigate('write')}>
+                <Plus size={14} /> 记第一个观察
+              </button>
+            }
+          />
+        )}
+        {season && episodes.length > 0 && (
+          <div className="season-episode-list">
+            {episodes.map((ep) => (
+              <div key={ep.id} className="season-episode-row" onClick={() => onNavigate('write')} role="button" tabIndex={0}>
+                <div className="season-ep-side">
+                  <span className="season-ep-index">{ep.order_in_season || '·'}</span>
+                </div>
+                <div className="season-ep-main">
+                  <div className="season-ep-title">
+                    {ep.title || (ep.observation ? ep.observation.slice(0, 22) + '…' : '（未命名 Episode）')}
+                  </div>
+                  <div className="season-ep-meta">
+                    <span className={`ep-status-pill ep-status-${ep.status}`}>{statusLabel(ep.status)}</span>
+                    {ep.insight && <span className="season-ep-insight">“{ep.insight.slice(0, 36)}{ep.insight.length > 36 ? '…' : ''}”</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* ===== KPI 卡片（4 列） ===== */}
       <div className="kpi-grid">

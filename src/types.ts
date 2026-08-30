@@ -47,6 +47,17 @@ declare global {
       savePrompt: (params: { name: string; content: string }) => Promise<{ ok: boolean; name: string }>;
       listArticles: (params?: { status?: string; search?: string; profileId?: string }) => Promise<Article[]>;
       getArticle: (id: number) => Promise<Article | null>;
+
+      // ===== P0 Week 1: Season + Episode（Episode-centric）=====
+      listSeasons: (params?: { status?: SeasonStatus; profileId?: string }) => Promise<Season[]>;
+      getSeason:   (id: number) => Promise<(Season & { episode_count?: number }) | null>;
+      saveSeason:  (params: Partial<Season> & { title: string; profileId?: string }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
+      archiveSeason: (id: number) => Promise<{ ok: boolean }>;
+      listEpisodes: (params?: { seasonId?: number; status?: EpisodeStatus | 'all'; profileId?: string }) => Promise<Episode[]>;
+      getEpisode:   (id: number) => Promise<Episode | null>;
+      saveEpisode:  (params: Partial<Episode> & { profileId?: string }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
+      deleteEpisode: (id: number) => Promise<{ ok: boolean }>;
+      linkEpisodeToArticle: (params: { episodeId: number; articleId: number }) => Promise<{ ok: boolean }>;
       scheduleArticle: (params: { id: number; scheduled_at: string }) => Promise<{ ok: boolean }>;
       unscheduleArticle: (id: number) => Promise<{ ok: boolean }>;
       publishArticle: (id: number) => Promise<{ ok: boolean }>;
