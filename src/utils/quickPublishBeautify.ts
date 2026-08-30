@@ -1,0 +1,50 @@
+// quickPublishBeautify — P1: Quick Publish 的核心算法
+// 把无样式的 Markdown/纯文本变成带公众号样式的 HTML
+// 纯函数,可单测
+
+/** 把纯 Markdown / 纯文本里的"观点"识别出来，渲染成带样式的 HTML
+ * 识别规则（不锁死）：
+ *   - **xxx**              → 观点句（核心观点，加粗+背景）
+ *   - # / ## / ###          → 标题
+ *   - > xxx                → 引用
+ *   - - xxx / 1. xxx        → 列表
+ *   - 含"其实/关键/问题是/真正的/不是/所以/因此"+ 长度 20–200 → 候选观点
+ *   - 空行分块
+ */
+export function beautifyHtml(raw: string): string {
+  const KEYWORDS = /其实|关键是|问题是|真正的|不是\s|而是|所以|因此|意味着|本质|核心/;
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const md = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  const blocks = raw.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const html = blocks.map((blk) => {
+    // 整块被 **...** 包裹 → 观点盒
+    const fullBold = /^\*\*[\s\S]+\*\*\s*$/.test(blk);
+    // 单段标题
+    const h3 = /^###\s+(.+)$/.exec(blk);
+    if (h3) return `<h3 class="qp-h3">${md(h3[1])}</h3>`;
+    const h2 = /^##\s+(.+)$/.exec(blk);
+    if (h2) return `<h2 class="qp-h2">${md(h2[1])}</h2>`;
+    // 中文序号"一、" "二、" 也识别为二级标题(公众号常见)
+    const cnNum = /^([一二三四五六七八九十]+)、\s*(.+)$/.exec(blk);
+    if (cnNum) return `<h2 class="qp-h2">${md(cnNum[2])}</h2>`;
+    const h1 = /^#\s+(.+)$/.exec(blk);
+    if (h1) return `<h1 class="qp-h1">${md(h1[1])}</h1>`;
+    // 引用
+    const quote = /^>\s*([\s\S]+)$/.exec(blk);
+    if (quote) return `<blockquote class="qp-quote">${md(quote[1]).replace(/\n/g, '<br/>')}</blockquote>`;
+    // 列表
+    const listItems = blk.split('\n').map((l) => l.trim()).filter((l) => /^(-|\d+\.)\s+/.test(l));
+    if (listItems.length >= 2) {
+      return '<ul class="qp-list">' + listItems.map((l) => `<li>${md(l.replace(/^(-|\d+\.)\s+/, ''))}</li>`).join('') + '</ul>';
+    }
+    // 观点盒（Markdown 粗体整块 / 关键词命中 + 长度合理）
+    const isCandidate = fullBold || (KEYWORDS.test(blk) && blk.length >= 20 && blk.length <= 200);
+    if (isCandidate) {
+      return `<div class="qp-viewpoint">${md(blk).replace(/\n/g, '<br/>')}</div>`;
+    }
+    // 普通段落
+    return `<p>${md(blk).replace(/\n/g, '<br/>')}</p>`;
+  }).join('\n');
+  return html;
+}
