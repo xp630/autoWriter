@@ -34,6 +34,8 @@ export function QuickPublishPage() {
   const [busy, setBusy] = useState<RoleKey | null>(null);
   const [galleryFor, setGalleryFor] = useState<RoleKey | null>(null);
   const [gallery, setGallery] = useState<ImageRecord[] | null>(null);
+  // 排版步：人工改判（块序号 → 是否反转观点盒状态）
+  const [boxOverrides, setBoxOverrides] = useState<Record<number, boolean>>({});
 
   useEffect(() => { taRef.current?.focus(); }, []);
 
@@ -131,7 +133,13 @@ strong { font-weight: 700; color: #059669; }
 a { color: #059669; }`;
 
   const buildFinalHtml = async (): Promise<string> => {
-    const blocks = beautifyHtml(draft).split('\n');
+    let blocks = draft.trim() ? beautifyHtml(draft).split('\n') : [];
+    // 应用排版步的人工改判
+    blocks = blocks.map((b, i) => {
+      if (!boxOverrides[i]) return b;
+      if (b.includes('qp-viewpoint')) return b.replace('<div class="qp-viewpoint">', '<div>').replace('</div>', '</div>').replace(/^<div>([\s\S]*)<\/div>$/, '<p>$1</p>');
+      return `<div class="qp-viewpoint">${b}</div>`;
+    });
     // 图片转 dataURL（文件自带图）
     const toData = async (u: string): Promise<string> => {
       try { const r = await window.electronAPI.readImageDataUrl(u); return (r as any)?.dataUrl || u; } catch { return u; }
@@ -176,6 +184,12 @@ a { color: #059669; }`;
 
   const imgCount = Object.values(slots).filter(Boolean).length;
 
+  // 分块渲染（与导出同一拆分逻辑：beautifyHtml 每块一行）
+  const draftBlocks = useMemo(() => (draft.trim() ? beautifyHtml(draft).split('\n') : []), [draft]);
+  const isBox = (b: string) => b.includes('qp-viewpoint');
+  const flipped = (b: string, i: number) => (boxOverrides[i] ? !isBox(b) : isBox(b));
+  const toggleBox = (i: number) => setBoxOverrides((o) => ({ ...o, [i]: !o[i] }));
+
   return (
     <>
       <div className="qp-steps" role="tablist" aria-label="快速发布五步">
@@ -215,11 +229,22 @@ a { color: #059669; }`;
         <div className="qp-panel">
           <div className="qp-panel-head">
             <div>
-              <strong>自动排版预览</strong>
-              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>观点盒 / 标题 / 引用 / 列表已自动识别；不满意的句子回第 1 步加 ** 包裹</span>
+              <strong>自动排版预览 · 可点击改判</strong>
+              <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>机器只做初稿——点任意段落切进/移出观点盒，导出按你点完的状态走</span>
             </div>
+            {Object.keys(boxOverrides).length > 0 && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBoxOverrides({})}>恢复机器判断</button>
+            )}
           </div>
-          <div className="qp-preview" dangerouslySetInnerHTML={{ __html: beautifyHtml(draft) || '<p className="muted">（草稿为空）</p>' }} />
+          <div className="qp-preview">
+            {draftBlocks.map((b, i) => (
+              <div key={i} className={`qp-block-wrap ${flipped(b, i) ? 'is-box' : ''}`}
+                onClick={() => toggleBox(i)} title="点击切换：观点盒 ⇄ 普通段">
+                <span dangerouslySetInnerHTML={{ __html: b }} />
+              </div>
+            ))}
+            {draftBlocks.length === 0 && <p className="muted">（草稿为空）</p>}
+          </div>
         </div>
       )}
 

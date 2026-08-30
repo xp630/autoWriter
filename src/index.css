@@ -2725,3 +2725,8 @@ select:focus-visible {
 .qp-gallery-cell { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; overflow: hidden; }
 .qp-gallery-cell:hover { border-color: var(--line); }
 .qp-gallery-cell img { width: 100%; height: 100px; object-fit: cover; display: block; }
+/* 排版步：点击改判 */
+.qp-block-wrap { cursor: pointer; border-radius: 4px; transition: outline .1s; outline: 1px dashed transparent; }
+.qp-block-wrap:hover { outline-color: var(--line); }
+.qp-block-wrap > span > p, .qp-block-wrap > span > div { margin-top: 0; }
+.qp-block-wrap.is-box > span > p { background: #ecfdf5; border-left: 4px solid #10b981; padding: 12px 16px; border-radius: 4px; }
