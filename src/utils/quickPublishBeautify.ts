@@ -12,7 +12,9 @@
  *   - 空行分块
  */
 export function beautifyHtml(raw: string): string {
-  const KEYWORDS = /其实|关键是|问题是|真正的|不是\s|而是|所以|因此|意味着|本质|核心/;
+  // 两层关键词：strong = 即使句子短（如 8–20 字）也算观点；weak = 需 20+ 字
+  const STRONG_KW = /其实|关键是|问题是|真正的|藏着|隐藏|背后|本质|真相|核心|是这|而是|我真的|我在乎|我想知道|我希望|我相信|我期待|我害怕|看不见|没看到|看不到|未发现|我只是|只是不|不是\s/;
+  const WEAK_KW = /所以|因此|意味着|关键在于|原因是|其实/;
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const md = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
@@ -39,7 +41,10 @@ export function beautifyHtml(raw: string): string {
       return '<ul class="qp-list">' + listItems.map((l) => `<li>${md(l.replace(/^(-|\d+\.)\s+/, ''))}</li>`).join('') + '</ul>';
     }
     // 观点盒（Markdown 粗体整块 / 关键词命中 + 长度合理）
-    const isCandidate = fullBold || (KEYWORDS.test(blk) && blk.length >= 20 && blk.length <= 200);
+    const isCandidate =
+      fullBold ||
+      (STRONG_KW.test(blk) && blk.length >= 8 && blk.length <= 200) ||
+      (WEAK_KW.test(blk) && blk.length >= 20 && blk.length <= 200);
     if (isCandidate) {
       return `<div class="qp-viewpoint">${md(blk).replace(/\n/g, '<br/>')}</div>`;
     }

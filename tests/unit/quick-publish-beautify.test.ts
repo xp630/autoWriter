@@ -78,3 +78,57 @@ describe('beautifyHtml · 边界', () => {
     expect(html).toContain('<li>一</li>');
   });
 });
+
+describe('用户金句：观察背后，藏着你所有的观点', () => {
+  it('11 字 + 藏着 → 识别为观点盒', () => {
+    const html = beautifyHtml('观察背后，藏着你所有的观点。');
+    expect(html).toContain('qp-viewpoint');
+    expect(html).toContain('观察背后');
+  });
+
+  it('类似的短金句都能识别', () => {
+    const samples = [
+      '本质是：人是环境的产物。',
+      '真相是大家都在装睡。',
+      '其实是用户没想清楚要写什么。',
+      '关键是开始，而不是想清楚。',
+    ];
+    for (const s of samples) {
+      const html = beautifyHtml(s);
+      expect(html, `${s} should be viewpoint`).toContain('qp-viewpoint');
+    }
+  });
+});
+
+describe('自白式陈述 → 观点盒', () => {
+  it('"因为我想知道..." 识别', () => {
+    const html = beautifyHtml('因为我想知道，有没有人真的在认真看。');
+    expect(html).toContain('qp-viewpoint');
+  });
+  it('"我在乎..." 识别', () => {
+    const html = beautifyHtml('其实我在乎的是这个人是否真的看懂了。');
+    expect(html).toContain('qp-viewpoint');
+  });
+  it('"我希望..." 命中强关键词 → 观点盒（自白式陈述）', () => {
+    const html = beautifyHtml('我希望读者能读到这里。');
+    expect(html).toContain('qp-viewpoint');
+  });
+});
+
+describe('EP02 金句：重新框架句 → 观点盒', () => {
+  it('"我不是没有想法，我只是看不见自己的想法" → 整段观点盒', () => {
+    const html = beautifyHtml(`我不是没有想法。
+我只是看不见自己的想法。
+
+以前我以为创作是：观点 → 文章。
+
+现在我觉得更像：观察 → 疑问 → 观点 → 文章。`);
+    // 整段（多段 block 但每段都有隐形信号） → 多 qp-viewpoint
+    expect((html.match(/qp-viewpoint/g) || []).length).toBeGreaterThanOrEqual(1);
+    expect(html).toContain('我不是没有想法');
+  });
+  it('"只是..." 单独触发', () => {
+    const html = beautifyHtml('只是不见得能被自己看见。');
+    expect(html).toContain('qp-viewpoint');
+  });
+});
