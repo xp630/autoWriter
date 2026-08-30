@@ -6,6 +6,7 @@
 // - 快速操作
 import { useEffect, useState } from 'react';
 import { getAgentSettings } from '../utils/storage';
+import { showToast } from '../toast';
 import { useActiveProfile } from '../hooks/useActiveProfile';
 import {
   ArrowRight,
@@ -75,6 +76,7 @@ export function DashboardPage({ onNavigate }: Props) {
   const [loading, setLoading] = useState(true);
   // P0 Week 1：Season + Episode（创作主线）
   const [season, setSeason] = useState<Season | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
 
   // 拉一次所有需要的数据
@@ -116,7 +118,7 @@ export function DashboardPage({ onNavigate }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [profile.id]);   // 切身份后 KPI / 最近编辑 要重拉
+  }, [profile.id, reloadTick]);   // 切身份/创建 Season/EP 后重拉
 
   // 订阅队列状态
   useEffect(() => {
@@ -135,6 +137,29 @@ export function DashboardPage({ onNavigate }: Props) {
   const recentArticles = [...articles]
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     .slice(0, 5);
+
+  // P0：真正能"建"的入口（之前按钮只跳转不创建，是断的）
+  const createSeason = async () => {
+    if (!window.electronAPI?.saveSeason) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      const r = await window.electronAPI.saveSeason({
+        title: 'AutoWriter Season 1',
+        subtitle: '一个程序员用 AI 重构写作和思考的真实记录',
+        profileId: profile.id,
+      });
+      if (r?.ok) { showToast('✅ Season 1 已开启'); setReloadTick((t) => t + 1); }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  const createEpisode = async () => {
+    if (!season || !window.electronAPI?.saveEpisode) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      const r = await window.electronAPI.saveEpisode({
+        season_id: season.id, title: '', status: 'observation',
+        order_in_season: episodes.length + 1, profileId: profile.id,
+      });
+      if (r?.ok) onNavigate(`episode:${r.id}`);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
 
   const currentAgentName = AGENT_LABEL[settings.cli] || settings.cli;
   const isAgentReady = agentStatus?.[settings.cli] ?? null;
@@ -179,7 +204,7 @@ export function DashboardPage({ onNavigate }: Props) {
             title="还没有 Season"
             description="Season 是你一段时间的创作主线。比如：AutoWriter Season 1（半年）。点下方按钮开第一季。"
             action={
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => onNavigate('write')}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={createSeason}>
                 <Plus size={14} /> 开始第一季
               </button>
             }
@@ -191,11 +216,18 @@ export function DashboardPage({ onNavigate }: Props) {
             title="Season 已开，还没有 Episode"
             description="Episode 是主线上的每一段。从一个观察开始——记下今天让你停顿了三秒的事。"
             action={
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => onNavigate('write')}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={createEpisode}>
                 <Plus size={14} /> 记第一个观察
               </button>
             }
           />
+        )}
+        {season && (
+          <div className="row" style={{ justifyContent: 'flex-end', margin: '2px 0 6px' }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={createEpisode} title="新建一个 Episode，从记录观察开始">
+              <Plus size={13} /> 新 Episode
+            </button>
+          </div>
         )}
         {season && episodes.length > 0 && (
           <div className="season-episode-list">
