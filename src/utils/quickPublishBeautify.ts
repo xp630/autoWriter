@@ -20,6 +20,8 @@ export function beautifyHtml(raw: string): string {
 
   const blocks = raw.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
   const html = blocks.map((blk) => {
+    // markdown 分隔线 --- / *** → <hr>（发布稿里的真实分隔，不是字面量）
+    if (/^(-{3,}|\*{3,})\s*$/.test(blk)) return '<hr class="qp-divider"/>';
     // 整块被 **...** 包裹 → 观点盒
     const fullBold = /^\*\*[\s\S]+\*\*\s*$/.test(blk);
     // 单段标题

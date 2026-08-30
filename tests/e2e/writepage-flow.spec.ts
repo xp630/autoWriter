@@ -373,3 +373,20 @@ test('写文章页：草稿恢复后，分析/策略也一起回来（修复不�
   // 应自动进到 Step 2（因 draft.step=1）
   await expect(ctx.window.locator('text=Step 2')).toBeVisible({ timeout: 5000 });
 });
+
+test('Quick Publish v2：五步流水线渲染 + 草稿进入润色步', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
+  await expect(ctx.window.locator('.qp-steps')).toBeVisible({ timeout: 5000 });
+  // 5 个步骤名
+  for (const s of ['润色', '排版', '封面', '配图', '导出']) {
+    await expect(ctx.window.locator('.qp-step').filter({ hasText: s })).toBeVisible();
+  }
+  // 粘草稿 → 下一步进排版预览 → 观点盒应出现
+  await ctx.window.locator('.qp-textarea').fill('我以为自己没有观点。\n\n**观察背后，藏着你所有的观点。**');
+  await ctx.window.locator('.qp-nav .btn-primary').click();
+  await expect(ctx.window.locator('.qp-preview')).toBeVisible();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toBeVisible();
+  // 导览可回退
+  await ctx.window.locator('.qp-nav .btn-outline').first().click();
+  await expect(ctx.window.locator('.qp-textarea')).toBeVisible();
+});

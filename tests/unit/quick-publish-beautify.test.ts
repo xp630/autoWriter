@@ -132,3 +132,11 @@ describe('EP02 金句：重新框架句 → 观点盒', () => {
     expect(html).toContain('qp-viewpoint');
   });
 });
+
+describe('markdown 分隔线', () => {
+  it('--- 变成 <hr> 而不是字面量段落', () => {
+    const html = beautifyHtml('第一段。\n\n---\n\n第二段。');
+    expect(html).toContain('<hr class="qp-divider"/>');
+    expect(html).not.toContain('<p>---</p>');
+  });
+});
