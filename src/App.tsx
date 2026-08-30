@@ -14,10 +14,11 @@ import { StrategiesPage } from './pages/StrategiesPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { ImagesPage } from './pages/ImagesPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { QuickPublishPage } from './pages/QuickPublishPage';
 
-type PageName = 'dashboard' | 'write' | 'strategies' | 'articles' | 'topics' | 'sources' | 'images' | 'settings';
+type PageName = 'dashboard' | 'write' | 'strategies' | 'articles' | 'topics' | 'sources' | 'images' | 'settings' | 'quick-publish';
 
-const PAGES: PageName[] = ['dashboard', 'write', 'strategies', 'articles', 'topics', 'sources', 'images', 'settings'];
+const PAGES: PageName[] = ['dashboard', 'write', 'strategies', 'articles', 'topics', 'sources', 'images', 'settings', 'quick-publish'];
 
 export default function App() {
   const [page, setPage] = useState<PageName>('dashboard');
@@ -76,6 +77,7 @@ export default function App() {
         {page === 'sources' && <SourcesPage />}
         {page === 'images' && <ImagesPage />}
         {page === 'settings' && <SettingsPage />}
+          {page === 'quick-publish' && <QuickPublishPage />}
       </main>
     </div>
   );
