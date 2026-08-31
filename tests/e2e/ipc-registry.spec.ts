@@ -137,6 +137,7 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['card:save', '卡：新建/更新观察卡（observation 必填）'],
   ['card:delete', '卡：删除观察卡'],
   ['card:grow', '卡：把观察卡长成一个新 Episode'],
+  ['interview:turn', 'Idea Interview 对话流：一问一答，AI 决定追问或收尾'],
   ['analysis:delete', '删除分析'],
   ['analysis:angles', '生成创作方向（旧名，已内联到 strategy:generate）'],
   ['angles:adopt', '采纳某个创作方向（旧名，已内联到 strategy:adopt）'],
@@ -217,6 +218,7 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   ['card:list', [{}, true]],
   ['card:delete', [999999]],
   ['card:grow', [999999]],
+  ['interview:turn', [{}]],
   ['test:list-channels', []],
   ['test:userdata', []],
 ];
