@@ -374,11 +374,11 @@ test('写文章页：草稿恢复后，分析/策略也一起回来（修复不�
   await expect(ctx.window.locator('text=Step 2')).toBeVisible({ timeout: 5000 });
 });
 
-test('Quick Publish v2：五步流水线渲染 + 草稿进入润色步', async () => {
+test('Quick Publish v4：四步流水线渲染 + 草稿排版改判 + 配图步无生成按钮', async () => {
   await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
   await expect(ctx.window.locator('.qp-steps')).toBeVisible({ timeout: 5000 });
   // 5 个步骤名
-  for (const s of ['润色', '排版', '封面', '配图', '导出']) {
+  for (const s of ['润色', '排版', '配图', '导出']) {
     await expect(ctx.window.locator('.qp-step').filter({ hasText: s })).toBeVisible();
   }
   // 粘草稿 → 下一步进排版预览 → 观点盒应出现
@@ -389,4 +389,15 @@ test('Quick Publish v2：五步流水线渲染 + 草稿进入润色步', async (
   // 导览可回退
   await ctx.window.locator('.qp-nav .btn-outline').first().click();
   await expect(ctx.window.locator('.qp-textarea')).toBeVisible();
+});
+
+test('Quick Publish 配图步：没有 AI 生成按钮（免费生图已下线）', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
+  await expect(ctx.window.locator('.qp-steps')).toBeVisible({ timeout: 5000 });
+  // 直接跳到配图步
+  await ctx.window.locator('.qp-step').filter({ hasText: '配图' }).click();
+  await expect(ctx.window.locator('.qp-panel')).toBeVisible();
+  expect(await ctx.window.locator('.qp-panel button:has-text("生成")').count()).toBe(0);
+  // 图库选择入口存在
+  await expect(ctx.window.locator('button:has-text("从图库选")').first()).toBeVisible();
 });
