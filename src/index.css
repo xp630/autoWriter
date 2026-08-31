@@ -2757,3 +2757,7 @@ select:focus-visible {
 .iv-q { font-size: 15px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
 .iv-open { font-size: 11.5px !important; padding: 2px 8px !important; color: #047857 !important; border: 1px solid #a7f3d0; }
 .iv-open:hover { background: #ecfdf5; }
+/* EP 状态显式控制 */
+.ep-status-row { margin-top: 10px; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ep-status-select { width: 110px; font-size: 13px; padding: 6px 8px; }
+.ep-url-input { flex: 1; min-width: 220px; font-size: 12px; padding: 6px 8px; }

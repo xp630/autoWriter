@@ -35,6 +35,9 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   const [question, setQuestion] = useState('');
   const [insight, setInsight] = useState('');
   const [draft, setDraft] = useState('');
+  // 状态显式可控（planned→…→published/archived）：进页面取库值，用户改了以用户为准
+  const [status, setStatus] = useState<EpisodeStatus>('observation');
+  const [publishUrl, setPublishUrl] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +52,8 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
       setQuestion(row.question || '');
       setInsight(row.insight || '');
       setDraft(row.draft || '');
+      setStatus((row.status as EpisodeStatus) || 'observation');
+      setPublishUrl(row.publish_url || '');
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -68,7 +73,8 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
     if (!window.electronAPI?.saveEpisode) { showToast('❌ IPC 未就绪'); return; }
     setSaving(true);
     try {
-      const newStatus = next?.status ?? computeStatus();
+      const newStatus: EpisodeStatus = (next?.status as EpisodeStatus) ?? status;
+      const isPublishing = newStatus === 'published' && !ep?.published_at;
       const r = await window.electronAPI.saveEpisode({
         id: ep?.id,
         season_id: ep?.season_id,
@@ -78,6 +84,8 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
         insight: next?.insight ?? insight,
         draft: next?.draft ?? draft,
         status: newStatus,
+        publish_url: publishUrl,
+        published_at: isPublishing ? new Date().toISOString() : (ep?.published_at ?? null),
         order_in_season: ep?.order_in_season ?? 0,
       });
       if (r?.ok) {
@@ -104,7 +112,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   }
   if (!ep) return null;
 
-  const status = ep.status || 'observation';
+  // status 现在是受控 state（下拉可改），不再从 ep 派生
   const filledCount = [observation, question, insight, draft].filter((s) => s?.trim()).length;
   const canPublish = Boolean(draft.trim() && insight.trim());
 
@@ -131,7 +139,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
         )}
       </div>
 
-      <Card title="标题">
+      <Card title="标题与状态">
         <input
           type="text"
           className="input ep-title-input"
@@ -140,6 +148,31 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => title !== ep.title && save()}
         />
+        <div className="row ep-status-row">
+          <label className="muted" style={{ fontSize: 12 }}>状态</label>
+          <select
+            className="input ep-status-select"
+            value={status}
+            onChange={(e) => {
+              const v = e.target.value as EpisodeStatus;
+              setStatus(v);
+              void save({ status: v });
+              if (v === 'published' && !publishUrl) showToast('💡 记得把公众号文章链接贴到右边');
+            }}
+          >
+            {(Object.keys(STATUS_LABEL) as EpisodeStatus[]).map((k) => (
+              <option key={k} value={k}>{STATUS_LABEL[k]}</option>
+            ))}
+          </select>
+          <input
+            type="url"
+            className="input ep-url-input"
+            placeholder="发布链接 publish_url（发出后贴这里）"
+            value={publishUrl}
+            onChange={(e) => setPublishUrl(e.target.value)}
+            onBlur={() => publishUrl !== (ep.publish_url || '') && save()}
+          />
+        </div>
       </Card>
 
       <Card title="Q1 · 观察" icon={Circle} accent="action">
