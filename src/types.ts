@@ -615,6 +615,7 @@ export interface ObservationCard {
 }
 
 export type EpisodeStatus =
+  | 'planned'       // 计划位：有标题、还没开写（季节目单）
   | 'observation'   // Q1: 刚记观察
   | 'questioning'   // Q2: 在停顿/追问
   | 'thinking'      // Q3: 在提炼

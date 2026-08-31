@@ -16,6 +16,7 @@ type Props = {
 };
 
 const STATUS_LABEL: Record<EpisodeStatus, string> = {
+  planned: '计划',
   observation: '观察',
   questioning: '疑问',
   thinking: '思考',

@@ -57,6 +57,7 @@ function timeAgo(iso: string): string {
 
 function statusLabel(status: string): string {
   switch (status) {
+    case 'planned':     return '计划';
     case 'observation': return '观察';
     case 'questioning': return '疑问';
     case 'thinking':    return '思考';
