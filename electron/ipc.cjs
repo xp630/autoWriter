@@ -675,29 +675,55 @@ function registerIpc() {
   });
 
   // 从 URL 抓图（Pollinations / 公网）→ 存本地 → 返回 aw-img:// URL
-  ipcMain.handle('image:generate', async (_e, { prompt, filename, width, height, model }) => {
+  ipcMain.handle('image:generate', async (_e, { prompt, filename, width, height, providerId, modelId, model: legacyModel, tags }) => {
     const fs = require('node:fs');
     const path = require('node:path');
     const { app } = require('electron');
-    const w = width || 1200;
-    const h = height || 800;
-    const m = model || 'flux';
-    // Pollinations.ai 公共 API（无需 key）
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&model=${m}&nologo=true&seed=${Date.now() % 99999}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-    if (!res.ok) throw new Error(`Pollinations HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const dir = path.join(app.getPath('userData'), 'uploads');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const safeName = (filename || prompt).replace(/[^\w一-龥-]/g, '_').slice(0, 60);
-    const fileName = `${safeName}-${Date.now()}.jpg`;
-    const filePath = path.join(dir, fileName);
-    fs.writeFileSync(filePath, buf);
-    return { ok: true, url: 'aw-img://img/' + encodeURIComponent(fileName), path: filePath, prompt, fileName };
+    const { generateImage } = require('./image-providers.cjs');
+    const NO_PROVIDER = '未配置生图服务：请到 设置 → 生图 Provider 启用一个（Tensor.Art 需填 Access Token；以后有高质量免费源也可添加）';
+
+    // 解析 provider：显式指定 > 启用的按优先级第一个
+    let pid = providerId || '';
+    let mid = modelId || legacyModel || '';
+    if (!pid) {
+      const p = db.prepare(`SELECT * FROM image_providers WHERE enabled=1 ORDER BY priority ASC`).get();
+      if (!p) return { ok: false, error: NO_PROVIDER };
+      pid = p.provider_id;
+    }
+    const prow = db.prepare('SELECT * FROM image_providers WHERE provider_id=?').get(pid);
+    if (!prow || prow.enabled !== 1) return { ok: false, error: `Provider「${pid}」未启用或不存在` };
+    if (!mid) {
+      const dm = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(pid);
+      mid = dm ? dm.model_id : '';
+    }
+    // 预检 token：没 token 直接给结构化引导，不发无谓请求
+    if (pid === 'tensorart') {
+      let cfg = prow.extra_config;
+      if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch { cfg = {}; } }
+      cfg = cfg || {};
+      if (!cfg.accessToken && !prow.api_key_enc) {
+        return { ok: false, error: 'Tensor.Art 还没填 Access Token：设置 → 生图 Provider → Tensor.Art → 粘贴令牌' };
+      }
+    }
+
+    try {
+      const buf = await generateImage(pid, prompt, { model: mid, width: width || 1200, height: height || 800 });
+      const dir = path.join(app.getPath('userData'), 'uploads');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const safeName = (filename || prompt || 'img').replace(/[^\w一-龥-]/g, '_').slice(0, 60);
+      const fileName = `${safeName}-${Date.now()}.jpg`;
+      fs.writeFileSync(path.join(dir, fileName), buf);
+      const KB = Math.round(buf.length / 1024);
+      const url = 'aw-img://img/' + encodeURIComponent(fileName);
+      const r = db.prepare(`INSERT INTO images (file_name, file_path, prompt, source, tags, width, height, size_kb, original_prompt, provider, model)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(fileName, 'uploads/' + fileName, prompt, 'ai', tags || '', width || 1200, height || 800, KB, prompt, pid, mid);
+      return { ok: true, id: r.lastInsertRowid, url, path: path.join(dir, fileName), prompt, fileName, provider: pid, model: mid };
+    } catch (err) {
+      return { ok: false, error: `生图失败（${pid}${mid ? ' / ' + mid : ''}）：${err.message}` };
+    }
   });
 
-  // ===== 图片分离存储（正文存占位符，图片存 images 表 + article_images 关联）=====
-  // 按文章查图片（JOIN 出图片详情）
   ipcMain.handle('article:images', (_e, articleId) => {
     return db.prepare(`
       SELECT ai.id, ai.article_id, ai.placeholder_id, ai.image_id,
@@ -786,12 +812,13 @@ function registerIpc() {
         const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(p.provider_id);
         if (defaultModel) currentModel = defaultModel.model_id;
       } else {
-        currentProvider = 'pollinations';
+        // 免费兜底（Pollinations）已下线——没有可用 provider 就给明确引导，而不是产出烂图
+        return { ok: false, error: '未配置生图服务：请到 设置 → 生图 Provider 启用一个（Tensor.Art 需填 Access Token）' };
       }
     } else if (!currentModel) {
       // 指定了 provider 但没指定 model：取该 provider 自己的默认模型（不能硬套 'flux'）
       const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(currentProvider);
-      currentModel = defaultModel?.model_id || (currentProvider === 'pollinations' ? 'flux' : '');
+      currentModel = defaultModel?.model_id || '';
     }
 
 

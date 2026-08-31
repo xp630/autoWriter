@@ -246,6 +246,16 @@ function getDb(opts = {}) {
       if (tableExists(LEGACY_ADOPT)) db.exec(`DROP TABLE ${LEGACY_ADOPT}`);
 
       // ===== V4：生成守卫三问字段 + 回填只加一个指标（转发）=====
+      // P1 v4.1：下线 Pollinations 免费通道（质量不可接受；保留表结构，以后好免费源可复用）
+      try {
+        const pol = db.prepare(`SELECT COUNT(*) n FROM image_providers WHERE provider_id='pollinations' AND enabled=1`).get();
+        if (pol && pol.n > 0) {
+          db.exec(`UPDATE image_providers SET enabled=0 WHERE provider_id='pollinations'`);
+          db.exec(`UPDATE image_models SET enabled=0 WHERE provider_id='pollinations'`);
+          console.log('[db] Pollinations 免费通道已下线（质量原因，2026-08-31 owner 决定）');
+        }
+      } catch (e) { console.warn('[db] pollinations 下线迁移:', e.message); }
+
       ensureCols('content_strategies', [
         ['belief_before', "TEXT DEFAULT ''"], ['belief_after', "TEXT DEFAULT ''"], ['belief_source', "TEXT DEFAULT ''"],
       ]);

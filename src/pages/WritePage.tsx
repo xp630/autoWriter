@@ -513,19 +513,20 @@ export function WritePage() {
   const generateImage = async (picId: string, description: string) => {
     setGeneratingImages(prev => ({ ...prev, [picId]: true }));
     try {
-      // 使用 Pollinations 生成图片
+      // 走 Provider（设置里启用的生图服务；免费 Pollinations 因质量已下线）
       const r = await window.electronAPI.generateImage({
         prompt: description,
         filename: `配图-${picId}`,
         width: 1200,
         height: 800,
-        model: 'flux',
       });
 
-      if (!r.ok) throw new Error('生成失败');
+      if (!r.ok) throw new Error(r.error || '生图失败');
 
       // 读取图片数据 URL
-      const dataUrlR = await window.electronAPI.readImageDataUrl(r.path || r.url);
+      const ref = r.url || r.path;
+      if (!ref) throw new Error('生图返回缺少图片引用');
+      const dataUrlR = await window.electronAPI.readImageDataUrl(ref);
       if (dataUrlR.ok && dataUrlR.dataUrl) {
         setGeneratedImages(prev => ({ ...prev, [picId]: dataUrlR.dataUrl }));
         showToast(`✅ 配图生成成功`);
@@ -598,8 +599,15 @@ export function WritePage() {
     if (draft.analysis) setAnalysis(draft.analysis);
     if (draft.analysisId) setAnalysisId(draft.analysisId);
     if (draft.analysis) setAnalysisStatus('completed');  // 有内容=已成功
-    if (draft.strategy) setStrategy(draft.strategy);
-    if (draft.angles) setAngles(draft.angles);
+    // 形状校验（2026-08-31 e2e 逼出的真实漏洞）：草稿被手改/旧版本残留时，
+    // 不合法的 strategy/angles 会让下游（gate 计算、卡片渲染）静默炸掉整个恢复流。
+    // 原则：坏数据丢弃 + 明示，绝不连带吞掉 step 等其他字段的恢复。
+    if (draft.strategy) {
+      const st = draft.strategy as any;
+      if (st.strategyId && st.strategy && typeof st.strategy === 'object') setStrategy(st);
+      else console.warn('[WritePage] 草稿里的 strategy 形状不合法，已丢弃（需要 StrategySelection：{strategyId, strategy}）');
+    }
+    if (Array.isArray(draft.angles)) setAngles(draft.angles);
     if (typeof draft.step === 'number' && draft.step >= 0 && draft.step <= 2) setStep(draft.step);
     setLogs((prev) => [...prev, {
       type: 'info',
@@ -613,6 +621,16 @@ export function WritePage() {
     const timer = setTimeout(() => {
       // V2.2：草稿一并保存分析/策略/角度，避免「参考文回来了但分析没了」的不对称。
       // angles 可能很大，但 localStorage 一般有 5MB 上限；5 条策略 ≈ < 30KB。
+      // v2.3：空稿守卫——什么都没写时不再把"空草稿"写回去（否则「清空草稿」1.5s 后按钮复活）。
+      const meaningful = Boolean(
+        query.trim() || referenceUrl.trim() || referenceText.trim() || outline.trim()
+        || outlineDirty || analysis || analysisId || strategy || angles || step > 0,
+      );
+      if (!meaningful) {
+        clearDraft();
+        setHasDraftState(false);
+        return;
+      }
       const draft: DraftState = {
         query, referenceUrl, referenceText, outline, outlineDirty,
         channel, style, length, needImage,

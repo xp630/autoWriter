@@ -1,10 +1,12 @@
 // QuickPublishPage — P1（v4 定稿）：四步发布流水线
 //   1 润色 → 2 排版（点击改判） → 3 配图 → 4 导出
-// 决策记录（2026-08-31，owner 拍板，两轮修正）：
-//   - 配图**要保留**——图的职责是降低阅读成本（对比/解释/收尾），不是装饰
-//   - 免费生图通道（Pollinations）质量不可接受，**整体删除**，app 不再提供"一键生成配图"
-//   - 图的来源收敛为三种：① 图库挑选（含外部生成/自己上传）② 本地排版封面（Canvas，确定性质量）③ 不用图
-//   - 封面默认走排版卡；AI 封面属于"以后再验证"项，未验证不进流程
+// 决策记录（2026-08-31 定稿）：
+//   - 配图保留：图的职责是降低阅读成本（情绪/解释/收尾），不是装饰
+//   - AI 生图保留，但**只走正经 provider**（设置 → 生图 Provider）：
+//       免费通道 Pollinations 已下线（质量不可接受），provider 架构保持可插拔——
+//       以后出现高质量免费源，加配置即可回来
+//   - 生成必须"契合文章"：提示词自动从标题 + 观点句 + 图形角色推导，可手改
+//   - 封面双路：排版封面（本地 Canvas，零依赖确定性）或 provider 生图
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Clipboard, FileDown, ImageIcon, Sparkles, Wand2, X } from 'lucide-react';
 import { beautifyHtml } from '../utils/quickPublishBeautify';
@@ -80,6 +82,41 @@ export function QuickPublishPage() {
   });
 
   // ── 配图步 ──────────────────────────────────────────
+  const [busy, setBusy] = useState<SlotKey | null>(null);
+  const [prompts, setPrompts] = useState<Record<SlotKey, string>>({ cover: '', emotion: '', explain: '', closing: '' });
+
+  /** 契合文章的自动提示词：标题 + 观点句 + 图形角色（解释图按内容判型：对比/流程/框架） */
+  const autoPrompts = (): Record<SlotKey, string> => {
+    const diagram = /对比|两种|差别|贵|便宜/.test(insightLine) ? '左右两栏对比图'
+      : /流程|步骤|先|再|然后|→/.test(insightLine) ? '从左到右流程图'
+      : /框架|四|三层|模型|三问|四问/.test(insightLine) ? '结构化框架图'
+      : '概念信息图';
+    return {
+      cover: `杂志封面插画：「${titleLine || insightLine}」。极简，大量留白给标题位，不出现任何文字`,
+      emotion: `场景插画：一个人深夜看手机屏幕的微光，安静、若有所思，真实克制，低饱和配色，不要文字`,
+      explain: `${diagram}：「${insightLine}」。简洁清晰，图形为主，极少文字，翡翠绿与米白配色`,
+      closing: `概念插画：一颗种子在安静的画面里发芽，留白大，克制，收束感，不要文字`,
+    };
+  };
+  useEffect(() => {
+    if (step === 2 && !prompts.cover && draft.trim()) setPrompts(autoPrompts());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, draft]);
+
+  const genImage = async (slot: SlotKey) => {
+    const p = (prompts[slot] || autoPrompts()[slot]).trim();
+    if (!p) { showToast('❌ 先写提示词'); return; }
+    if (!window.electronAPI?.generateImage) { showToast('❌ 生图接口未就绪'); return; }
+    setBusy(slot);
+    try {
+      const dims = slot === 'cover' ? { width: 1200, height: 510 } : { width: 1080, height: 720 };
+      const r = await window.electronAPI.generateImage({ prompt: p, ...dims, tags: `qp,${slot}` });
+      if (!r.ok) { showToast('⚠️ ' + (r.error || '生图失败')); return; }
+      if (r.url) { setSlots((x) => ({ ...x, [slot]: r.url! })); showToast(`✅ ${SLOT_LABEL[slot]}已生成（${r.provider || 'provider'}）`); }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+    finally { setBusy(null); }
+  };
+
   const openGallery = async (slot: SlotKey) => {
     setGalleryFor(slot);
     if (!gallery && window.electronAPI?.listAllImages) {
@@ -258,13 +295,27 @@ a { color: #059669; }`;
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSlots((x) => ({ ...x, [slot]: null }))}>移除</button>
                 </div>
               ) : (
-                <div className="row" style={{ gap: 6 }}>
-                  <button type="button" className="btn btn-outline btn-sm" onClick={() => openGallery(slot)}>
-                    <ImageIcon size={13} /> 从图库选
-                  </button>
-                  {slot === 'cover' && (
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={exportCover}>或用"排版封面"（导出页下载后上传到图库）</button>
-                  )}
+                <div>
+                  <textarea
+                    className="textarea"
+                    rows={2}
+                    style={{ fontSize: 12, marginBottom: 6 }}
+                    value={prompts[slot]}
+                    onChange={(e) => setPrompts((x) => ({ ...x, [slot]: e.target.value }))}
+                    placeholder="生图提示词（已按你的标题与观点自动生成，可改）"
+                  />
+                  <div className="row" style={{ gap: 6 }}>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => genImage(slot)} disabled={busy === slot}>
+                      {busy === slot ? <Sparkles size={13} className="spin" /> : <Wand2 size={13} />}
+                      {busy === slot ? '生成中…（走 Provider，约 30–120s）' : `生成${SLOT_LABEL[slot]}`}
+                    </button>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={() => openGallery(slot)}>
+                      <ImageIcon size={13} /> 从图库选
+                    </button>
+                    {slot === 'cover' && (
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={exportCover}>或下载"排版封面"</button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

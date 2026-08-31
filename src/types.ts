@@ -32,7 +32,7 @@ declare global {
       saveMarkdownFile: (params: { filename?: string; content: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>;
       updateArticle: (params: { id: number; content: string }) => Promise<{ ok: boolean; wordCount: number }>;
       saveImageFile: (params: { dataUrl: string; filename?: string }) => Promise<{ ok: boolean; url: string; path: string }>;
-      generateImage: (params: { prompt: string; filename?: string; width?: number; height?: number; model?: 'flux' | 'turbo' | 'kontext' }) => Promise<{ ok: boolean; url: string; path: string; prompt: string }>;
+      generateImage: (params: { prompt: string; filename?: string; width?: number; height?: number; providerId?: string; modelId?: string; model?: string; tags?: string }) => Promise<{ ok: boolean; id?: number; url?: string; path?: string; prompt?: string; provider?: string; model?: string; error?: string }>;
       listArticleImages: (articleId: number) => Promise<ArticleImage[]>;
       generateImageFor: (p: { articleId: number; placeholderId: string; prompt: string; tags?: string; aspect?: string; useCraft?: boolean; craftCli?: string; providerId?: string; modelId?: string }) => Promise<{ ok: boolean; url: string; path?: string; prompt: string; imageId: number; provider?: string; model?: string }>;
       uploadImageFor: (p: { articleId: number; placeholderId: string; dataUrl: string; tags?: string }) => Promise<{ ok: boolean; url: string; imageId: number }>;

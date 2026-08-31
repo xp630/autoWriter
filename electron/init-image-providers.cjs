@@ -15,28 +15,10 @@ function initImageProviders() {
 
   console.log('📦 初始化图片 Provider...');
 
-  // 1. Pollinations（免费，无需 API Key）
-  db.prepare(`
-    INSERT INTO image_providers (provider_id, name, base_url, priority, extra_config)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(
-    'pollinations',
-    'Pollinations.ai（免费）',
-    'https://image.pollinations.ai',
-    1,
-    JSON.stringify({ timeout: 120000 })
-  );
-
-  // Pollinations 模型
-  db.prepare(`
-    INSERT INTO image_models (provider_id, model_id, name, is_default, extra_params)
-    VALUES (?, ?, ?, ?, ?)
-  `).run('pollinations', 'flux', 'Flux（质量优先）', 1, JSON.stringify({ width: 1200, height: 800 }));
-
-  db.prepare(`
-    INSERT INTO image_models (provider_id, model_id, name, is_default, extra_params)
-    VALUES (?, ?, ?, ?, ?)
-  `).run('pollinations', 'flux-schnell', 'Flux Schnell（速度优先）', 0, JSON.stringify({ width: 1200, height: 800 }));
+  // Pollinations（免费通道）已于 2026-08-31 从默认配置中移除：
+  // owner 实测质量不可接受（"简直就是垃圾"）。
+  // 架构仍支持免费 provider——以后出现高质量免费源，在这里加 provider 行 +
+  // image-providers.cjs dispatch case 即可回来，无需其他改动。
 
   // 2. Tensor.art（使用 OpenAPI）
   db.prepare(`
@@ -68,8 +50,8 @@ function initImageProviders() {
 
   console.log('✅ Provider 初始化完成');
   console.log('\n支持的 Provider:');
-  console.log('  1. Pollinations（免费，无需配置）');
-  console.log('  2. Tensor.art（需在设置页填写 Access Token）');
+  console.log('  1. Tensor.art（需在设置页填写 Access Token）');
+  console.log('  （免费通道按需添加：曾有 Pollinations，因质量下线）');
 }
 
 // 如果直接运行此脚本

@@ -311,6 +311,9 @@ test('写文章页：首次引导横幅显示，点了「知道了」后 localSt
 });
 
 test('写文章页：有草稿时显示「清空草稿」按钮，点击后清掉所有字段并消失', async () => {
+  // 测试隔离：显式清掉前序用例可能留下的草稿，不依赖"碰巧干净"
+  await ctx.window.evaluate(() => localStorage.removeItem('aw_draft'));
+  await ctx.window.reload({ waitUntil: 'domcontentloaded' });
   await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
   await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
 
@@ -356,7 +359,15 @@ test('写文章页：草稿恢复后，分析/策略也一起回来（修复不�
       channel: 'wechat', style: 'tech', length: 'medium', needImage: true,
       analysis: { summary: '上次 AI 跑出来的 7 维分析' },
       analysisId: 42,
-      strategy: { strategyId: 7, title: '上次采纳的策略' },
+      // 真实形状：StrategySelection（外层 selection 信息 + 内层 strategy 行）
+      strategy: {
+        strategyId: 7, mode: 'topic',
+        strategy: {
+          topic: '上次写的主题', title: '上次采纳的策略', core_point: '观点句',
+          belief_before: '读者旧认知', belief_after: '读后新认知', belief_source: '评论区常见说法',
+          evidence_needed: [{ item: '一个数据', status: 'ready' }],
+        },
+      },
       angles: [{ title: '上次角度 1' }, { title: '上次角度 2' }],
       step: 1,
       savedAt: Date.now(),
@@ -364,14 +375,14 @@ test('写文章页：草稿恢复后，分析/策略也一起回来（修复不�
   });
   await ctx.window.reload({ waitUntil: 'domcontentloaded' });
   await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
-  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+  // seed 里 step:1 → 恢复后直接落在 Step 2（编辑大纲）
+  await expect(ctx.window.locator('text=Step 2 — 编辑大纲').first()).toBeVisible({ timeout: 5000 });
 
-  // 参考文应已就绪
+  // 返回 Step 1：参考文与主题应完整恢复（"不对称修复"的核心断言）
+  await ctx.window.locator('button:has-text("返回 Step 1")').first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
   await expect(ctx.window.locator('text=参考文已就绪')).toBeVisible();
-  // 主题框恢复
-  await expect(ctx.window.locator('.textarea').first()).toHaveValue('上次写的主题');
-  // 应自动进到 Step 2（因 draft.step=1）
-  await expect(ctx.window.locator('text=Step 2')).toBeVisible({ timeout: 5000 });
+  await expect(ctx.window.locator('textarea.textarea').first()).toHaveValue('上次写的主题');
 });
 
 test('Quick Publish v4：四步流水线渲染 + 草稿排版改判 + 配图步无生成按钮', async () => {
@@ -391,13 +402,21 @@ test('Quick Publish v4：四步流水线渲染 + 草稿排版改判 + 配图步�
   await expect(ctx.window.locator('.qp-textarea')).toBeVisible();
 });
 
-test('Quick Publish 配图步：没有 AI 生成按钮（免费生图已下线）', async () => {
+test('Quick Publish v5 配图步：生图走 Provider，无可用 provider 时给引导而不是烂图', async () => {
   await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
   await expect(ctx.window.locator('.qp-steps')).toBeVisible({ timeout: 5000 });
-  // 直接跳到配图步
   await ctx.window.locator('.qp-step').filter({ hasText: '配图' }).click();
-  await expect(ctx.window.locator('.qp-panel')).toBeVisible();
-  expect(await ctx.window.locator('.qp-panel button:has-text("生成")').count()).toBe(0);
-  // 图库选择入口存在
+  // 生成按钮存在（生图功能保留），但必须经 provider
+  await expect(ctx.window.locator('button:has-text("生成封面")').first()).toBeVisible();
   await expect(ctx.window.locator('button:has-text("从图库选")').first()).toBeVisible();
+  // 契合文章：提示词自动含观点句内容（先回第 1 步粘草稿）
+  await ctx.window.locator('.qp-step').filter({ hasText: '润色' }).click();
+  await ctx.window.locator('.qp-textarea').fill('# 我以为自己没有观点\n\n**观察背后，藏着你所有的观点。**');
+  await ctx.window.locator('.qp-step').filter({ hasText: '配图' }).click();
+  const promptBox = ctx.window.locator('.qp-panel textarea').first();
+  await expect(promptBox).not.toHaveValue('', { timeout: 5000 });
+  expect(await promptBox.inputValue()).toContain('我以为自己没有观点');
+  // e2e 环境：tensorart 已 seed 但无 Token → 点生成应得到"填 Token"引导
+  await ctx.window.locator('button:has-text("生成封面")').first().click();
+  await expect(ctx.window.locator('#aw-toast')).toContainText('Token', { timeout: 15000 });
 });
