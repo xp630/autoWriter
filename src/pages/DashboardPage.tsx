@@ -322,11 +322,13 @@ export function DashboardPage({ onNavigate }: Props) {
         {season && episodes.length > 0 && (
           <div className="season-episode-list">
             {episodes.map((ep) => (
-              <div key={ep.id} className="season-episode-row" onClick={() => onNavigate('write')} role="button" tabIndex={0}>
+              <div key={ep.id} className="season-episode-row" onClick={() => onNavigate(`episode:${ep.id}`)} role="button" tabIndex={0}
+                   onKeyDown={(e) => { if (e.key === 'Enter') onNavigate(`episode:${ep.id}`); }}>
                 <div className="season-ep-side">
                   <span className="season-ep-index">{ep.order_in_season || '·'}</span>
                 </div>
                 <div className="season-ep-main">
+                  <div className="season-ep-edit-hint">点击编辑 · 改标题与状态</div>
                   <div className="season-ep-title">
                     {ep.title || (ep.observation ? ep.observation.slice(0, 22) + '…' : '（未命名 Episode）')}
                   </div>

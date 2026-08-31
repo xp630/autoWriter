@@ -2761,3 +2761,5 @@ select:focus-visible {
 .ep-status-row { margin-top: 10px; gap: 8px; align-items: center; flex-wrap: wrap; }
 .ep-status-select { width: 110px; font-size: 13px; padding: 6px 8px; }
 .ep-url-input { flex: 1; min-width: 220px; font-size: 12px; padding: 6px 8px; }
+.season-ep-edit-hint { font-size: 10.5px; color: var(--muted); margin-top: 2px; letter-spacing: .02em; }
+.season-episode-row:hover .season-ep-edit-hint { color: #047857; }
