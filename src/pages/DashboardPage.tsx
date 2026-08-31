@@ -83,6 +83,8 @@ export function DashboardPage({ onNavigate }: Props) {
   // 观察卡（生活账）
   const [cards, setCards] = useState<ObservationCard[]>([]);
   const [capture, setCapture] = useState('');
+  // Idea Interview：对着一张卡往下挖（观察已在，只问停顿与一句话）
+  const [iv, setIv] = useState<{ card: ObservationCard; stage: 'question' | 'insight'; value: string } | null>(null);
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -169,6 +171,23 @@ export function DashboardPage({ onNavigate }: Props) {
       if (r?.ok) { setCapture(''); showToast('🌱 已记下这张卡'); setReloadTick((t) => t + 1); }
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
+  const startIv = (c: ObservationCard) => setIv({ card: c, stage: 'question', value: c.question || '' });
+  const submitIv = async () => {
+    if (!iv || !window.electronAPI?.saveCard) return;
+    const val = iv.value.trim();
+    try {
+      if (iv.stage === 'question') {
+        if (val) { await window.electronAPI.saveCard({ id: iv.card.id, question: val }); }
+        setIv({ ...iv, stage: 'insight', value: iv.card.insight || '' });
+        setReloadTick((t) => t + 1);
+      } else {
+        if (val) { await window.electronAPI.saveCard({ id: iv.card.id, insight: val }); }
+        setIv(null);
+        showToast(val ? '🌱 这张卡有观点了' : '已记下——没观点也合法，继续养');
+        setReloadTick((t) => t + 1);
+      }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
   const growCard = async (id: number) => {
     if (!window.electronAPI?.growCard) return;
     try {
@@ -253,6 +272,7 @@ export function DashboardPage({ onNavigate }: Props) {
                 </div>
                 <div className="obs-side">
                   <span className="obs-date">{new Date(c.created_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
+                  <button type="button" className="btn btn-ghost btn-sm iv-open" onClick={() => startIv(c)} title="对着这张卡做两问访谈：什么让你停顿？最想说什么？">Idea Interview</button>
                   {c.status === 'grown'
                     ? <span className="obs-grown-tag">🌳 {c.episode_title || '已长成 EP'}</span>
                     : <button type="button" className="btn btn-ghost btn-sm" onClick={() => void growCard(c.id)} title="用这张卡开一个新的 Episode">长成 EP</button>}
@@ -490,6 +510,38 @@ export function DashboardPage({ onNavigate }: Props) {
             ))}
           </div>
         </Card>
+      )}
+
+      {iv && (
+        <div className="iv-mask" onClick={() => setIv(null)}>
+          <div className="iv-card" onClick={(e) => e.stopPropagation()}>
+            <div className="iv-brand">IDEA INTERVIEW · 对着这张卡</div>
+            <div className="iv-obs">「{iv.card.observation}」</div>
+            {iv.stage === 'question' ? (
+              <>
+                <div className="iv-q">这个观察里，是什么让你停顿了三秒？</div>
+                <textarea className="textarea" rows={3} autoFocus value={iv.value}
+                  onChange={(e) => setIv({ ...iv, value: e.target.value })}
+                  placeholder="一个疑问、一次迟疑、一个『真的是这样吗』" />
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIv({ ...iv, stage: 'insight', value: iv.card.insight || '' })}>跳过</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void submitIv()}>下一步 <ArrowRight size={13} /></button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="iv-q">那——你最想说的一句话是什么？</div>
+                <textarea className="textarea" rows={3} autoFocus value={iv.value}
+                  onChange={(e) => setIv({ ...iv, value: e.target.value })}
+                  placeholder="一句就够。没有也正常——写下『还没想好』，这张卡继续养" />
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIv(null)}>先不聊</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void submitIv()}>存入这张卡</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </>
   );
