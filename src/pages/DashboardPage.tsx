@@ -10,6 +10,7 @@ import { showToast } from '../toast';
 import { useActiveProfile } from '../hooks/useActiveProfile';
 import {
   ArrowRight,
+  Feather,
   Bot,
   Calendar,
   CheckCircle2,
@@ -27,7 +28,7 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
-import type { Article, Episode, QueueSnapshot, Season } from '../types';
+import type { Article, Episode, ObservationCard, QueueSnapshot, Season } from '../types';
 
 interface Props {
   onNavigate: (page: string) => void;
@@ -78,6 +79,9 @@ export function DashboardPage({ onNavigate }: Props) {
   const [season, setSeason] = useState<Season | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  // 观察卡（生活账）
+  const [cards, setCards] = useState<ObservationCard[]>([]);
+  const [capture, setCapture] = useState('');
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -101,6 +105,11 @@ export function DashboardPage({ onNavigate }: Props) {
         }
         // 设置（从 localStorage 读）
         if (!cancelled) setSettings(getAgentSettings());
+        // 观察卡：最近 20 张
+        if (window.electronAPI?.listCards) {
+          const cs = await window.electronAPI.listCards({ profileId: profile.id, limit: 20 });
+          if (!cancelled) setCards(Array.isArray(cs) ? cs : []);
+        }
         // P0 Season + Episode：创作主线
         if (window.electronAPI?.listSeasons) {
           const seasons = await window.electronAPI.listSeasons({ profileId: profile.id });
@@ -150,6 +159,29 @@ export function DashboardPage({ onNavigate }: Props) {
       if (r?.ok) { showToast('✅ Season 1 已开启'); setReloadTick((t) => t + 1); }
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
+  const saveCapture = async () => {
+    const text = capture.trim();
+    if (!text) { showToast('❌ 写点什么再存——观察卡唯一必填就是这句话'); return; }
+    if (!window.electronAPI?.saveCard) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      const r = await window.electronAPI.saveCard({ observation: text, profileId: profile.id, season_id: season?.id ?? null });
+      if (r?.ok) { setCapture(''); showToast('🌱 已记下这张卡'); setReloadTick((t) => t + 1); }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  const growCard = async (id: number) => {
+    if (!window.electronAPI?.growCard) return;
+    try {
+      const r = await window.electronAPI.growCard(id);
+      if (r?.ok && r.episodeId) { showToast(r.already ? '这张卡已经长成 EP 了' : '✅ 已长成新的 Episode'); setReloadTick((t) => t + 1); }
+      else if (r?.error) showToast('❌ ' + r.error);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  const deleteCard = async (id: number) => {
+    if (!window.confirm('删掉这张观察卡？')) return;
+    if (!window.electronAPI?.deleteCard) return;
+    await window.electronAPI.deleteCard(id);
+    showToast('🗑 已删除'); setReloadTick((t) => t + 1);
+  };
   const createEpisode = async () => {
     if (!season || !window.electronAPI?.saveEpisode) { showToast('❌ IPC 未就绪'); return; }
     try {
@@ -193,6 +225,43 @@ export function DashboardPage({ onNavigate }: Props) {
           </button>
         </div>
       )}
+
+      {/* ===== 观察卡（生活账）：一秒捕获，先有卡再谈 EP ===== */}
+      <Card title="今日观察" icon={Feather} accent="insight">
+        <div className="obs-capture">
+          <textarea
+            className="textarea"
+            rows={2}
+            placeholder="今天你观察到了什么？一句话就够——回车保存（⇧⏎换行）"
+            value={capture}
+            onChange={(e) => setCapture(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveCapture(); } }}
+          />
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCapture()} disabled={!capture.trim()}>
+            <Feather size={13} /> 存这张卡
+          </button>
+        </div>
+        {cards.length > 0 && (
+          <div className="obs-feed">
+            {cards.slice(0, 6).map((c) => (
+              <div key={c.id} className="obs-row">
+                <span className={`obs-dot ${c.status === 'grown' ? 'grown' : 'raw'}`} />
+                <div className="obs-main">
+                  <div className="obs-text">{c.observation}</div>
+                  {c.insight && <div className="obs-insight">→ {c.insight}</div>}
+                </div>
+                <div className="obs-side">
+                  <span className="obs-date">{new Date(c.created_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
+                  {c.status === 'grown'
+                    ? <span className="obs-grown-tag">🌳 {c.episode_title || '已长成 EP'}</span>
+                    : <button type="button" className="btn btn-ghost btn-sm" onClick={() => void growCard(c.id)} title="用这张卡开一个新的 Episode">长成 EP</button>}
+                  <button type="button" className="obs-del" title="删除" onClick={() => void deleteCard(c.id)}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* ===== P0 Week 1：创作主线（Season + Episode）=====
           第一层卡片：用户打开 app 第一眼看到的不再是"新建文章"，而是他的创作主线。 */}

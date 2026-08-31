@@ -552,6 +552,68 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // ===== 观察卡（生活账；2026-08-31 与 Episode 分离定稿）=====
+  ipcMain.handle('card:list', (_e, { status, episodeId, profileId, limit = 50 } = {}) => {
+    let sql = `SELECT o.*, e.title AS episode_title
+               FROM observations o
+               LEFT JOIN episodes e ON o.episode_id = e.id
+               WHERE 1=1`;
+    const params = [];
+    if (status && status !== 'all') { sql += ' AND o.status=?'; params.push(status); }
+    if (episodeId) { sql += ' AND o.episode_id=?'; params.push(episodeId); }
+    const pid = String(profileId || '');
+    if (pid) { sql += ' AND (o.profile_id = ? OR o.profile_id = \'\' OR o.profile_id IS NULL)'; params.push(pid); }
+    sql += ' ORDER BY o.created_at DESC LIMIT ?';
+    params.push(Math.max(1, Math.min(200, Number(limit) || 50)));
+    return db.prepare(sql).all(...params);
+  });
+
+  ipcMain.handle('card:save', (_e, params = {}) => {
+    const { id, observation, question, insight, season_id, profileId } = params;
+    const now = new Date().toISOString();
+    if (id) {
+      const cur = db.prepare('SELECT * FROM observations WHERE id=?').get(id);
+      if (!cur) throw new Error('卡片不存在');
+      db.prepare(`UPDATE observations SET observation=?, question=?, insight=?, season_id=?, updated_at=? WHERE id=?`)
+        .run(
+          observation !== undefined ? observation : cur.observation,
+          question !== undefined ? question : cur.question,
+          insight !== undefined ? insight : cur.insight,
+          season_id !== undefined ? season_id : cur.season_id,
+          now, id,
+        );
+      return { ok: true, id };
+    }
+    const text = String(observation || '').trim();
+    if (!text) throw new Error('观察不能为空——这就是卡片的唯一必填');
+    const r = db.prepare(`INSERT INTO observations (observation, question, insight, status, season_id, profile_id, created_at, updated_at)
+      VALUES (?, ?, ?, 'raw', ?, ?, ?, ?)`)
+      .run(text, question || '', insight || '', season_id || null, profileId || '', now, now);
+    return { ok: true, id: r.lastInsertRowid };
+  });
+
+  ipcMain.handle('card:delete', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare('DELETE FROM observations WHERE id=?').run(id);
+    return { ok: true };
+  });
+
+  // 长成 EP：建一集（标题取观点/观察句），卡片标 grown 并回链
+  ipcMain.handle('card:grow', (_e, id) => {
+    const card = db.prepare('SELECT * FROM observations WHERE id=?').get(id);
+    if (!card) throw new Error('卡片不存在');
+    if (card.episode_id) return { ok: true, episodeId: card.episode_id, already: true };
+    const season = db.prepare(`SELECT id FROM seasons WHERE status='active' ORDER BY created_at DESC LIMIT 1`).get();
+    const title = (String(card.insight || card.observation || '未命名').replace(/[*#>]/g, '').trim()).slice(0, 30);
+    const order = (db.prepare('SELECT COALESCE(MAX(order_in_season),0) m FROM episodes WHERE season_id=?').get(season ? season.id : null).m) + 1;
+    const now = new Date().toISOString();
+    const ep = db.prepare(`INSERT INTO episodes (season_id, title, status, observation, question, insight, draft, order_in_season, profile_id, created_at, updated_at)
+      VALUES (?, ?, 'observation', '', '', '', '', ?, ?, ?, ?)`)
+      .run(season ? season.id : null, title, order, card.profile_id || '', now, now);
+    db.prepare(`UPDATE observations SET status='grown', episode_id=?, updated_at=? WHERE id=?`).run(ep.lastInsertRowid, now, id);
+    return { ok: true, episodeId: ep.lastInsertRowid };
+  });
+
   // 更新文章（用于保存润色结果）
   ipcMain.handle('article:update', (_e, { id, content }) => {
     if (!id) throw new Error('缺少 id');

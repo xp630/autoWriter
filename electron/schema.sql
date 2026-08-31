@@ -276,3 +276,24 @@ CREATE INDEX IF NOT EXISTS idx_episodes_season ON episodes(season_id, order_in_s
 CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_episodes_profile ON episodes(profile_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_slug ON episodes(slug) WHERE slug != '';
+
+-- ============================================================================
+-- 2026-08-31 owner 定稿：观察卡与 Episode 分离
+--   观察卡 = 生活账（每天，一秒捕获，N 张）；Episode = 出版账（双周，一集）
+--   N 张卡 : 0..1 个 EP——卡"长成"EP 时才回填 episode_id
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS observations (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation  TEXT NOT NULL DEFAULT '',        -- Q1 必填：今天观察到什么
+  question     TEXT DEFAULT '',                 -- Q2 可空：什么让我停顿了
+  insight      TEXT DEFAULT '',                 -- Q3 可空：可能观点
+  status       TEXT DEFAULT 'raw',              -- raw / grown
+  episode_id   INTEGER,                         -- 长成哪一集（可空）
+  season_id    INTEGER,
+  profile_id   TEXT DEFAULT '',
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_obs_status  ON observations(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_obs_episode ON observations(episode_id);
+CREATE INDEX IF NOT EXISTS idx_obs_profile ON observations(profile_id, created_at DESC);

@@ -131,6 +131,12 @@ const EXPECTED_CHANNELS: Array<[string, string]> = [
   ['episode:save', 'P0：新建/更新 Episode（observation/question/insight/draft）'],
   ['episode:delete', 'P0：删除 Episode'],
   ['episode:linkArticle', 'P0：把 Article 关联到 Episode'],
+
+  // ===== 观察卡（生活账，与 Episode 出版账分离）=====
+  ['card:list', '卡：列观察卡（status/episodeId 过滤）'],
+  ['card:save', '卡：新建/更新观察卡（observation 必填）'],
+  ['card:delete', '卡：删除观察卡'],
+  ['card:grow', '卡：把观察卡长成一个新 Episode'],
   ['analysis:delete', '删除分析'],
   ['analysis:angles', '生成创作方向（旧名，已内联到 strategy:generate）'],
   ['angles:adopt', '采纳某个创作方向（旧名，已内联到 strategy:adopt）'],
@@ -207,6 +213,10 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   ['episode:get', [1], true],
   ['episode:delete', [999999]],
   ['episode:linkArticle', [{}]],
+  ['card:save', [{}]],
+  ['card:list', [{}, true]],
+  ['card:delete', [999999]],
+  ['card:grow', [999999]],
   ['test:list-channels', []],
   ['test:userdata', []],
 ];

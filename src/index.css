@@ -2730,3 +2730,20 @@ select:focus-visible {
 .qp-block-wrap:hover { outline-color: var(--line); }
 .qp-block-wrap > span > p, .qp-block-wrap > span > div { margin-top: 0; }
 .qp-block-wrap.is-box > span > p { background: #ecfdf5; border-left: 4px solid #10b981; padding: 12px 16px; border-radius: 4px; }
+
+/* ===== 观察卡（生活账）===== */
+.obs-capture { display: flex; gap: 8px; align-items: flex-start; }
+.obs-capture .textarea { flex: 1; font-size: 14px; }
+.obs-feed { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.obs-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; }
+.obs-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.obs-dot.raw { background: #f59e0b; }
+.obs-dot.grown { background: #10b981; }
+.obs-main { flex: 1; min-width: 0; }
+.obs-text { font-size: 13.5px; color: var(--ink); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-insight { font-size: 12px; color: #047857; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.obs-date { font-size: 11px; color: var(--muted); }
+.obs-grown-tag { font-size: 11.5px; color: #047857; }
+.obs-del { border: 0; background: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 0 2px; }
+.obs-del:hover { color: var(--danger, #ef4444); }

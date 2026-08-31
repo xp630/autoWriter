@@ -97,6 +97,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveEpisode:   (params) => ipcRenderer.invoke('episode:save', params),
   deleteEpisode: (id) => ipcRenderer.invoke('episode:delete', id),
   linkEpisodeToArticle: (params) => ipcRenderer.invoke('episode:linkArticle', params),
+  // 观察卡（生活账，与 EP 分离）
+  listCards:   (params) => ipcRenderer.invoke('card:list', params),
+  saveCard:    (params) => ipcRenderer.invoke('card:save', params),
+  deleteCard:  (id) => ipcRenderer.invoke('card:delete', id),
+  growCard:    (id) => ipcRenderer.invoke('card:grow', id),
   getStrategy: (id) => ipcRenderer.invoke('strategy:get', id),
   deleteStrategy: (id) => ipcRenderer.invoke('strategy:delete', id),
   setStrategyStatus: (params) => ipcRenderer.invoke('strategy:setStatus', params),

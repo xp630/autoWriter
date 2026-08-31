@@ -58,6 +58,10 @@ declare global {
       saveEpisode:  (params: Partial<Episode> & { profileId?: string }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
       deleteEpisode: (id: number) => Promise<{ ok: boolean }>;
       linkEpisodeToArticle: (params: { episodeId: number; articleId: number }) => Promise<{ ok: boolean }>;
+      listCards:  (params?: { status?: CardStatus | 'all'; episodeId?: number; profileId?: string; limit?: number }) => Promise<ObservationCard[]>;
+      saveCard:   (params: { id?: number; observation?: string; question?: string; insight?: string; season_id?: number | null; profileId?: string }) => Promise<{ ok: boolean; id: number }>;
+      deleteCard: (id: number) => Promise<{ ok: boolean }>;
+      growCard:   (id: number) => Promise<{ ok: boolean; episodeId?: number; already?: boolean; error?: string }>;
       scheduleArticle: (params: { id: number; scheduled_at: string }) => Promise<{ ok: boolean }>;
       unscheduleArticle: (id: number) => Promise<{ ok: boolean }>;
       publishArticle: (id: number) => Promise<{ ok: boolean }>;
@@ -591,6 +595,23 @@ export interface Season {
   updated_at: string;
   /** 顺手算的：本 season 下的 episode 数（来自 season:get）*/
   episode_count?: number;
+}
+
+export type CardStatus = 'raw' | 'grown';
+
+/** 观察卡：生活账。一天可多张；长成 EP 时才挂 episode_id */
+export interface ObservationCard {
+  id: number;
+  observation: string;
+  question?: string;
+  insight?: string;
+  status: CardStatus;
+  episode_id?: number | null;
+  episode_title?: string;
+  season_id?: number | null;
+  profile_id?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export type EpisodeStatus =

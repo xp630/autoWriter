@@ -111,6 +111,19 @@ function getDb(opts = {}) {
         ensureIdx('CREATE INDEX IF NOT EXISTS idx_article_episode ON article_drafts(episode_id)');
       }
 
+      // 2026-08-31 观察卡/EP 分离迁移：episodes 上的旧三字段搬进 observations 并清空
+      try {
+        const legacy = db.prepare(`SELECT id, observation, question, insight, season_id, profile_id, created_at
+                                   FROM episodes WHERE observation != '' OR question != '' OR insight != ''`).all();
+        for (const ep of legacy) {
+          db.prepare(`INSERT INTO observations (observation, question, insight, status, episode_id, season_id, profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, 'grown', ?, ?, ?, ?, ?)`)
+            .run(ep.observation || '', ep.question || '', ep.insight || '', ep.id, ep.season_id || null, ep.profile_id || '', ep.created_at, new Date().toISOString());
+          db.prepare(`UPDATE episodes SET observation = '', question = '', insight = '' WHERE id = ?`).run(ep.id);
+        }
+        if (legacy.length > 0) console.log(`[db] 已把 ${legacy.length} 条 Episode 旧观察字段迁为观察卡（分离定稿）`);
+      } catch (e) { console.warn('[db] 观察卡迁移失败:', e.message); }
+
       // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
       // 兼容两代旧结构：
       //   _legacy_content_angles （P0-1a/P0-2 中间态：angles_json + adopted_index + article_id）
