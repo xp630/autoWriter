@@ -83,8 +83,16 @@ export function DashboardPage({ onNavigate }: Props) {
   // 观察卡（生活账）
   const [cards, setCards] = useState<ObservationCard[]>([]);
   const [capture, setCapture] = useState('');
-  // Idea Interview：对着一张卡往下挖（观察已在，只问停顿与一句话）
-  const [iv, setIv] = useState<{ card: ObservationCard; stage: 'question' | 'insight'; value: string } | null>(null);
+  // Idea Interview v2：对话流（AI 追问 ≤3 轮；AI 不可用降级固定两问）
+  const [iv, setIv] = useState<{
+    card: ObservationCard;
+    msgs: Array<{ who: 'ai' | 'me'; text: string }>;
+    answers: string[];
+    stage: 'ask' | 'confirm' | 'manual';
+    value: string;
+    busy: boolean;
+    candidate: string;
+  } | null>(null);
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -171,23 +179,53 @@ export function DashboardPage({ onNavigate }: Props) {
       if (r?.ok) { setCapture(''); showToast('🌱 已记下这张卡'); setReloadTick((t) => t + 1); }
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
-  const startIv = (c: ObservationCard) => setIv({ card: c, stage: 'question', value: c.question || '' });
-  const submitIv = async () => {
+  const IV_OPENER = '这个观察里，是什么让你停顿了三秒？';
+  const IV_FALLBACK_Q2 = '那——你最想说的一句话是什么？';
+  const startIv = (c: ObservationCard) =>
+    setIv({ card: c, msgs: [{ who: 'ai', text: c.question ? `上次你停顿在：「${c.question}」——现在最想说什么？` : IV_OPENER }],
+            answers: [], stage: 'ask', value: '', busy: false, candidate: '' });
+
+  /** 存访谈成果：question=第一答（停顿），insight=确认过的观点句 */
+  const persistIv = async (question: string, insight: string) => {
     if (!iv || !window.electronAPI?.saveCard) return;
-    const val = iv.value.trim();
     try {
-      if (iv.stage === 'question') {
-        if (val) { await window.electronAPI.saveCard({ id: iv.card.id, question: val }); }
-        setIv({ ...iv, stage: 'insight', value: iv.card.insight || '' });
-        setReloadTick((t) => t + 1);
-      } else {
-        if (val) { await window.electronAPI.saveCard({ id: iv.card.id, insight: val }); }
-        setIv(null);
-        showToast(val ? '🌱 这张卡有观点了' : '已记下——没观点也合法，继续养');
-        setReloadTick((t) => t + 1);
-      }
+      await window.electronAPI.saveCard({ id: iv.card.id, question: question || undefined, insight });
+      showToast(insight ? '🌱 这张卡有观点了' : '已记下——没观点也合法，继续养');
+      setIv(null); setReloadTick((t) => t + 1);
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
+
+  const ivSend = async () => {
+    if (!iv || iv.busy) return;
+    const v = iv.value.trim();
+    if (!v) return;
+    const answers = [...iv.answers, v];
+    const msgs = [...iv.msgs, { who: 'me' as const, text: v }];
+    // 收尾保护：三轮答满还没收敛 → 拿最后一答当候选，进确认
+    if (answers.length >= 3) {
+      setIv({ ...iv, answers, msgs, value: '', stage: 'confirm', candidate: v });
+      return;
+    }
+    setIv({ ...iv, answers, msgs, value: '', busy: true });
+    const settings = getAgentSettings();
+    const ivCli = (window as any).__IV_CLI__ || settings.cli;   // e2e 测试缝：注入不存在的 cli 走降级链
+    let r = await window.electronAPI?.interviewTurn?.({ cli: ivCli, model: settings.model, observation: iv.card.observation, answers });
+    if (!r?.ok) {
+      // AI 不可用：降级固定两问——第一问答完，本地补第二问
+      if (answers.length === 1) {
+        setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: IV_FALLBACK_Q2 }], value: '', busy: false, stage: 'ask' });
+      } else {
+        setIv({ ...iv, answers, msgs, value: '', busy: false, stage: 'confirm', candidate: answers[answers.length - 1] });
+      }
+      return;
+    }
+    if (r.type === 'insight') {
+      setIv({ ...iv, answers, msgs, value: '', busy: false, stage: 'confirm', candidate: r.text || '' });
+    } else {
+      setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text || IV_FALLBACK_Q2 }], value: '', busy: false, stage: 'ask' });
+    }
+  };
+
   const growCard = async (id: number) => {
     if (!window.electronAPI?.growCard) return;
     try {
@@ -517,28 +555,47 @@ export function DashboardPage({ onNavigate }: Props) {
       {iv && (
         <div className="iv-mask" onClick={() => setIv(null)}>
           <div className="iv-card" onClick={(e) => e.stopPropagation()}>
-            <div className="iv-brand">IDEA INTERVIEW · 对着这张卡</div>
+            <div className="iv-brand">IDEA INTERVIEW · 只对着这张卡</div>
             <div className="iv-obs">「{iv.card.observation}」</div>
-            {iv.stage === 'question' ? (
+            <div className="iv-msgs">
+              {iv.msgs.map((m, i) => (
+                <div key={i} className={`iv-msg ${m.who}`}>{m.text}</div>
+              ))}
+              {iv.busy && <div className="iv-msg ai iv-thinking">对方正在琢磨怎么问你…</div>}
+            </div>
+            {iv.stage === 'ask' && (
               <>
-                <div className="iv-q">这个观察里，是什么让你停顿了三秒？</div>
-                <textarea className="textarea" rows={3} autoFocus value={iv.value}
+                <textarea className="textarea" rows={2} autoFocus value={iv.value}
                   onChange={(e) => setIv({ ...iv, value: e.target.value })}
-                  placeholder="一个疑问、一次迟疑、一个『真的是这样吗』" />
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ivSend(); } }}
+                  placeholder="一句话回答，回车送出去。说'不知道'也是合法回答" />
                 <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIv({ ...iv, stage: 'insight', value: iv.card.insight || '' })}>跳过</button>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void submitIv()}>下一步 <ArrowRight size={13} /></button>
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => { void persistIv(iv.answers[0] || '', ''); }}>先不聊</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void ivSend()} disabled={!iv.value.trim() || iv.busy}>
+                    下一步 <ArrowRight size={13} />
+                  </button>
                 </div>
               </>
-            ) : (
+            )}
+            {iv.stage === 'confirm' && (
               <>
-                <div className="iv-q">那——你最想说的一句话是什么？</div>
-                <textarea className="textarea" rows={3} autoFocus value={iv.value}
-                  onChange={(e) => setIv({ ...iv, value: e.target.value })}
-                  placeholder="一句就够。没有也正常——写下『还没想好』，这张卡继续养" />
+                <div className="iv-q">这就是你要说的那句话吗？</div>
+                {iv.candidate && <div className="iv-candidate">「{iv.candidate}」</div>}
                 <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIv(null)}>先不聊</button>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void submitIv()}>存入这张卡</button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setIv({ ...iv, stage: 'manual', value: iv.candidate })}>我自己改</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void persistIv(iv.answers[0] || '', iv.candidate)}>存入这张卡</button>
+                </div>
+              </>
+            )}
+            {iv.stage === 'manual' && (
+              <>
+                <textarea className="textarea" rows={2} autoFocus value={iv.value}
+                  onChange={(e) => setIv({ ...iv, value: e.target.value })}
+                  placeholder="用你自己的话，一句就够" />
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIv({ ...iv, stage: 'confirm' })}>返回</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void persistIv(iv.answers[0] || '', iv.value.trim())}>存入这张卡</button>
                 </div>
               </>
             )}

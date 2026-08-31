@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveCard:    (params) => ipcRenderer.invoke('card:save', params),
   deleteCard:  (id) => ipcRenderer.invoke('card:delete', id),
   growCard:    (id) => ipcRenderer.invoke('card:grow', id),
+  interviewTurn: (params) => ipcRenderer.invoke('interview:turn', params),
   getStrategy: (id) => ipcRenderer.invoke('strategy:get', id),
   deleteStrategy: (id) => ipcRenderer.invoke('strategy:delete', id),
   setStrategyStatus: (params) => ipcRenderer.invoke('strategy:setStatus', params),

@@ -2763,3 +2763,10 @@ select:focus-visible {
 .ep-url-input { flex: 1; min-width: 220px; font-size: 12px; padding: 6px 8px; }
 .season-ep-edit-hint { font-size: 10.5px; color: var(--muted); margin-top: 2px; letter-spacing: .02em; }
 .season-episode-row:hover .season-ep-edit-hint { color: #047857; }
+/* Idea Interview v2：对话流 */
+.iv-msgs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 40vh; overflow: auto; }
+.iv-msg { font-size: 14px; line-height: 1.6; padding: 8px 12px; border-radius: 10px; max-width: 92%; }
+.iv-msg.ai { background: var(--bg-soft); color: var(--ink); align-self: flex-start; border-bottom-left-radius: 3px; }
+.iv-msg.me { background: #ecfdf5; color: #065f46; align-self: flex-end; border-bottom-right-radius: 3px; }
+.iv-thinking { opacity: .55; font-style: italic; }
+.iv-candidate { font-size: 16px; font-weight: 700; color: #047857; background: #ecfdf5; border-left: 3px solid #10b981; padding: 10px 14px; border-radius: 4px; margin-top: 4px; line-height: 1.6; }

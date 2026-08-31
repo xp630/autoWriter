@@ -10,7 +10,7 @@ const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
-  buildImageRoleHint, saveAnalysis,
+  buildImageRoleHint, parseInterviewOutput, saveAnalysis,
   evidenceCoverage, normalizeEvidence, strategyGate,
 } = require('./analysis.cjs');
 
@@ -612,6 +612,27 @@ function registerIpc() {
       .run(season ? season.id : null, title, order, card.profile_id || '', now, now);
     db.prepare(`UPDATE observations SET status='grown', episode_id=?, updated_at=? WHERE id=?`).run(ep.lastInsertRowid, now, id);
     return { ok: true, episodeId: ep.lastInsertRowid };
+  });
+
+  // ===== Idea Interview 对话流：一问一答，AI 决定追问还是收尾（≤3 轮） =====
+  ipcMain.handle('interview:turn', async (_e, { cli, model, observation, answers = [] } = {}) => {
+    if (!observation || !String(observation).trim()) return { ok: false, error: '缺少观察' };
+    if (!cli) return { ok: false, error: '未选择 Agent CLI' };
+    const MAX_ROUNDS = 3;
+    const roundsLeft = Math.max(0, MAX_ROUNDS - answers.length);
+    const transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
+    let prompt;
+    try {
+      prompt = renderPrompt('interview', { roundsLeft: String(roundsLeft), observation: String(observation), transcript });
+    } catch (err) { return { ok: false, error: err.message }; }
+    try {
+      const { promise } = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
+      const { content } = await promise;
+      const parsed = parseInterviewOutput(content);
+      return { ok: true, ...parsed, roundsLeft };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
   });
 
   // 更新文章（用于保存润色结果）

@@ -660,6 +660,27 @@ const GOAL_IMAGE_USE = {
   '商业转化': '需求场景 + 解决后的对比，不要产品硬图',
 };
 
+
+/**
+ * 解析访谈输出：两行契约（FOLLOWUP/INSIGHT + 文本）。
+ * 容错：拿不准时按"含问号=追问"降级，绝不让访谈流因格式崩掉。
+ * @returns {{type:'question'|'insight', text:string}}
+ */
+function parseInterviewOutput(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return { type: 'question', text: '那——你最想说的一句话是什么？' };
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  let head = lines[0] || '';
+  let body = (lines[1] || '').replace(/^[-—:：]\s*/, '');
+  if (!body) { body = head.replace(/^FOLLOWUP/i, '').replace(/^INSIGHT/i, '').replace(/^[:：]/, '').trim(); }
+  let type = null;
+  if (/^FOLLOWUP/i.test(head)) type = 'question';
+  else if (/^INSIGHT/i.test(head)) type = 'insight';
+  if (!type) type = /[?？]\s*$/.test(body) ? 'question' : 'insight';
+  if (type === 'insight') body = body.replace(/[?？]\s*$/, '');
+  return { type, text: body.slice(0, 160) };
+}
+
 module.exports = {
   parseAnalysisJson, parseAngleResult, parseStrategyResult,
   normalizeStrategy, normalizeAngle, normalizeStrategyValue,
@@ -668,5 +689,6 @@ module.exports = {
   DIFF_TYPES, DIFF_LABEL, DIFFICULTIES, FACT_RISKS,
   loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
+  parseInterviewOutput,
   buildImageRoleHint, inferImageRole, saveAnalysis,
 };

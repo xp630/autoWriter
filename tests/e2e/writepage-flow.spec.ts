@@ -421,35 +421,33 @@ test('Quick Publish v5 配图步：生图走 Provider，无可用 provider 时�
   await expect(ctx.window.locator('#aw-toast')).toContainText('Token', { timeout: 15000 });
 });
 
-test('观察卡 + Idea Interview：存卡→两问→观点回填', async () => {
+test('观察卡 + Idea Interview v2：对话流降级链（AI 不可用→固定两问→确认入库）', async () => {
+  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
   await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
   await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
 
-  // 一秒捕获：存一张只有一句观察的卡
   const cap = ctx.window.locator('.obs-capture textarea');
   const stamp = String(Date.now());
   await cap.fill(`测试卡 ${stamp}：电梯里听见两人讨论 AI 替代编剧`);
   await ctx.window.locator('button:has-text("存这张卡")').click();
-  await expect(ctx.window.locator('.obs-row').filter({ hasText: `测试卡 ${stamp}` }).first()).toBeVisible({ timeout: 6000 });
-
-  // 对这张卡发起 Idea Interview：Q2 停顿
   const row = ctx.window.locator('.obs-row').filter({ hasText: `测试卡 ${stamp}` }).first();
+  await expect(row).toBeVisible({ timeout: 6000 });
+
   await row.locator('button.iv-open').click();
-  await expect(ctx.window.locator('.iv-q')).toHaveText(/停顿了三秒/);
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停顿了三秒');
   await ctx.window.locator('.iv-card textarea').fill('他们讨论得那么兴奋，却没有一个人看过成片');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-
-  // Q3 一句话
-  await expect(ctx.window.locator('.iv-q')).toHaveText(/最想说的/);
+  // AI 不可用 → 本地降级第二问
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('最想说的', { timeout: 10000 });
   await ctx.window.locator('.iv-card textarea').fill('兴奋的人不看成片，就像写的人不问观点');
+  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
+  // 确认屏：候选=自己刚说的那句
+  await expect(ctx.window.locator('.iv-candidate')).toContainText('兴奋的人不看成片');
   await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
   await expect(ctx.window.locator('.iv-mask')).toHaveCount(0);
-
-  // 卡流出现"→ 观点"预览
   const card = ctx.window.locator('.obs-row').filter({ hasText: `测试卡 ${stamp}` }).first();
   await expect(card.locator('.obs-insight')).toContainText('兴奋的人不看成片');
 
-  // 清理测试卡（confirm 先注册再点）
   ctx.window.once('dialog', (d) => d.accept());
   await row.locator('.obs-del').click();
   await ctx.window.waitForTimeout(600);

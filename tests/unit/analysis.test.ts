@@ -171,3 +171,25 @@ describe('buildAnalysisContextBlock', () => {
     expect(block).toContain('b');
   });
 });
+describe('parseInterviewOutput（访谈两行契约）', () => {
+  const fn = require('../../electron/analysis.cjs').parseInterviewOutput;
+  it('FOLLOWUP 前缀 → question', () => {
+    const r = fn('FOLLOWUP\n为什么你觉得他们没看成片？');
+    expect(r.type).toBe('question');
+    expect(r.text).toContain('成片');
+  });
+  it('INSIGHT 前缀 → insight，去掉尾问号', () => {
+    const r = fn('INSIGHT\n兴奋的人不看成片。\n');
+    expect(r.type).toBe('insight');
+    expect(r.text).toBe('兴奋的人不看成片。');
+  });
+  it('无契约格式：含问号按追问，不含按观点', () => {
+    expect(fn('你到底想说什么？').type).toBe('question');
+    expect(fn('工具不背这个锅').type).toBe('insight');
+  });
+  it('空输入 → 安全兜底为固定第二问', () => {
+    const r = fn('');
+    expect(r.type).toBe('question');
+    expect(r.text).toContain('最想说的');
+  });
+});
