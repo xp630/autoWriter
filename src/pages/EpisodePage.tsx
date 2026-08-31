@@ -3,7 +3,7 @@
 // 这页让用户填 + 编辑 EP（之前只能在 Dashboard 看只读）
 // 设计原则（"不锁死"）：4 字段独立保存，不强求"全部填完才能写"
 import { useEffect, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Circle, FileText, Lightbulb, MessageCircle, Sparkles } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, FileText, Sparkles } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
@@ -31,9 +31,6 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   const [saving, setSaving] = useState(false);
   // 编辑缓冲区（避免每个按键就触发 IPC）
   const [title, setTitle] = useState('');
-  const [observation, setObservation] = useState('');
-  const [question, setQuestion] = useState('');
-  const [insight, setInsight] = useState('');
   const [draft, setDraft] = useState('');
   // 状态显式可控（planned→…→published/archived）：进页面取库值，用户改了以用户为准
   const [status, setStatus] = useState<EpisodeStatus>('observation');
@@ -48,9 +45,6 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
       if (!row) { showToast('❌ Episode 不存在'); onBack(); return; }
       setEp(row);
       setTitle(row.title || '');
-      setObservation(row.observation || '');
-      setQuestion(row.question || '');
-      setInsight(row.insight || '');
       setDraft(row.draft || '');
       setStatus((row.status as EpisodeStatus) || 'observation');
       setPublishUrl(row.publish_url || '');
@@ -60,13 +54,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   }, [episodeId, onBack]);
 
   // 自动按"哪一阶段字段已填"算当前状态
-  const computeStatus = (): EpisodeStatus => {
-    if (draft.trim()) return 'drafting';
-    if (insight.trim()) return 'thinking';
-    if (question.trim()) return 'questioning';
-    if (observation.trim()) return 'observation';
-    return 'observation';
-  };
+  const computeStatus = (): EpisodeStatus => (draft.trim() ? 'drafting' : status);
 
   const save = async (next?: Partial<Episode>) => {
     if (saving) return;
@@ -79,9 +67,6 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
         id: ep?.id,
         season_id: ep?.season_id,
         title: next?.title ?? title,
-        observation: next?.observation ?? observation,
-        question: next?.question ?? question,
-        insight: next?.insight ?? insight,
         draft: next?.draft ?? draft,
         status: newStatus,
         publish_url: publishUrl,
@@ -113,8 +98,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   if (!ep) return null;
 
   // status 现在是受控 state（下拉可改），不再从 ep 派生
-  const filledCount = [observation, question, insight, draft].filter((s) => s?.trim()).length;
-  const canPublish = Boolean(draft.trim() && insight.trim());
+  const canPublish = Boolean(draft.trim());
 
   return (
     <>
@@ -128,7 +112,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
           <ArrowLeft size={14} /> 返回主线
         </button>
         <span className={`ep-status-pill ep-status-${status}`}>{STATUS_LABEL[status] || status}</span>
-        <span className="ep-filled">{filledCount}/4 字段已填</span>
+
         <button type="button" className="btn btn-outline btn-sm" onClick={() => save()} disabled={saving}>
           {saving ? '保存中…' : '保存'}
         </button>
@@ -175,43 +159,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
         </div>
       </Card>
 
-      <Card title="Q1 · 观察" icon={Circle} accent="action">
-        <textarea
-          className="textarea"
-          rows={3}
-          placeholder="今天你观察到了什么？"
-          value={observation}
-          onChange={(e) => setObservation(e.target.value)}
-          onBlur={() => observation !== ep.observation && save()}
-        />
-        <p className="muted ep-hint">事实层。先记下来，再问。</p>
-      </Card>
-
-      <Card title="Q2 · 疑问" icon={MessageCircle} accent="configure">
-        <textarea
-          className="textarea"
-          rows={3}
-          placeholder="今天有什么事让你停顿了 3 秒？"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onBlur={() => question !== ep.question && save()}
-        />
-        <p className="muted ep-hint">触发层。把观察变成问题，观点从问题里来。</p>
-      </Card>
-
-      <Card title="Q3 · 观点" icon={Lightbulb} accent="insight">
-        <textarea
-          className="textarea"
-          rows={4}
-          placeholder="你最想说的一句话是什么？"
-          value={insight}
-          onChange={(e) => setInsight(e.target.value)}
-          onBlur={() => insight !== ep.insight && save()}
-        />
-        <p className="muted ep-hint">提炼层。一句话能概括，这一篇就有方向。</p>
-      </Card>
-
-      <Card title="草稿" icon={FileText} accent="default">
+            <Card title="草稿" icon={FileText} accent="default">
         <textarea
           className="textarea"
           rows={12}
@@ -221,7 +169,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
           onBlur={() => draft !== ep.draft && save()}
         />
         <p className="muted ep-hint">
-          状态：<CheckCircle2 size={11} /> 草稿非空 → 自动转 drafting。<CheckCircle2 size={11} /> 全部填完 → 可快速发布。
+          状态：<CheckCircle2 size={11} /> 草稿非空 → 自动转 drafting。<CheckCircle2 size={11} /> 有草稿 → 可快速发布。
         </p>
       </Card>
     </>
