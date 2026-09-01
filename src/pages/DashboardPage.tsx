@@ -220,7 +220,10 @@ export function DashboardPage({ onNavigate }: Props) {
       return;
     }
     if (!r?.ok) {
-      showToast('⚠️ AI 不可用——访谈关闭，自己写或换个 agent');
+      // 把后端的 error 带出来——这样能看见到底是 spawn 失败还是 CLI 报 401 之类
+      const why = (r as any)?.error ? `：${(r as any).error}` : '';
+      console.warn('[interview] AI 不可用:', r);
+      showToast(`⚠️ AI 不可用${why}——访谈关闭`);
       setIv(null);
       setReloadTick((t) => t + 1);
       return;
