@@ -4,7 +4,7 @@
 // - 最近生成的文章
 // - 队列实时状态（嵌入 QueueBadge 数据）
 // - 快速操作
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { getAgentSettings } from '../utils/storage';
 import { showToast } from '../toast';
 import { useActiveProfile } from '../hooks/useActiveProfile';
