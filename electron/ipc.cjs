@@ -631,9 +631,21 @@ function registerIpc() {
     const title = (String(card.insight || card.observation || '未命名').replace(/[*#>]/g, '').trim()).slice(0, 30);
     const order = (db.prepare('SELECT COALESCE(MAX(order_in_season),0) m FROM episodes WHERE season_id=?').get(season ? season.id : null).m) + 1;
     const now = new Date().toISOString();
+    // 卡上的原料/问题/判断必须随 EP 一起搬过来——空壳 EP 是没法扩写的。
+    // 之前这里三个字段都写 ''，导致 8 集全部 o=q=i=0（owner 实测发现）。
     const ep = db.prepare(`INSERT INTO episodes (season_id, title, status, observation, question, insight, draft, order_in_season, profile_id, created_at, updated_at)
-      VALUES (?, ?, 'observation', '', '', '', '', ?, ?, ?, ?)`)
-      .run(season ? season.id : null, title, order, card.profile_id || '', now, now);
+      VALUES (?, ?, 'observation', ?, ?, ?, '', ?, ?, ?, ?)`)
+      .run(
+        season ? season.id : null,
+        title,
+        String(card.observation || ''),
+        String(card.question || ''),
+        String(card.insight || ''),
+        order,
+        card.profile_id || '',
+        now,
+        now,
+      );
     db.prepare(`UPDATE observations SET status='grown', episode_id=?, updated_at=? WHERE id=?`).run(ep.lastInsertRowid, now, id);
     return { ok: true, episodeId: ep.lastInsertRowid };
   });

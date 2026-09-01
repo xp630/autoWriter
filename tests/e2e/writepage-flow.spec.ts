@@ -470,3 +470,49 @@ test('排版改判回归：AI 观点盒可以点掉（降级生效），段落�
   await ctx.window.locator('.qp-block-wrap').first().click();
   await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(2);
 });
+
+
+test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发现空壳 bug 回归）', async () => {
+  // 强制走降级链（与测试 424 一致）——避免 e2e 里 CLI 真实调用卡顿/不稳
+  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
+  await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
+  await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
+  const stamp = String(Date.now());
+  const cap = ctx.window.locator('.obs-capture textarea');
+  await cap.fill(`回归卡 ${stamp}：今天被一只猫盯了五秒`);
+  await ctx.window.locator('button:has-text("存这张卡")').click();
+  const row = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
+  await expect(row).toBeVisible({ timeout: 6000 });
+  await row.locator('button.iv-open').click();
+  // 第一问 + 第二问 + 确认屏（沿用降级链）
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停顿了三秒');
+  await ctx.window.locator('.iv-card textarea').fill('它在等我先眨眼');
+  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('最想说的', { timeout: 10000 });
+  await ctx.window.locator('.iv-card textarea').fill('等的人不开口，被等的人就赢了');
+  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
+  await expect(ctx.window.locator('.iv-candidate')).toContainText('等的人不开口');
+  await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
+  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0);
+  // 关键步骤：长成 EP
+  const card2 = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
+  await expect(card2.locator('.obs-insight')).toContainText('等的人不开口');
+  await card2.locator('button:has-text("长成 EP")').click();
+  // 跳到 EP 列表 / EP 编辑页（具体路由由 app 决定）：找标题或节目单行
+  await ctx.window.waitForTimeout(800);
+  // 通过 IPC 读回新 EP（不进 UI 也能验证字段传递）
+  const ep = await ctx.window.evaluate(async () => {
+    // @ts-ignore
+    const all = await window.electronAPI.listEpisodes?.();
+    return all || [];
+  });
+  expect(Array.isArray(ep)).toBeTruthy();
+  const grown = ep.find(e => (e.title || '').includes('等的人不开口') || (e.insight || '').includes('等的人不开口'));
+  expect(grown, '新建 EP 应可被检索到（标题或 insight 命中）').toBeTruthy();
+  expect(grown.observation).toContain(`回归卡 ${stamp}`);
+  expect(grown.insight).toContain('等的人不开口');
+  // 清理卡
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await card2.locator('.obs-del').click();
+  await ctx.window.waitForTimeout(500);
+});
