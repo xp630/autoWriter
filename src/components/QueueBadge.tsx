@@ -32,6 +32,10 @@ const TYPE_LABEL: Record<string, string> = {
   outline: '📝 大纲',
   article: '📄 正文',
   polish: '✨ 润色',
+  analysis: '🔍 分析',
+  strategy: '🧭 策略',
+  interview: '🎙 访谈',
+  image: '🖼 生图',
 };
 
 function fmtElapsed(ms: number): string {

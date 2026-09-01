@@ -37,6 +37,21 @@ function emitQueueState() {
 agentQueue.on('state', emitQueueState);
 
 /** 队列化运行 runAgent：返回 { taskId, promise }，调用方 await promise 拿结果 */
+/** 生图统一入队：与文本任务同一队列闸门（provider 不被连点轰炸，UI 可见排队） */
+function queuedGenerateImage(providerId, promptFor, opts = {}) {
+  const { generateImage } = require('./image-providers.cjs');
+  const t = agentQueue.enqueue(
+    'image',
+    `生图: ${String(promptFor).slice(0, 24)}`,
+    ({ signal }) => {
+      if (signal.aborted) throw Object.assign(new Error('已取消'), { code: 'ABORTED' });
+      return generateImage(providerId, promptFor, opts);
+    },
+    { meta: { provider: providerId, model: opts.model || '', kind: 'image' } },
+  );
+  return t.promise;
+}
+
 function enqueueAgentRun(type, label, cfg, prompt, meta = {}) {
   let taskId = '';
   const task = agentQueue.enqueue(
@@ -790,7 +805,17 @@ function registerIpc() {
     }
 
     try {
-      const buf = await generateImage(pid, prompt, { model: mid, width: width || 1200, height: height || 800 });
+      // 生图进队列：与大纲/正文/润色同一闸门排队，防止连点刷屏 provider
+      const imgTask = agentQueue.enqueue(
+        'image',
+        `生图: ${String(prompt).slice(0, 24)}`,
+        ({ signal }) => {
+          if (signal.aborted) throw Object.assign(new Error('已取消'), { code: 'ABORTED' });
+          return generateImage(pid, prompt, { model: mid, width: width || 1200, height: height || 800 });
+        },
+        { meta: { provider: pid, model: mid } },
+      );
+      const buf = await imgTask.promise;
       const dir = path.join(app.getPath('userData'), 'uploads');
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const safeName = (filename || prompt || 'img').replace(/[^\w一-龥-]/g, '_').slice(0, 60);
@@ -832,22 +857,18 @@ function registerIpc() {
       ? fs.readFileSync(standardPath, 'utf-8')
       : fs.readFileSync(path.join(PROMPTS_IMAGE_DIR, 'craft.md'), 'utf-8');  // 兜底旧版
 
-    const standardResult = await runAgent(
-      { cli: cli || 'claude' },
-      `${standardPrompt}\n\n# 用户输入\n${bizPrompt}\n\n# 输出\n`,
-      () => {}  // 扩写不推日志
-    );
+    const { promise: p1 } = enqueueAgentRun('image', '生图提示词扩写·standard', { cli: cli || 'claude' },
+      `${standardPrompt}\n\n# 用户输入\n${bizPrompt}\n\n# 输出\n`);
+    const standardResult = await p1;
     const standardOutput = standardResult.content.trim();
 
     // 第二层：模型优化（如果有对应模板）
     const modelPath = path.join(PROMPTS_IMAGE_DIR, `craft-${model}.md`);
     if (fs.existsSync(modelPath)) {
       const modelPrompt = fs.readFileSync(modelPath, 'utf-8');
-      const modelResult = await runAgent(
-        { cli: cli || 'claude' },
-        `${modelPrompt}\n\n# Standard 扩写结果\n${standardOutput}\n\n# 输出（Flux 优化后的提示词）\n`,
-        () => {}
-      );
+      const { promise: p2 } = enqueueAgentRun('image', '生图提示词扩写·模型层', { cli: cli || 'claude' },
+        `${modelPrompt}\n\n# Standard 扩写结果\n${standardOutput}\n\n# 输出（Flux 优化后的提示词）\n`);
+      const modelResult = await p2;
       return modelResult.content.trim();
     }
 
@@ -909,7 +930,7 @@ function registerIpc() {
     // 生成图片
     let buf;
     try {
-      buf = await generateImage(currentProvider, finalPrompt, { model: currentModel });
+      buf = await queuedGenerateImage(currentProvider, finalPrompt, { model: currentModel });
     } catch (err) {
       // 生成失败，尝试备用 Provider
       
@@ -919,7 +940,7 @@ function registerIpc() {
         try {
 
           const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(p.provider_id);
-          buf = await generateImage(p.provider_id, finalPrompt, { model: defaultModel?.model_id || currentModel });
+          buf = await queuedGenerateImage(p.provider_id, finalPrompt, { model: defaultModel?.model_id || currentModel });
           currentProvider = p.provider_id;
           currentModel = defaultModel?.model_id || currentModel;
           break;
