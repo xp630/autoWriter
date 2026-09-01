@@ -74,12 +74,18 @@ export function QuickPublishPage() {
   const toggleBox = (i: number) => setBoxOverrides((o) => ({ ...o, [i]: !o[i] }));
   const boxTotal = draftBlocks.filter((b, i) => flipped(b, i)).length;
 
-  const finalBlocks = () => draftBlocks.map((b, i) => {
+  /**
+   * 改判的唯一实现：预览与导出共用。
+   * bug 回归记录（owner 实测）：之前降级只在导出里做、预览靠外层 wrapper 加框——
+   * 外层 class 能"加框"（升级可见），摘不掉内层 .qp-viewpoint（降级不可见）。
+   * 现在统一：改判直接作用在块 HTML 本身，预览所见即导出所得。
+   */
+  const blockHtml = (b: string, i: number): string => {
     if (!boxOverrides[i]) return b;
     return isBox(b)
-      ? b.replace('<div class="qp-viewpoint">', '<div>')
+      ? b.replace(' class="qp-viewpoint"', '')
       : `<div class="qp-viewpoint">${b.replace(/^<p>/, '').replace(/<\/p>$/, '')}</div>`;
-  });
+  };
 
   // ── 配图步 ──────────────────────────────────────────
   const [busy, setBusy] = useState<SlotKey | null>(null);
@@ -157,7 +163,7 @@ a { color: #059669; }`;
       const u = slots[slot]; if (!u) return null;
       return `<figure class="qp-fig"><img src="${await toData(u)}" alt="${SLOT_LABEL[slot]}"/><figcaption>${SLOT_LABEL[slot]}</figcaption></figure>`;
     };
-    const blocks = finalBlocks();
+    const blocks = draftBlocks.map(blockHtml);
     const firstViewpoint = blocks.findIndex((b) => b.includes('qp-viewpoint'));
     const [cover, emotion, explain, closing] = await Promise.all([
       fig('cover'), fig('emotion'), fig('explain'), fig('closing'),
@@ -263,9 +269,9 @@ a { color: #059669; }`;
           </div>
           <div className="qp-preview">
             {draftBlocks.map((b, i) => (
-              <div key={i} className={`qp-block-wrap ${flipped(b, i) ? 'is-box' : ''}`}
+              <div key={i} className="qp-block-wrap"
                 onClick={() => toggleBox(i)} title="点击切换：观点盒 ⇄ 普通段">
-                <span dangerouslySetInnerHTML={{ __html: b }} />
+                <span dangerouslySetInnerHTML={{ __html: blockHtml(b, i) }} />
               </div>
             ))}
             {draftBlocks.length === 0 && <p className="muted">（草稿为空）</p>}

@@ -329,7 +329,7 @@ test('写文章页：有草稿时显示「清空草稿」按钮，点击后清�
   await expect(ctx.window.locator('.btn-reset-draft')).toBeVisible();
 
   // 弹窗 confirm 选 "OK"
-  ctx.window.on('dialog', (d) => d.accept());
+  ctx.window.on('dialog', (d) => { d.accept().catch(() => {}); });
   await ctx.window.locator('.btn-reset-draft').click();
 
   // 按钮消失，主题框回到空，localStorage 清空
@@ -448,7 +448,25 @@ test('观察卡 + Idea Interview v2：对话流降级链（AI 不可用→固定
   const card = ctx.window.locator('.obs-row').filter({ hasText: `测试卡 ${stamp}` }).first();
   await expect(card.locator('.obs-insight')).toContainText('兴奋的人不看成片');
 
-  ctx.window.once('dialog', (d) => d.accept());
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
   await row.locator('.obs-del').click();
   await ctx.window.waitForTimeout(600);
+});
+
+test('排版改判回归：AI 观点盒可以点掉（降级生效），段落可以点成观点', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
+  await ctx.window.locator('.qp-textarea').fill('第一段普通叙述。\n\n**这是一句观点。**');
+  await ctx.window.locator('.qp-nav .btn-primary').click();
+  await expect(ctx.window.locator('.qp-preview')).toBeVisible();
+  // 初始：1 个观点盒
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(1);
+  // 降级：点观点盒 → 消失
+  await ctx.window.locator('.qp-preview .qp-viewpoint').first().click();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(0);
+  // 再点回来恢复
+  await ctx.window.locator('.qp-block-wrap').last().click();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(1);
+  // 升级：点第一段普通段 → 变盒
+  await ctx.window.locator('.qp-block-wrap').first().click();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(2);
 });
