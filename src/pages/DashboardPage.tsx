@@ -213,6 +213,7 @@ export function DashboardPage({ onNavigate }: Props) {
         observation: iv.card.observation, msgs, answers,
       });
     } catch (err: any) {
+      console.error('[interview] IPC 调用失败:', err);
       showToast('⚠️ 访谈出错：' + (err?.message || String(err)));
       setIv(null);
       setReloadTick((t) => t + 1);
