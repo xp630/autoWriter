@@ -663,6 +663,7 @@ function registerIpc() {
     } else {
       transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
     }
+    console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars`);
     let prompt;
     try {
       prompt = renderPrompt('interview', { observation: String(observation), transcript });
@@ -670,7 +671,9 @@ function registerIpc() {
     try {
       const { promise } = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
       const { content } = await promise;
+      console.log(`[interview] ${cli} returned ${content.length} chars: ${content.slice(0,200).replace(/\n/g,' / ')}`);
       const parsed = parseInterviewOutput(content);
+      console.log(`[interview] parsed:`, parsed);
       return { ok: true, ...parsed };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };

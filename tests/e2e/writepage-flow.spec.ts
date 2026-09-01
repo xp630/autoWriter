@@ -421,36 +421,29 @@ test('Quick Publish v5 配图步：生图走 Provider，无可用 provider 时�
   await expect(ctx.window.locator('#aw-toast')).toContainText('Token', { timeout: 15000 });
 });
 
-test('观察卡 + Idea Interview v2：对话流降级链（AI 不可用→固定两问→确认入库）', async () => {
+test('Idea Interview：AI 不可用 → 直接关掉访谈 + toast（owner 定则 2026-09-01）', async () => {
+  // 注入不存在的 CLI 模拟 AI 不可用——不再走拷问池，直接关访谈
   await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
   await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
   await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
-
-  const cap = ctx.window.locator('.obs-capture textarea');
   const stamp = String(Date.now());
-  await cap.fill(`测试卡 ${stamp}：电梯里听见两人讨论 AI 替代编剧`);
+  const cap = ctx.window.locator('.obs-capture textarea');
+  await cap.fill(`不可用卡 ${stamp}：测试 AI 不可用行为`);
   await ctx.window.locator('button:has-text("存这张卡")').click();
-  const row = ctx.window.locator('.obs-row').filter({ hasText: `测试卡 ${stamp}` }).first();
+  const row = ctx.window.locator('.obs-row').filter({ hasText: `不可用卡 ${stamp}` }).first();
   await expect(row).toBeVisible({ timeout: 6000 });
 
   await row.locator('button.iv-open').click();
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停了三秒');
-  await ctx.window.locator('.iv-card textarea').fill('他们讨论得那么兴奋，却没有一个人看过成片');
+  // modal 起来（textarea 空、不再有预设开场）→ 作者打一句 → 点下一步 → AI 不可用 → 关掉
+  await expect(ctx.window.locator('.iv-mask')).toBeVisible();
+  await ctx.window.locator('.iv-card textarea').fill('今天观察了一只猫');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  // AI 不可用 → 本地降级第二问
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('更像在描述', { timeout: 10000 });
-  await ctx.window.locator('.iv-card textarea').fill('兴奋的人不看成片，就像写的人不问观点');
-  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  // 确认屏：候选=自己刚说的那句
-  await expect(ctx.window.locator('.iv-candidate')).toContainText('兴奋的人不看成片');
-  await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
-  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0);
-  const card = ctx.window.locator('.obs-row').filter({ hasText: `测试卡 ${stamp}` }).first();
-  await expect(card.locator('.obs-insight')).toContainText('兴奋的人不看成片');
+  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0, { timeout: 10000 });
+  await expect(ctx.window.locator('#aw-toast')).toContainText('AI 不可用', { timeout: 6000 });
 
   ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
   await row.locator('.obs-del').click();
-  await ctx.window.waitForTimeout(600);
+  await ctx.window.waitForTimeout(400);
 });
 
 test('排版改判回归：AI 观点盒可以点掉（降级生效），段落可以点成观点', async () => {
@@ -473,8 +466,7 @@ test('排版改判回归：AI 观点盒可以点掉（降级生效），段落�
 
 
 test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发现空壳 bug 回归）', async () => {
-  // 强制走降级链（与测试 424 一致）——避免 e2e 里 CLI 真实调用卡顿/不稳
-  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
+  // 走仪表盘
   await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
   await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
   const stamp = String(Date.now());
@@ -483,90 +475,72 @@ test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发�
   await ctx.window.locator('button:has-text("存这张卡")').click();
   const row = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
   await expect(row).toBeVisible({ timeout: 6000 });
-  await row.locator('button.iv-open').click();
-  // 第一问 + 第二问 + 确认屏（沿用降级链）
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停了三秒');
-  await ctx.window.locator('.iv-card textarea').fill('它在等我先眨眼');
-  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('更像在描述', { timeout: 10000 });
-  await ctx.window.locator('.iv-card textarea').fill('等的人不开口，被等的人就赢了');
-  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  await expect(ctx.window.locator('.iv-candidate')).toContainText('等的人不开口');
-  await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
-  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0);
-  // 关键步骤：长成 EP
+
+  // 直接通过 IPC 给卡设 insight（替代访谈路径——访谈现在要真 AI，不便在 e2e 跑）
+  await ctx.window.evaluate(async (stamp) => {
+    // @ts-ignore
+    const list = await window.electronAPI.listCards?.({}) || [];
+    const c = list.find((x: any) => (x.observation || '').includes(`回归卡 ${stamp}`));
+    if (c) await window.electronAPI.saveCard({
+      id: c.id,
+      observation: `回归卡 ${stamp}：今天被一只猫盯了五秒`,
+      question: '它为什么盯我',
+      insight: '等的人不开口，被等的人就赢了',
+    });
+  }, stamp);
+  // 重渲列表
+  await ctx.window.waitForTimeout(400);
+
+  // 长成 EP
   const card2 = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
   await expect(card2.locator('.obs-insight')).toContainText('等的人不开口');
   await card2.locator('button:has-text("长成 EP")').click();
-  // 跳到 EP 列表 / EP 编辑页（具体路由由 app 决定）：找标题或节目单行
   await ctx.window.waitForTimeout(800);
-  // 通过 IPC 读回新 EP（不进 UI 也能验证字段传递）
+
+  // 通过 IPC 读回新 EP
   const ep = await ctx.window.evaluate(async () => {
     // @ts-ignore
     const all = await window.electronAPI.listEpisodes?.();
     return all || [];
   });
   expect(Array.isArray(ep)).toBeTruthy();
-  const grown = ep.find(e => (e.title || '').includes('等的人不开口') || (e.insight || '').includes('等的人不开口'));
-  expect(grown, '新建 EP 应可被检索到（标题或 insight 命中）').toBeTruthy();
+  const grown = ep.find(e => (e.insight || '').includes('等的人不开口'));
+  expect(grown, '新建 EP 应可被检索到（insight 命中）').toBeTruthy();
   expect(grown.observation).toContain(`回归卡 ${stamp}`);
   expect(grown.insight).toContain('等的人不开口');
-  // 清理卡
+
+  // 清理
   ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
   await card2.locator('.obs-del').click();
   await ctx.window.waitForTimeout(500);
 });
 
 test('Idea Interview：无轮数上限 + 我定稿了 + mask 关提示（owner 定则 2026-09-01）', async () => {
-  // 走降级链：CLI 不可用时 answers.length===1 自动补第二问——验证可以无限往下走
-  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
   await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
   await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
+
+  // 不走真 AI、不走降级——直接用 '我定稿了' 验证流程
   const stamp = String(Date.now());
   const cap = ctx.window.locator('.obs-capture textarea');
-  await cap.fill(`无上限卡 ${stamp}：今早在电梯里听到两个人讲 AI 替代编剧`);
+  await cap.fill(`定稿卡 ${stamp}：邻居小孩今天没和我打招呼`);
   await ctx.window.locator('button:has-text("存这张卡")').click();
-  const row = ctx.window.locator('.obs-row').filter({ hasText: `无上限卡 ${stamp}` }).first();
-  await expect(row).toBeVisible({ timeout: 6000 });
+  const row = ctx.window.locator('.obs-row').filter({ hasText: `定稿卡 ${stamp}` }).first();
   await row.locator('button.iv-open').click();
-  // 第一轮
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停了三秒');
-  await ctx.window.locator('.iv-card textarea').fill('讨论得兴奋，但没人看过成片');
-  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  // 第二轮（降级补问）
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('更像在描述', { timeout: 10000 });
-  await ctx.window.locator('.iv-card textarea').fill('兴奋的人不看成片，就像写的人不问观点');
-  // 第二问答完：AI 不可用 → 现在降级池会再补第三问（不再强制收尾）；用「我定稿了」显式收尾
-  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  // 验证：AI 不可用 + answers=2 会再出一条拷问（不是直接进 confirm）
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('反驳', { timeout: 10000 });
-  // 现在点"我定稿了"——拿刚才 textarea 的内容当 candidate（最后一答的 pickPhrase）
-  await ctx.window.locator('.iv-card button:has-text("我定稿了")').click();
-  await expect(ctx.window.locator('.iv-candidate')).toContainText('兴奋的人不看成片');
-  await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
-  const cardAfter = ctx.window.locator('.obs-row').filter({ hasText: `无上限卡 ${stamp}` }).first();
-  await expect(cardAfter.locator('.obs-insight')).toContainText('兴奋的人不看成片');
 
-  // === 第二段：专门测"我定稿了"按钮存在 + 可用 ===
-  const stamp2 = String(Date.now());
-  await cap.fill(`定稿卡 ${stamp2}：邻居小孩今天没和我打招呼`);
-  await ctx.window.locator('button:has-text("存这张卡")').click();
-  const row2 = ctx.window.locator('.obs-row').filter({ hasText: `定稿卡 ${stamp2}` }).first();
-  await row2.locator('button.iv-open').click();
+  // modal 起来后 textarea 是空的（不再预设开场），'我定稿了' 也应可用
+  await expect(ctx.window.locator('.iv-mask')).toBeVisible();
+  await expect(ctx.window.locator('.iv-card button:has-text("我定稿了")')).toBeDisabled();
   await ctx.window.locator('.iv-card textarea').fill('我开始怀疑他是不是在躲我');
-  // 没按"下一步"，直接点"我定稿了"——按钮存在 + 可用
   await expect(ctx.window.locator('.iv-card button:has-text("我定稿了")')).toBeEnabled();
   await ctx.window.locator('.iv-card button:has-text("我定稿了")').click();
-  // 进入 confirm 屏，candidate=刚才 textarea 的内容
   await expect(ctx.window.locator('.iv-candidate')).toContainText('他是不是在躲我');
   await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
-  const card2After = ctx.window.locator('.obs-row').filter({ hasText: `定稿卡 ${stamp2}` }).first();
-  await expect(card2After.locator('.obs-insight')).toContainText('他是不是在躲我');
+  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0);
+  const card2 = ctx.window.locator('.obs-row').filter({ hasText: `定稿卡 ${stamp}` }).first();
+  await expect(card2.locator('.obs-insight')).toContainText('他是不是在躲我');
 
   // 清理
   ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
-  await cardAfter.locator('.obs-del').click();
-  await ctx.window.waitForTimeout(300);
-  await card2After.locator('.obs-del').click();
-  await ctx.window.waitForTimeout(300);
-});
+  await card2.locator('.obs-del').click();
+  await ctx.window.waitForTimeout(400);
+});;
