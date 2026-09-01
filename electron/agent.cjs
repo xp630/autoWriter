@@ -73,8 +73,17 @@ function runAgent(cfg, prompt, onChunk, opts) {
     let stderr = '';
     let lastChunkAt = Date.now();
 
+    // macOS GUI 应用不读 .zshrc/.bash_profile——spawn 时 PATH 通常没 ~/.local/bin
+    // 把常见位置补进 PATH，避免 'claude: command not found'
+    const EXTRA_PATH = [
+      '/Users/xp630/.local/bin',
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/Users/xp630/.bun/bin',
+      '/Users/xp630/.pi/agent/bin',
+    ];
     const child = spawn(cmd, args, {
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...process.env, NO_COLOR: '1', PATH: `${EXTRA_PATH.join(':')}:${process.env.PATH || ''}` },
       shell: process.platform === 'win32',
     });
 
