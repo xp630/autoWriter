@@ -654,18 +654,17 @@ function registerIpc() {
   ipcMain.handle('interview:turn', async (_e, { cli, model, observation, answers = [] } = {}) => {
     if (!observation || !String(observation).trim()) return { ok: false, error: '缺少观察' };
     if (!cli) return { ok: false, error: '未选择 Agent CLI' };
-    const MAX_ROUNDS = 3;
-    const roundsLeft = Math.max(0, MAX_ROUNDS - answers.length);
+    // 无轮数上限（owner 定 2026-09-01）：AI 自由追问直到出 INSIGHT；用户主动终止走'我定稿了'。
     const transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
     let prompt;
     try {
-      prompt = renderPrompt('interview', { roundsLeft: String(roundsLeft), observation: String(observation), transcript });
+      prompt = renderPrompt('interview', { observation: String(observation), transcript });
     } catch (err) { return { ok: false, error: err.message }; }
     try {
       const { promise } = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
       const { content } = await promise;
       const parsed = parseInterviewOutput(content);
-      return { ok: true, ...parsed, roundsLeft };
+      return { ok: true, ...parsed };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }

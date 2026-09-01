@@ -572,6 +572,11 @@ export function DashboardPage({ onNavigate }: Props) {
                 <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
                   <button type="button" className="btn btn-ghost btn-sm"
                     onClick={() => { void persistIv(iv.answers[0] || '', ''); }}>先不聊</button>
+                  <button type="button" className="btn btn-outline btn-sm"
+                    onClick={() => setIv({ ...iv, stage: 'confirm', candidate: iv.answers[iv.answers.length - 1] || iv.value.trim() })}
+                    disabled={iv.answers.length === 0 && !iv.value.trim()}>
+                    我定稿了
+                  </button>
                   <button type="button" className="btn btn-primary btn-sm" onClick={() => void ivSend()} disabled={!iv.value.trim() || iv.busy}>
                     下一步 <ArrowRight size={13} />
                   </button>
