@@ -539,8 +539,13 @@ function registerIpc() {
           draft || '', publish_url || '', published_at || null,
           Number(order_in_season) || 0, profileId || '', now, id,
         );
-      // 自愈：slug 被任何路径清空的行，保存时按 id 补回（不信任客户端）
-      db.prepare(`UPDATE episodes SET slug=printf('ep-%03d', id) WHERE id=? AND (slug='' OR slug IS NULL)`).run(id);
+      // 自愈：slug 被任何路径清空时按序号补；先查重，冲突则跳过（绝不因补名搞挂保存）
+      try {
+        const cur = db.prepare('SELECT order_in_season FROM episodes WHERE id=?').get(id);
+        const cand = `ep-${String(Math.max(1, Number(cur && cur.order_in_season) || id)).padStart(3, '0')}`;
+        const taken = db.prepare('SELECT 1 FROM episodes WHERE slug=? AND id!=?').get(cand, id);
+        if (!taken) db.prepare(`UPDATE episodes SET slug=? WHERE id=? AND (slug='' OR slug IS NULL)`).run(cand, id);
+      } catch (e) { console.warn('[episode:save] slug 自愈跳过:', e.message); }
       return { ok: true, id, updated_at: now };
     }
     const r = db.prepare(`INSERT INTO episodes (
