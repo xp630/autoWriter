@@ -179,11 +179,47 @@ export function DashboardPage({ onNavigate }: Props) {
       if (r?.ok) { setCapture(''); showToast('🌱 已记下这张卡'); setReloadTick((t) => t + 1); }
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
-  const IV_OPENER = '这个观察里，是什么让你停顿了三秒？';
-  const IV_FALLBACK_Q2 = '那——你最想说的一句话是什么？';
-  const startIv = (c: ObservationCard) =>
-    setIv({ card: c, msgs: [{ who: 'ai', text: c.question ? `上次你停顿在：「${c.question}」——现在最想说什么？` : IV_OPENER }],
+  // 拷问式降级链：每一问都从**用户上一答**里抽词当抓手，不许脱离上下文发问
+  // 必须让用户觉得："它确实读了我说的话"
+  const pickPhrase = (text: string) => {
+    const t = String(text || '').trim();
+    if (!t) return '';
+    // 优先取前半句；若前半全是断句，再退而求其次取尾段
+    const half = t.slice(0, Math.min(t.length, 24));
+    const cut = half.search(/[，。！？,.!?]/);
+    let phrase = (cut > 3 ? half.slice(0, cut) : half).trim();
+    if (phrase.length < 4 && t.length > 6) phrase = t.slice(-12).trim(); // 太短则取尾
+    return phrase;
+  };
+  const IV_OPENER = (phrase: string) => `你刚才写「${phrase}」——这句话里，是哪几个字让你停了三秒？`;
+  // 每个降级问题都基于用户**上一答**，不同角度逼出立场
+  const IV_FALLBACK: ((lastAnswer: string, n: number) => string)[] = [
+    (a) => `你刚才说「${a}」——这话更像在描述，还是已经在下判断？判断的部分是哪几个字？`,
+    (a) => `「${a}」如果让一个不同意你的人听到，他会先反驳哪一句？`,
+    (a) => `你刚才用的「${a}」——换成相反的词还成立吗？不成立的话，差在哪？`,
+    (a) => `「${a}」背后你真正想守护的是什么？说出来。`,
+    (a) => `「${a}」如果只能跟一个人说，你会跟谁？为什么是 TA？`,
+    (a) => `三个月后回看「${a}」——你还认这句话吗？哪个字眼会想改？`,
+    (a) => `「${a}」——压成 10 个字以内的一句话观点（不是描述），能写出来吗？`,
+    (a) => `你刚才那句「${a}」——如果反过来讲也对，原版和反版的差别究竟在哪？`,
+    (a) => `「${a}」这件事，最让你害怕被误解成什么？`,
+    (a) => `「${a}」如果发到朋友圈——你最怕谁点进来？为什么？`,
+    (a) => `「${a}」——这事的反面，你信不信？不信的话反驳自己一句。`,
+  ];
+  const fallbackQ = (lastAnswer: string, n: number) => {
+    const phrase = pickPhrase(lastAnswer);
+    if (!phrase) return IV_FALLBACK[0]('这件事', n); // 兜底：用户答得太短取不到词
+    const i = Math.min(n - 1, IV_FALLBACK.length - 1);
+    return IV_FALLBACK[i](phrase, n);
+  };
+  const startIv = (c: ObservationCard) => {
+    const phrase = pickPhrase(c.observation);
+    const opener = c.question
+      ? `上次你停顿在：「${c.question}」——那句话里哪几个字最重？`
+      : IV_OPENER(phrase);
+    setIv({ card: c, msgs: [{ who: 'ai', text: opener }],
             answers: [], stage: 'ask', value: '', busy: false, candidate: '' });
+  };
 
   /** 存访谈成果：question=第一答（停顿），insight=确认过的观点句 */
   const persistIv = async (question: string, insight: string) => {
@@ -209,20 +245,22 @@ export function DashboardPage({ onNavigate }: Props) {
     setIv({ ...iv, answers, msgs, value: '', busy: true });
     const settings = getAgentSettings();
     const ivCli = (window as any).__IV_CLI__ || settings.cli;   // e2e 测试缝：注入不存在的 cli 走降级链
-    let r = await window.electronAPI?.interviewTurn?.({ cli: ivCli, model: settings.model, observation: iv.card.observation, answers });
+    // 把整段对话（AI 问 + 作者答）传给 agent，让 AI 真有上下文
+    let r = await window.electronAPI?.interviewTurn?.({ cli: ivCli, model: settings.model, observation: iv.card.observation, msgs, answers });
     if (!r?.ok) {
-      // AI 不可用：降级固定两问——第一问答完，本地补第二问
-      if (answers.length === 1) {
-        setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: IV_FALLBACK_Q2 }], value: '', busy: false, stage: 'ask' });
-      } else {
-        setIv({ ...iv, answers, msgs, value: '', busy: false, stage: 'confirm', candidate: answers[answers.length - 1] });
-      }
+      // AI 不可用：拷问式降级链——基于用户**上一答**追问，不同角度逼出判断句
+      const lastAnswer = answers[answers.length - 1] || iv.card.observation;
+      setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: fallbackQ(lastAnswer, answers.length) }],
+        value: '', busy: false, stage: 'ask' });
       return;
     }
     if (r.type === 'insight') {
       setIv({ ...iv, answers, msgs, value: '', busy: false, stage: 'confirm', candidate: r.text || '' });
     } else {
-      setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text || IV_FALLBACK_Q2 }], value: '', busy: false, stage: 'ask' });
+      // 真 AI 也没给追问文本——降级拷问池接管，保持对话不断
+      const lastAnswer = answers[answers.length - 1] || iv.card.observation;
+      const fb = fallbackQ(lastAnswer, answers.length);
+      setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text || fb }], value: '', busy: false, stage: 'ask' });
     }
   };
 
@@ -556,6 +594,7 @@ export function DashboardPage({ onNavigate }: Props) {
         <div className="iv-mask" onClick={() => setIv(null)}>
           <div className="iv-card" onClick={(e) => e.stopPropagation()}>
             <div className="iv-brand">IDEA INTERVIEW · 只对着这张卡</div>
+            {iv.busy && <div className="iv-degraded">⚠️ AI 不可用——我用的是预设拷问，质量不高</div>}
             <div className="iv-obs">「{iv.card.observation}」</div>
             <div className="iv-msgs">
               {iv.msgs.map((m, i) => (

@@ -650,12 +650,19 @@ function registerIpc() {
     return { ok: true, episodeId: ep.lastInsertRowid };
   });
 
-  // ===== Idea Interview 对话流：一问一答，AI 决定追问还是收尾（≤3 轮） =====
-  ipcMain.handle('interview:turn', async (_e, { cli, model, observation, answers = [] } = {}) => {
+  // ===== Idea Interview：长会话 agent（owner 定 2026-09-01）
+  // 把整段对话（AI 问 + 作者答）作为 transcript 传给 AI，让它真有上下文
+  // ——不再是每次只看 answers[] 的 stateless 调用
+  ipcMain.handle('interview:turn', async (_e, { cli, model, observation, msgs = [], answers = [] } = {}) => {
     if (!observation || !String(observation).trim()) return { ok: false, error: '缺少观察' };
     if (!cli) return { ok: false, error: '未选择 Agent CLI' };
-    // 无轮数上限（owner 定 2026-09-01）：AI 自由追问直到出 INSIGHT；用户主动终止走'我定稿了'。
-    const transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
+    // 优先用完整对话（msgs），降级用纯 answers（向后兼容）
+    let transcript;
+    if (Array.isArray(msgs) && msgs.length > 0) {
+      transcript = msgs.map((m, i) => `${i + 1}. ${m.who === 'ai' ? '访谈者' : '作者'}：${m.text}`).join('\n');
+    } else {
+      transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
+    }
     let prompt;
     try {
       prompt = renderPrompt('interview', { observation: String(observation), transcript });

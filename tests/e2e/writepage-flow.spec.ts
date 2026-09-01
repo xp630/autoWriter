@@ -434,11 +434,11 @@ test('观察卡 + Idea Interview v2：对话流降级链（AI 不可用→固定
   await expect(row).toBeVisible({ timeout: 6000 });
 
   await row.locator('button.iv-open').click();
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停顿了三秒');
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停了三秒');
   await ctx.window.locator('.iv-card textarea').fill('他们讨论得那么兴奋，却没有一个人看过成片');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
   // AI 不可用 → 本地降级第二问
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('最想说的', { timeout: 10000 });
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('更像在描述', { timeout: 10000 });
   await ctx.window.locator('.iv-card textarea').fill('兴奋的人不看成片，就像写的人不问观点');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
   // 确认屏：候选=自己刚说的那句
@@ -485,10 +485,10 @@ test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发�
   await expect(row).toBeVisible({ timeout: 6000 });
   await row.locator('button.iv-open').click();
   // 第一问 + 第二问 + 确认屏（沿用降级链）
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停顿了三秒');
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停了三秒');
   await ctx.window.locator('.iv-card textarea').fill('它在等我先眨眼');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('最想说的', { timeout: 10000 });
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('更像在描述', { timeout: 10000 });
   await ctx.window.locator('.iv-card textarea').fill('等的人不开口，被等的人就赢了');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
   await expect(ctx.window.locator('.iv-candidate')).toContainText('等的人不开口');
@@ -530,21 +530,19 @@ test('Idea Interview：无轮数上限 + 我定稿了 + mask 关提示（owner �
   await expect(row).toBeVisible({ timeout: 6000 });
   await row.locator('button.iv-open').click();
   // 第一轮
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停顿了三秒');
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('停了三秒');
   await ctx.window.locator('.iv-card textarea').fill('讨论得兴奋，但没人看过成片');
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
   // 第二轮（降级补问）
-  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('最想说的', { timeout: 10000 });
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('更像在描述', { timeout: 10000 });
   await ctx.window.locator('.iv-card textarea').fill('兴奋的人不看成片，就像写的人不问观点');
+  // 第二问答完：AI 不可用 → 现在降级池会再补第三问（不再强制收尾）；用「我定稿了」显式收尾
   await ctx.window.locator('.iv-card button:has-text("下一步")').click();
-  // 第三轮——以前会被强制收尾；现在不再强制，AI 不可用 + answers=2 → 降级再补第三问
-  // 模拟这里：直接点"我定稿了"，跳过继续问
-  // 但如果 AI 不可用且 answers.length===2，降级会进 confirm 屏——所以这里断言：
-  // 「我定稿了」按钮在任意时刻可点（按设计是保险绳）
-  // 重新点"长成"按钮测试路径
-  // （因为我们刚走到 confirm 屏。"我定稿了"按钮在 ask 屏才有，所以另起一张卡测试）
-  // 验证卡片 insight 已被记录
-  await expect(ctx.window.locator('.iv-candidate')).toContainText('兴奋的人不看成片', { timeout: 8000 });
+  // 验证：AI 不可用 + answers=2 会再出一条拷问（不是直接进 confirm）
+  await expect(ctx.window.locator('.iv-msg.ai').last()).toContainText('反驳', { timeout: 10000 });
+  // 现在点"我定稿了"——拿刚才 textarea 的内容当 candidate（最后一答的 pickPhrase）
+  await ctx.window.locator('.iv-card button:has-text("我定稿了")').click();
+  await expect(ctx.window.locator('.iv-candidate')).toContainText('兴奋的人不看成片');
   await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
   const cardAfter = ctx.window.locator('.obs-row').filter({ hasText: `无上限卡 ${stamp}` }).first();
   await expect(cardAfter.locator('.obs-insight')).toContainText('兴奋的人不看成片');
