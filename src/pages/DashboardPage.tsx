@@ -4,7 +4,7 @@
 // - 最近生成的文章
 // - 队列实时状态（嵌入 QueueBadge 数据）
 // - 快速操作
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getAgentSettings } from '../utils/storage';
 import { showToast } from '../toast';
 import { useActiveProfile } from '../hooks/useActiveProfile';
@@ -66,6 +66,22 @@ function statusLabel(status: string): string {
     case 'archived':    return '归档';
     default:             return status;
   }
+}
+
+
+// ===== 思考/调用计时器（独立组件，让 busy 状态自带"已等 X 秒"反馈） =====
+function ElapsedTimer({ active, cli }: { active: boolean; cli: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number>(0);
+  useEffect(() => {
+    if (active) {
+      startRef.current = Date.now();
+      setElapsed(0);
+      const t = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 500);
+      return () => clearInterval(t);
+    }
+  }, [active]);
+  return <div className="iv-msg ai iv-thinking">调用 {cli} 中…（已等 {elapsed}s）</div>;
 }
 
 export function DashboardPage({ onNavigate }: Props) {
@@ -570,7 +586,15 @@ export function DashboardPage({ onNavigate }: Props) {
       {iv && (
         <div className="iv-mask" onClick={() => setIv(null)}>
           <div className="iv-card" onClick={(e) => e.stopPropagation()}>
-            <div className="iv-brand">IDEA INTERVIEW · 只对着这张卡</div>
+            <div className="iv-brand">
+              <span>IDEA INTERVIEW · 只对着这张卡</span>
+              {iv.busy && (
+                <button type="button" className="btn btn-ghost btn-sm" style={{marginLeft:'auto'}}
+                  onClick={() => { setIv(null); setReloadTick(t=>t+1); showToast('已取消访谈'); }}>
+                  取消
+                </button>
+              )}
+            </div>
 
             <div className="iv-obs">「{iv.card.observation}」</div>
             <div className="iv-msgs">
@@ -580,7 +604,7 @@ export function DashboardPage({ onNavigate }: Props) {
                   <div>{m.text}</div>
                 </div>
               ))}
-              {iv.busy && <div className="iv-msg ai iv-thinking">调用 {((window as any).__IV_CLI__ || settings.cli)} 中…</div>}
+              {iv.busy && <ElapsedTimer active={iv.busy} cli={((window as any).__IV_CLI__ || settings.cli)} />}
             </div>
             {iv.stage === 'ask' && (
               <>
