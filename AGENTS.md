@@ -38,6 +38,7 @@
 - **写文章代码已经"保留现状"**——V2/V3/V4 闸门不砍但默认折叠；不在 ta 拒绝之前主动重提
 - **EP 正文格式（owner 定，2026-09-01）**：自然大段 3~6 段、纯文本输出；禁小标题、禁"金句一行一段"短句体——**目标是文字像人写的，不像排版的**。强调由 owner 在排版步点击改判加，生成时不加粗不切短句
 - **Idea Interview 无轮数上限（owner 定，2026-09-01）**：AI 自由追问直到出 INSIGHT 或用户主动点「我定稿了」。三轮硬收尾是错的——对话该由作者决定什么时候停，不是系统。Modal 关空白处给提示，避免误关丢进度
+- **Idea Interview 用 skill 实现（owner 定，2026-09-01）**：会话规则不再写死在 prompt 模板，挪到 `src/skills/interview/idea-interview/SKILL.md`（带 frontmatter）。`src/prompts/interview.md` 只剩 skillBody + 上下文包装。
 
 ---
 

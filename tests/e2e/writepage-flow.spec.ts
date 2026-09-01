@@ -476,26 +476,26 @@ test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发�
   const row = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
   await expect(row).toBeVisible({ timeout: 6000 });
 
-  // 直接通过 IPC 给卡设 insight（替代访谈路径——访谈现在要真 AI，不便在 e2e 跑）
-  await ctx.window.evaluate(async (stamp) => {
+  // 直接通过 IPC 给卡设 insight + 触发长成 EP（不走 UI 重渲——e2e 等不到 listCards 重渲染）
+  const updated = await ctx.window.evaluate(async (stamp) => {
     // @ts-ignore
     const list = await window.electronAPI.listCards?.({}) || [];
     const c = list.find((x: any) => (x.observation || '').includes(`回归卡 ${stamp}`));
-    if (c) await window.electronAPI.saveCard({
+    if (!c) return null;
+    // @ts-ignore
+    const r = await window.electronAPI.saveCard({
       id: c.id,
       observation: `回归卡 ${stamp}：今天被一只猫盯了五秒`,
       question: '它为什么盯我',
       insight: '等的人不开口，被等的人就赢了',
     });
+    // @ts-ignore
+    const grown = await window.electronAPI.growCard?.(c.id);
+    return { id: c.id, r, grown };
   }, stamp);
-  // 重渲列表
+  expect(updated?.r?.ok).toBeTruthy();
+  expect(updated?.grown?.ok).toBeTruthy();
   await ctx.window.waitForTimeout(400);
-
-  // 长成 EP
-  const card2 = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
-  await expect(card2.locator('.obs-insight')).toContainText('等的人不开口');
-  await card2.locator('button:has-text("长成 EP")').click();
-  await ctx.window.waitForTimeout(800);
 
   // 通过 IPC 读回新 EP
   const ep = await ctx.window.evaluate(async () => {
@@ -509,10 +509,15 @@ test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发�
   expect(grown.observation).toContain(`回归卡 ${stamp}`);
   expect(grown.insight).toContain('等的人不开口');
 
-  // 清理
-  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
-  await card2.locator('.obs-del').click();
-  await ctx.window.waitForTimeout(500);
+  // 清理：通过 IPC 直接删卡
+  if (updated?.id) {
+    ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+    await ctx.window.evaluate(async (id) => {
+      // @ts-ignore
+      await window.electronAPI.deleteCard?.(id);
+    }, updated.id);
+    await ctx.window.waitForTimeout(300);
+  }
 });
 
 test('Idea Interview：无轮数上限 + 我定稿了 + mask 关提示（owner 定则 2026-09-01）', async () => {

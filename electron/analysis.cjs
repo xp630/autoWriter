@@ -662,6 +662,25 @@ const GOAL_IMAGE_USE = {
 
 
 /**
+ * 加载 Idea Interview 的 skill：src/skills/interview/idea-interview/SKILL.md
+ * skill 文件读 body（去掉 frontmatter）后返回。读不到返回空串。
+ */
+function loadInterviewSkill() {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const SKILL_PATH = path.resolve(__dirname, '..', 'src', 'skills', 'interview', 'idea-interview', 'SKILL.md');
+  try {
+    const raw = fs.readFileSync(SKILL_PATH, 'utf-8');
+    // 去掉 YAML frontmatter
+    const m = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+    return m ? raw.slice(m[0].length).trim() : raw.trim();
+  } catch (e) {
+    console.warn('[interview] skill 未找到:', e.message);
+    return '';
+  }
+}
+
+/**
  * 解析访谈输出：两行契约（FOLLOWUP/INSIGHT + 文本）。
  * 容错：拿不准时按"含问号=追问"降级，绝不让访谈流因格式崩掉。
  * @returns {{type:'question'|'insight', text:string}}
@@ -689,6 +708,7 @@ module.exports = {
   DIFF_TYPES, DIFF_LABEL, DIFFICULTIES, FACT_RISKS,
   loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
+  loadInterviewSkill,
   parseInterviewOutput,
   buildImageRoleHint, inferImageRole, saveAnalysis,
 };

@@ -10,7 +10,7 @@ const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
-  buildImageRoleHint, parseInterviewOutput, saveAnalysis,
+  buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, saveAnalysis,
   evidenceCoverage, normalizeEvidence, strategyGate,
 } = require('./analysis.cjs');
 
@@ -664,9 +664,12 @@ function registerIpc() {
       transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
     }
     console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars`);
+    // Idea Interview 作为 skill 加载（owner 定 2026-09-01）：会话规则在 src/skills/interview/idea-interview/SKILL.md
+    let skillBody = '';
+    try { skillBody = loadInterviewSkill(); } catch (e) { /* skill 缺失则只跑模板 */ }
     let prompt;
     try {
-      prompt = renderPrompt('interview', { observation: String(observation), transcript });
+      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript });
     } catch (err) { return { ok: false, error: err.message }; }
     try {
       const { promise } = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
