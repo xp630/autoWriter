@@ -86,7 +86,7 @@ export function DashboardPage({ onNavigate }: Props) {
   // Idea Interview v2：对话流（AI 追问 ≤3 轮；AI 不可用降级固定两问）
   const [iv, setIv] = useState<{
     card: ObservationCard;
-    msgs: Array<{ who: 'ai' | 'me'; text: string }>;
+    msgs: Array<{ who: 'ai' | 'me'; text: string; reasoning?: string }>;
     answers: string[];
     stage: 'ask' | 'confirm' | 'manual';
     value: string;
@@ -238,7 +238,7 @@ export function DashboardPage({ onNavigate }: Props) {
       setReloadTick((t) => t + 1);
       return;
     }
-    setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text }], value: '', busy: false, stage: 'ask' });
+    setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text, reasoning: (r as any).reasoning || '' }], value: '', busy: false, stage: 'ask' });
   };
 
   const growCard = async (id: number) => {
@@ -575,7 +575,10 @@ export function DashboardPage({ onNavigate }: Props) {
             <div className="iv-obs">「{iv.card.observation}」</div>
             <div className="iv-msgs">
               {iv.msgs.map((m, i) => (
-                <div key={i} className={`iv-msg ${m.who}`}>{m.text}</div>
+                <div key={i} className={`iv-msg ${m.who}`}>
+                  {m.reasoning && <div className="iv-reasoning">💭 {m.reasoning}</div>}
+                  <div>{m.text}</div>
+                </div>
               ))}
               {iv.busy && <div className="iv-msg ai iv-thinking">调用 {((window as any).__IV_CLI__ || settings.cli)} 中…</div>}
             </div>
@@ -603,7 +606,18 @@ export function DashboardPage({ onNavigate }: Props) {
               <>
                 <div className="iv-q">这就是你要说的那句话吗？</div>
                 {iv.candidate && <div className="iv-candidate">「{iv.candidate}」</div>}
-                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10, flexWrap: 'wrap' }}>
+                  {/* 继续问：拒绝这个候选，让 AI 再追问——回到 ask 阶段并把"拒绝了"作为上下文传给 AI */}
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => setIv({
+                      ...iv,
+                      msgs: [...iv.msgs, { who: 'me' as const, text: '还不够，继续问。' }],
+                      stage: 'ask',
+                      candidate: '',
+                      value: '',
+                    })}>
+                    继续问
+                  </button>
                   <button type="button" className="btn btn-outline btn-sm" onClick={() => setIv({ ...iv, stage: 'manual', value: iv.candidate })}>我自己改</button>
                   <button type="button" className="btn btn-primary btn-sm" onClick={() => void persistIv(iv.answers[0] || '', iv.candidate)}>存入这张卡</button>
                 </div>

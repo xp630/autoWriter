@@ -687,17 +687,26 @@ function loadInterviewSkill() {
  */
 function parseInterviewOutput(raw) {
   const t = String(raw || '').trim();
-  if (!t) return { type: 'question', text: '那——你最想说的一句话是什么？' };
+  if (!t) return { type: 'question', text: '那——你最想说的一句话是什么？', reasoning: '' };
   const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
   let head = lines[0] || '';
-  let body = (lines[1] || '').replace(/^[-—:：]\s*/, '');
-  if (!body) { body = head.replace(/^FOLLOWUP/i, '').replace(/^INSIGHT/i, '').replace(/^[:：]/, '').trim(); }
+  // 抽出方括号「我的推力」——可能在第 2 行或第 3 行
+  let reasoning = '';
+  const brkt = (s) => /^\[([\s\S]+?)\]\s*$/.exec(s);
+  let bodyIdx = 1;
+  if (lines[1] && brkt(lines[1])) { reasoning = brkt(lines[1])[1].trim(); bodyIdx = 2; }
+  let body = (lines[bodyIdx] || '').replace(/^[-—:：]\s*/, '');
+  if (!body) {
+    // 兜底：旧格式（2 行 / 1 行）——退回去
+    body = head.replace(/^FOLLOWUP/i, '').replace(/^INSIGHT/i, '').replace(/^[:：]/, '').trim();
+    if (!body) body = lines.slice(1).join(' ');
+  }
   let type = null;
   if (/^FOLLOWUP/i.test(head)) type = 'question';
   else if (/^INSIGHT/i.test(head)) type = 'insight';
   if (!type) type = /[?？]\s*$/.test(body) ? 'question' : 'insight';
   if (type === 'insight') body = body.replace(/[?？]\s*$/, '');
-  return { type, text: body.slice(0, 160) };
+  return { type, text: body.slice(0, 200), reasoning: reasoning.slice(0, 200) };
 }
 
 module.exports = {

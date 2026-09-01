@@ -2766,6 +2766,7 @@ select:focus-visible {
 /* Idea Interview v2：对话流 */
 .iv-msgs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 40vh; overflow: auto; }
 .iv-msg { font-size: 14px; line-height: 1.6; padding: 8px 12px; border-radius: 10px; max-width: 92%; }
+.iv-reasoning { font-size: 11.5px; color: #6b7280; background: #f3f4f6; padding: 4px 8px; border-radius: 4px; margin-bottom: 6px; font-style: italic; }
 .iv-msg.ai { background: var(--bg-soft); color: var(--ink); align-self: flex-start; border-bottom-left-radius: 3px; }
 .iv-msg.me { background: #ecfdf5; color: #065f46; align-self: flex-end; border-bottom-right-radius: 3px; }
 .iv-thinking { opacity: .55; font-style: italic; }

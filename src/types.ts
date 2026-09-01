@@ -63,7 +63,7 @@ declare global {
       deleteCard: (id: number) => Promise<{ ok: boolean }>;
       growCard:   (id: number) => Promise<{ ok: boolean; episodeId?: number; already?: boolean; error?: string }>;
       /** 对话流一问：AI 决定追问(question)还是收尾提炼(insight)；失败时给 error，UI 降级固定两问 */
-      interviewTurn: (params: { cli: string; model?: string; observation: string; answers?: string[]; msgs?: Array<{ who: 'me'|'ai'; text: string }> }) =>
+      interviewTurn: (params: { cli: string; model?: string; observation: string; answers?: string[]; msgs?: Array<{ who: 'me'|'ai'; text: string; reasoning?: string }> }) =>
         Promise<{ ok: boolean; type?: 'question' | 'insight'; text?: string; roundsLeft?: number; error?: string }>;
       scheduleArticle: (params: { id: number; scheduled_at: string }) => Promise<{ ok: boolean }>;
       unscheduleArticle: (id: number) => Promise<{ ok: boolean }>;
