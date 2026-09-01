@@ -526,8 +526,10 @@ function registerIpc() {
     } = params;
     const now = new Date().toISOString();
     if (id) {
+      // slug 只在显式传入时更新（COALESCE 保护）：编辑页保存不回传 slug，
+      // 曾经的 bug——用户在 app 里编辑一次 EP，slug 就被冲成空（EP04 中招两次）
       db.prepare(`UPDATE episodes SET
-        season_id=?, title=?, slug=?, status=?,
+        season_id=?, title=?, slug=COALESCE(NULLIF(?, ''), slug), status=?,
         observation=?, question=?, insight=?,
         draft=?, publish_url=?, published_at=?,
         order_in_season=?, profile_id=?, updated_at=?
