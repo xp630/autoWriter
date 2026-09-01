@@ -539,6 +539,8 @@ function registerIpc() {
           draft || '', publish_url || '', published_at || null,
           Number(order_in_season) || 0, profileId || '', now, id,
         );
+      // 自愈：slug 被任何路径清空的行，保存时按 id 补回（不信任客户端）
+      db.prepare(`UPDATE episodes SET slug=printf('ep-%03d', id) WHERE id=? AND (slug='' OR slug IS NULL)`).run(id);
       return { ok: true, id, updated_at: now };
     }
     const r = db.prepare(`INSERT INTO episodes (
