@@ -796,8 +796,7 @@ export function DashboardPage({ onNavigate }: Props) {
               <>
                 <textarea className="textarea" rows={2} autoFocus ref={ivInputRef} value={iv.value}
                   onChange={(e) => setIv({ ...iv, value: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ivSend(); } }}
-                  placeholder="一句话回答，回车送出去。说'不知道'也是合法回答" />
+                  placeholder="一句话回答，说'不知道'也是合法回答（Shift+回车换行）" />
                 <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
                   <button type="button" className="btn btn-ghost btn-sm"
                     onClick={() => { void persistIv(iv.answers[0] || '', ''); }}>先不聊</button>
