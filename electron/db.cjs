@@ -322,6 +322,13 @@ function getDb(opts = {}) {
         if (n3) console.log(`[db] V3 升级：${n3} 条策略已补 insight/narrative 或升级证据形状`);
       }
     }
+  // ===== Idea Interview V1：观察卡状态四段化（2026-09-02）=====
+  // raw→new、grown→episode_created；幂等，老库自动升级
+  try {
+    db.prepare(`UPDATE observations SET status='new' WHERE status='raw'`).run();
+    db.prepare(`UPDATE observations SET status='episode_created' WHERE status='grown'`).run();
+  } catch (e) { console.warn('[db] obs status 迁移跳过:', e.message); }
+
   } catch (e) { console.warn('[db] migration skipped:', e.message); }
 
   // 初始化图片 Provider（延迟加载避免循环依赖）

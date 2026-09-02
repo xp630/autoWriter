@@ -20,13 +20,19 @@ Date: 2026-09-02 · Status: 待用户审阅 · 来源: /skill:brainstorming（su
 1. **EP 是活档案，冻结的是文章不是 EP**。发布后数据/经历变化**回流原 EP** 的
    Development/Shift/Unknown；只有**新问题**才开新卡。判别线：这条经历在"回答已有问题"
    （回流）还是"提出新问题"（新卡）。一个 EP 可长出多篇文章（1:N，跟进篇/收尾篇）。
-2. **Article Plan 引用不复制**。Plan 只存 EP 里没有的转化物（读者入口/核心冲突/讨论范围），
+2. **Article Plan 引用不复制**。Plan 只存 EP 里没有的转化物（读者问题/核心冲突/讨论范围），
    判断与证据走 `ep_id` 引用，改素材只有一处真相。
+   字段名定为 **`reader_question`**（不用 universal）：语义是“一个陌生读者可以代入的问题”，
+   不是“所有人都面对的大问题”——防 AI 把小故事拔高成方法论命题。质量红线：
+   出现“每个人都会/所有人都/我们总是”式句式 = 拔高信号，Plan 提议直接拒收重做。
 3. **标题降级**。`episodes.title` = 只读内部标签（从 Judgment 自动截断派生）；
    文章标题是策划产物，存 `article_plans.article_title`。"标题不进 EP"。
 4. **结构=状态≠剧本**。九槽位是 agent 的眼睛（prompt 输入里带当前槽位 JSON），
-   不是采访脚本——删五层问题策略、删"缺口表生成问题"、删 `canConclude` 代码门槛。
+   不是采访脚本——删五层问题策略、删“缺口表生成问题”、删 `canConclude` 代码门槛。
    挖什么、何时收尾，agent 自主判断；人用「继续问/我定稿了」拥有一票否决。
+5. **EP 无完成度要求**。EP 不是 100% 填完的表，是持续生长的思考档案：
+   允许任意槽位永久空缺（Next 可选可不存）；“完整”不是发布/做策划的门槛，
+   空槽只在 Plan 入口作提醒（不拦截）。
 
 ## 3. 数据模型（改动式，非新建世界）
 
@@ -39,11 +45,25 @@ evidence          +kind 列: fact|experience|judgment|speculation|unknown (默�
 interview_messages 转正。会话本体。role/content/reasoning/round
 insights          转正。content + evidence_ids(JSON) + confirmed
 article_plans     (新表) episode_id, proposals(JSON 未选角度), chosen_angle,
-                  article_title, universal_question, core_conflict,
+                  article_title, reader_question, core_conflict,
+                  judgment_ref(指向 EP 哪条判断被选中), evidence_ids(JSON，本策划选用哪几手证据),
                   discussion_scope, confirmed, created_at
 ```
 
 冲突（core_conflict）属于 Plan 不属于 EP：冲突不是经历，是经历切向读者时发出的声音。
+经历层：“一个陌生人的赞让我期待，后来数据更差”；文章层问题：“一个正反馈到底能不能证明内容方向对？”——两者不得混淆。
+
+**生成馈入契约（为 C 期预留，现在就定死）**：将来文章生成的输入不是“EP 自由发挥”，而是：
+
+```
+Article Plan（chosen_angle + reader_question + core_conflict + scope）
+  + judgment_ref 选中的那条判断
+  + evidence_ids 选中的那几条证据（含 kind 标注）
+  ↓
+Article
+```
+
+——“文章里的观点到底是不是我真的想过”由这条引用链保证。
 
 ## 4. Interview 技术方案（选型表，全部复用现有件）
 
@@ -77,8 +97,8 @@ article_plans     (新表) episode_id, proposals(JSON 未选角度), chosen_angl
 - 预览每槽两行：内容 + "出处于第 N/M 轮"；pending 项黄色，可一键"采纳/丢弃/说错在哪"。
 - 想改槽位 → 正路是对着聊天说错在哪，AI 重抽；手改是逃生口，改了打 `[手改]` 标、脱离出处链。
 - 回流入口：已发布 EP 页面「带新素材聊一轮」= 续聊，AI 专打后段槽（Development/Shift/Unknown）。
-- Article Planning 入口（EP 预览满血后亮起）：AI 读 EP 出 3~5 个读者入口 → 人选 →
-  补 universal_question/core_conflict/scope → 确认落 article_plans。AI 提议，人不代选。
+- Article Planning 入口（EP 有已确认判断即可亮，不设完整度门槛）：AI 读 EP 出 3~5 个读者入口 → 人选 →
+  补 reader_question/core_conflict/judgment_ref/evidence_ids/scope → 确认落 article_plans。AI 提议，人不代选。
 
 ## 6. 错误处理
 

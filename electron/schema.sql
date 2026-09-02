@@ -286,8 +286,8 @@ CREATE TABLE IF NOT EXISTS observations (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   observation  TEXT NOT NULL DEFAULT '',        -- Q1 必填：今天观察到什么
   question     TEXT DEFAULT '',                 -- Q2 可空：什么让我停顿了
-  insight      TEXT DEFAULT '',                 -- Q3 可空：可能观点
-  status       TEXT DEFAULT 'raw',              -- raw / grown
+  insight      TEXT DEFAULT '',                 -- Q3 可空：可能观点（= 已确认 insight 的冗余副本，向后兼容）
+  status       TEXT DEFAULT 'new',              -- V1 四态：new / interviewing / insight_found / episode_created（legacy raw/grown 启动时迁移）
   episode_id   INTEGER,                         -- 长成哪一集（可空）
   season_id    INTEGER,
   profile_id   TEXT DEFAULT '',
@@ -297,3 +297,38 @@ CREATE TABLE IF NOT EXISTS observations (
 CREATE INDEX IF NOT EXISTS idx_obs_status  ON observations(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_obs_episode ON observations(episode_id);
 CREATE INDEX IF NOT EXISTS idx_obs_profile ON observations(profile_id, created_at DESC);
+
+
+-- ============================================================================
+-- Idea Interview V1（2026-09-02 owner 定稿）：采访留痕 → 证据 → 观点，观点必须可追溯
+--   最重要的资产不是 Insight，是 Evidence——有证据链的观点才立得住、才复用得了。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS interview_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation_id  INTEGER NOT NULL,
+  role            TEXT NOT NULL,                -- user | assistant
+  content         TEXT NOT NULL,
+  reasoning       TEXT DEFAULT '',              -- assistant 的"我的推力"（思考过程留档）
+  round           INTEGER NOT NULL DEFAULT 0,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_imsg_obs ON interview_messages(observation_id, round);
+
+CREATE TABLE IF NOT EXISTS evidence (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation_id      INTEGER NOT NULL,
+  content             TEXT NOT NULL,             -- 作者明确表达过的判断/选择/事实（不推测不扩写）
+  source_message_ids  TEXT DEFAULT '[]',         -- JSON 数组：来自哪些采访消息（可追溯）
+  created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ev_obs ON evidence(observation_id);
+
+CREATE TABLE IF NOT EXISTS insights (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation_id  INTEGER NOT NULL,
+  content         TEXT NOT NULL,
+  evidence_ids    TEXT DEFAULT '[]',             -- JSON 数组：观点建立在哪几条证据上
+  confirmed       INTEGER NOT NULL DEFAULT 1,    -- V1 只存已确认的（用户点'存入这张卡'才算）
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ins_obs ON insights(observation_id);

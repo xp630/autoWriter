@@ -10,7 +10,7 @@ const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
-  buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, saveAnalysis,
+  buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, parseEvidenceOutput, saveAnalysis,
   evidenceCoverage, normalizeEvidence, strategyGate,
 } = require('./analysis.cjs');
 
@@ -602,7 +602,7 @@ function registerIpc() {
         .run(
           observation !== undefined ? observation : cur.observation,
           question !== undefined ? question : cur.question,
-          insight !== undefined ? insight : cur.insight,
+          insight !== undefined ? insight : cur.insight, /*__V1MARK__*/
           season_id !== undefined ? season_id : cur.season_id,
           now, id,
         );
@@ -650,26 +650,86 @@ function registerIpc() {
     return { ok: true, episodeId: ep.lastInsertRowid };
   });
 
-  // ===== Idea Interview：长会话 agent（owner 定 2026-09-01）
-  // 把整段对话（AI 问 + 作者答）作为 transcript 传给 AI，让它真有上下文
-  // ——不再是每次只看 answers[] 的 stateless 调用
-  ipcMain.handle('interview:turn', async (_e, { cli, model, observation, msgs = [], answers = [] } = {}) => {
+  // ===== Idea Interview V1（2026-09-02）：采访留痕 → 证据 → 观点，观点可追溯 =====
+  // 留痕：interview_messages 持久化每一问一答（含 AI 的推力），关掉 app 也能续上
+  // 门槛：INSIGHT 只在「已采到 ≥3 条证据 或 已问满 3 轮」时允许提出；用户仍可"继续问"
+  // 每轮结束后异步提取证据（不阻塞访谈响应；提取失败不影响对话）
+  const extractEvidence = (observationId, cli, model, lastAnswer) => {
+    if (!observationId || !lastAnswer) return;
+    void (async () => {
+      try {
+        const p = renderPrompt('evidence', { answers: lastAnswer });
+        const { promise } = enqueueAgentRun('evidence', `证据提取: ${lastAnswer.slice(0, 20)}`, { cli, model: model || '' }, p);
+        const { content } = await promise;
+        const items = parseEvidenceOutput(content);
+        if (!items.length) return;
+        const have = db.prepare('SELECT id, content FROM evidence WHERE observation_id=?').all(observationId);
+        const norm = (t) => String(t).replace(/\s+/g, '');
+        let inserted = 0;
+        for (const it of items) {
+          const dup = have.some(h => norm(h.content).includes(norm(it)) || norm(it).includes(norm(h.content)));
+          if (dup) continue;
+          db.prepare('INSERT INTO evidence (observation_id, content, source_message_ids) VALUES (?, ?, ?)')
+            .run(observationId, it, JSON.stringify([]));
+          inserted++;
+        }
+        if (inserted) console.log(`[evidence] 卡 ${observationId} 新增 ${inserted} 条证据`);
+      } catch (e) { console.warn('[evidence] 提取失败（忽略，不伤访谈）:', e.message); }
+    })();
+  };
+
+  ipcMain.handle('interview:turn', async (_e, { cli, model, observation, msgs = [], answers = [], observationId } = {}) => {
     if (!observation || !String(observation).trim()) return { ok: false, error: '缺少观察' };
     if (!cli) return { ok: false, error: '未选择 Agent CLI' };
-    // 优先用完整对话（msgs），降级用纯 answers（向后兼容）
+    const obsId = Number(observationId) || 0;
+
+    // —— 留痕：本轮作者答（取 msgs 末尾的 me）先落库，状态转 interviewing ——
+    const now = () => new Date().toISOString();
+    let round = 0;
+    let userMsgId = 0;
+    if (obsId) {
+      try {
+        const lastMe = [...msgs].reverse().find((m) => m.who === 'me') || (answers.length ? { text: answers[answers.length - 1] } : null);
+        if (lastMe && String(lastMe.text).trim()) {
+          round = (db.prepare('SELECT COALESCE(MAX(round),0) r FROM interview_messages WHERE observation_id=?').get(obsId).r) + 1;
+          const r1 = db.prepare('INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, ?, ?, ?, ?)')
+            .run(obsId, 'user', String(lastMe.text), round, now());
+          userMsgId = Number(r1.lastInsertRowid);
+          db.prepare(`UPDATE observations SET status='interviewing', updated_at=? WHERE id=? AND status='new'`).run(now(), obsId);
+        }
+      } catch (e) { console.warn('[interview] 作者答落库失败:', e.message); }
+    }
+
+    // 证据面板（给 AI 看的）：INSIGHT 门槛按"已确认轮数"计（user 行数）
+    let evRows = [];
+    let roundsDone = 0;
+    if (obsId) {
+      try {
+        evRows = db.prepare('SELECT id, content FROM evidence WHERE observation_id=? ORDER BY id').all(obsId);
+        roundsDone = db.prepare('SELECT COUNT(*) c FROM interview_messages WHERE observation_id=? AND role=?').get(obsId, 'user').c;
+      } catch (e) { /* 表可能还没迁移完，容错 */ }
+    } else {
+      roundsDone = answers.length;
+    }
+    const canConclude = evRows.length >= 3 || roundsDone >= 3;
+    const evidenceBlock = evRows.length
+      ? `已提取证据（${evRows.length} 条）：\n` + evRows.map((x) => `- ${x.content}`).join('\n')
+      : '（还没有提取到证据）';
+
     let transcript;
     if (Array.isArray(msgs) && msgs.length > 0) {
       transcript = msgs.map((m, i) => `${i + 1}. ${m.who === 'ai' ? '访谈者' : '作者'}：${m.text}`).join('\n');
     } else {
       transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
     }
-    console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars`);
-    // Idea Interview 作为 skill 加载（owner 定 2026-09-01）：会话规则在 src/skills/interview/idea-interview/SKILL.md
+    console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars | 轮=${roundsDone} 证据=${evRows.length} 可收尾=${canConclude}`);
     let skillBody = '';
     try { skillBody = loadInterviewSkill(); } catch (e) { /* skill 缺失则只跑模板 */ }
     let prompt;
     try {
-      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript });
+      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript, evidenceBlock, concludeGate: canConclude
+        ? '门槛已达：证据 ≥3 或轮数 ≥3——若对方答案已够提炼，可以输出 INSIGHT；否则继续 FOLLOWUP。'
+        : '门槛未达（证据 <3 且轮数 <3）：本轮必须 FOLLOWUP，不许提前收尾。' });
     } catch (err) { return { ok: false, error: err.message }; }
     let taskId = '';
     try {
@@ -677,12 +737,76 @@ function registerIpc() {
       taskId = enq.taskId;
       const { content } = await enq.promise;
       console.log(`[interview] ${cli} returned ${content.length} chars: ${content.slice(0,200).replace(/\n/g,' / ')}`);
-      const parsed = parseInterviewOutput(content);
-      console.log(`[interview] parsed:`, parsed);
-      return { ok: true, ...parsed, taskId };
+      let parsed = parseInterviewOutput(content);
+      // 门槛未达时 AI 硬要收尾 → 降级为追问（守"不提前总结"的规矩，但只降一次，不跟 AI 较劲）
+      if (!canConclude && parsed.type === 'insight' && obsId) {
+        parsed = { type: 'question', text: '先别急着收——再说具体点：' + parsed.text, reasoning: parsed.reasoning };
+      }
+      // —— 留痕：AI 问/收尾也落库 ——
+      if (obsId && userMsgId) {
+        try {
+          const r2 = db.prepare('INSERT INTO interview_messages (observation_id, role, content, reasoning, round, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(obsId, 'assistant', parsed.text, parsed.reasoning || '', round, now());
+          const mid = Number(r2.lastInsertRowid);
+          // 回填本轮来源（作者答 + AI 问）到后续提取的证据上
+          db.prepare('SELECT 1').get(); // no-op keep shape
+          void mid;
+        } catch (e) { console.warn('[interview] AI 问落库失败:', e.message); }
+      }
+      // —— 每轮结束：异步提取证据（不 await，不等它）——
+      if (obsId) {
+        const lastMe = [...msgs].reverse().find((m) => m.who === 'me');
+        extractEvidence(obsId, cli, model, lastMe ? String(lastMe.text) : '');
+      }
+      return { ok: true, ...parsed, taskId, round: roundsDone, evidenceCount: evRows.length, canConclude };
     } catch (err) {
       return { ok: false, error: err?.message || String(err), taskId };
     }
+  });
+
+  // 历史回放：重新打开访谈能续上（interviewing 状态存在的意义）
+  ipcMain.handle('interview:history', (_e, observationId) => {
+    const id = Number(observationId);
+    if (!id) return { ok: false, error: '缺少卡片 id' };
+    try {
+      const messages = db.prepare('SELECT id, role, content, reasoning, round, created_at FROM interview_messages WHERE observation_id=? ORDER BY round, id').all(id);
+      return { ok: true, messages };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ===== 证据（V1：访谈的中间产物，观点的地基）=====
+  ipcMain.handle('evidence:list', (_e, observationId) => {
+    const id = Number(observationId);
+    if (!id) return { ok: false, error: '缺少卡片 id' };
+    try { return { ok: true, evidence: db.prepare('SELECT * FROM evidence WHERE observation_id=? ORDER BY id').all(id) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('evidence:save', (_e, { observationId, content, sourceMessageIds } = {}) => {
+    const id = Number(observationId); const text = String(content || '').trim();
+    if (!id || !text) return { ok: false, error: '缺 observationId 或 content' };
+    try {
+      const r = db.prepare('INSERT INTO evidence (observation_id, content, source_message_ids) VALUES (?, ?, ?)')
+        .run(id, text, JSON.stringify(Array.isArray(sourceMessageIds) ? sourceMessageIds : []));
+      return { ok: true, id: Number(r.lastInsertRowid) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('evidence:delete', (_e, id) => {
+    try { db.prepare('DELETE FROM evidence WHERE id=?').run(Number(id)); return { ok: true }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ===== 观点确认（AI 只能提议，用户最终决定——确认后 status→insight_found）=====
+  ipcMain.handle('insight:confirm', (_e, { observationId, content, evidenceIds } = {}) => {
+    const id = Number(observationId); const text = String(content || '').trim();
+    if (!id || !text) return { ok: false, error: '缺 observationId 或观点内容' };
+    try {
+      const now = new Date().toISOString();
+      db.prepare('INSERT INTO insights (observation_id, content, evidence_ids, confirmed, created_at) VALUES (?, ?, ?, 1, ?)')
+        .run(id, text, JSON.stringify(Array.isArray(evidenceIds) ? evidenceIds : []), now);
+      // 冗余副本写回卡（card:grow 与 EP 长成都读这个字段），并升状态
+      db.prepare(`UPDATE observations SET insight=?, status='insight_found', updated_at=? WHERE id=? AND status!='episode_created'`).run(text, now, id);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   // 更新文章（用于保存润色结果）
