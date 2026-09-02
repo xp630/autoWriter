@@ -235,3 +235,82 @@ test('Task6 访谈 UI：历史恢复 + 槽位生长预览（pending 可裁决）
   await ctx.window.evaluate(async (id) => (window as any).electronAPI.deleteCard(id), cardId);
   await ctx.window.waitForTimeout(300);
 });
+
+test('Task6 修复轮1：丢弃走 clearSlots 显式清空（DB 真空串）+ COALESCE 不受影响 + 说错在哪聚焦', async () => {
+  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
+  const stamp = String(Date.now());
+  // 1) 真实出生路径：存卡 → 点「长成 EP」（UI 路径触发 reloadTick，卡对象带上 episode_id，预览才能拿到 EP）
+  const cardId = await createCardWith(`T6 修复1 ${stamp}：电梯里编剧在争执结尾`);
+  const row0 = ctx.window.locator('.obs-row').filter({ hasText: `T6 修复1 ${stamp}` }).first();
+  await expect(row0).toBeVisible({ timeout: 6000 });
+  await row0.locator('button:has-text("长成 EP")').click();
+  await expect.poll(async () => {
+    const r = await execSql<Array<{ episode_id: number | null }>>(ctx.window, 'SELECT episode_id FROM observations WHERE id=?', [cardId]);
+    return r[0]?.episode_id ?? null;
+  }, { timeout: 8000 }).toBeTruthy();
+  const epRows = await execSql<Array<{ episode_id: number }>>(ctx.window, 'SELECT episode_id FROM observations WHERE id=?', [cardId]);
+  const epId = epRows[0]?.episode_id;
+  expect(epId).toBeTruthy();
+  // 2) 预置三个槽位：development（待丢弃，pending 前缀）、reaction（待「说错在哪」，pending 前缀）、unknown（COALESCE 探针，无前缀）
+  const devText = `开发 ${stamp}：有人坚持要悲剧结尾`;
+  const reactText = `反应 ${stamp}：编剧对着空白文档叹气`;
+  const unkText = `未知 ${stamp}：片尾字幕是谁的笔迹`;
+  const epRow = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  const base: Record<string, unknown> = {
+    id: epId,
+    season_id: epRow?.season_id, title: epRow?.title || '', slug: epRow?.slug, status: epRow?.status || 'observation',
+    observation: epRow?.observation || '', question: epRow?.question || '', insight: epRow?.insight || '',
+    draft: epRow?.draft || '', publish_url: epRow?.publish_url || '', published_at: epRow?.published_at ?? null,
+    order_in_season: epRow?.order_in_season ?? 0, profileId: epRow?.profile_id || '',
+  };
+  await invokeIpc(ctx.window, 'episode:save', { ...base, development: `[待确认] ${devText}`, reaction: `[待确认] ${reactText}`, unknown: unkText });
+  const verifyPreset = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  expect(verifyPreset?.development).toBe(`[待确认] ${devText}`);
+  expect(verifyPreset?.reaction).toBe(`[待确认] ${reactText}`);
+  expect(verifyPreset?.unknown).toBe(unkText);
+
+  // 3) 普通 episode:save（不带 clearSlots）COALESCE 保护不受影响：传 '' 不清空，值仍在
+  await invokeIpc(ctx.window, 'episode:save', { id: epId, unknown: '' });
+  const afterPlain = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  expect(afterPlain?.unknown).toBe(unkText);
+  // 显式 clearSlots → 真的清空：DB 读回 ''（不是 ' '）
+  await invokeIpc(ctx.window, 'episode:save', { id: epId, clearSlots: ['unknown'] });
+  const afterClear = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  expect(afterClear?.unknown).toBe('');
+  // 白名单：observation/question/insight 不在可清列——clearSlots 请求它们被忽略，值保留
+  await invokeIpc(ctx.window, 'episode:save', { id: epId, clearSlots: ['observation', 'bogus'] });
+  const afterWhitelist = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  expect(afterWhitelist?.observation).toBe(base.observation);
+
+  // 4) UI：开访谈 → 点「说错在哪」→ 输入框自动获得焦点 + 预填话头
+  const obs = await execSql<Array<{ observation: string }>>(ctx.window, 'SELECT observation FROM observations WHERE id=?', [cardId]);
+  const row = ctx.window.locator('.obs-row').filter({ hasText: obs[0]?.observation || '' }).first();
+  await row.locator('button.iv-open').click();
+  await expect(ctx.window.locator('.iv-mask')).toBeVisible();
+  const reactRow = ctx.window.locator('.iv-preview .iv-slot-pending').filter({ hasText: '反应' }).first();
+  await expect(reactRow).toBeVisible({ timeout: 8000 });
+  await reactRow.locator('button:has-text("说错在哪")').click();
+  const ta = ctx.window.locator('.iv-card textarea');
+  await expect(ta).toHaveValue(`「反应 Reaction」这里说得不对：`, { timeout: 5000 });
+  await expect(ta).toBeFocused();
+
+  // 5) UI：点「丢弃」→ 预览 pending 行消失 + DB 里该列读回 ''（不是 ' '）
+  const devRow = ctx.window.locator('.iv-preview .iv-slot-pending').filter({ hasText: '发展' }).first();
+  await expect(devRow).toBeVisible();
+  await devRow.locator('button:has-text("丢弃")').click();
+  await expect.poll(async () => {
+    const after = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+    return after?.development ?? '__missing__';
+  }, { timeout: 8000 }).toBe('');
+  await expect(ctx.window.locator('.iv-preview .iv-slot-pending').filter({ hasText: devText })).toHaveCount(0);
+
+  // 清理：关 modal + 删卡（growCard 建的 EP 一并清）
+  await ctx.window.evaluate(() => {
+    const mask = document.querySelector('.iv-mask') as HTMLElement | null;
+    mask?.click();
+  });
+  await ctx.window.waitForTimeout(200);
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await ctx.window.evaluate(async (id) => (window as any).electronAPI.deleteCard(id), cardId);
+  await ctx.window.waitForTimeout(300);
+});

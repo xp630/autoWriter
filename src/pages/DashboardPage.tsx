@@ -125,6 +125,8 @@ export function DashboardPage({ onNavigate }: Props) {
   // 流式累积：AI 当前正在输出的原始文本（taskId 用于过滤 chunk）
   const [ivStreamText, setIvStreamText] = useState('');
   const [ivStreamTaskId, setIvStreamTaskId] = useState<string | null>(null);
+  // D-2（owner 拍板）：「说错在哪」预填后 textarea 自动获得焦点（ask 态已挂载时 autoFocus 不重新触发，需 ref 主动 focus）
+  const ivInputRef = useRef<HTMLTextAreaElement | null>(null);
   // Task 6：EP 槽位生长预览（有 EP 时轮询 episode:material；previewTick 用于采纳/丢弃后立即刷新）
   const [preview, setPreview] = useState<{
     ep?: Episode | null;
@@ -283,7 +285,7 @@ export function DashboardPage({ onNavigate }: Props) {
   }, [iv?.card?.id, iv?.card?.episode_id, previewTick]);
 
   /** 组装 saveEpisode 载荷：槽位更新必须带全渲染层已知字段，避免 T5 不对称保护把 title/season/status/draft 冲空 */
-  const slotPayload = (slot: string, value: string) => {
+  const slotPayload = (slot: string, value: string, clear = false) => {
     const ep = preview?.ep;
     if (!ep) return null;
     const p: Record<string, unknown> = {
@@ -301,7 +303,8 @@ export function DashboardPage({ onNavigate }: Props) {
       order_in_season: ep.order_in_season ?? 0,
       profileId: ep.profile_id || '',
     };
-    p[slot] = value;
+    if (clear) p.clearSlots = [slot];
+    else p[slot] = value;
     return p;
   };
 
@@ -316,9 +319,9 @@ export function DashboardPage({ onNavigate }: Props) {
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
 
-  /** 丢弃 pending：把这条 AI 提议从槽位里清掉（槽位恢复空缺） */
+  /** 丢弃 pending：显式清空该槽位（clearSlots → 只对请求的列写 ''，不再写 ' ' 占位） */
   const discardSlot = async (slot: string) => {
-    const payload = slotPayload(slot, ' ');
+    const payload = slotPayload(slot, '', true);
     if (!payload) return;
     try {
       const r = await window.electronAPI?.saveEpisode?.(payload as any);
@@ -327,10 +330,13 @@ export function DashboardPage({ onNavigate }: Props) {
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
 
-  /** 说错在哪：把话头交回聊天框——正路是告诉 AI 错在哪，它重抽 */
+  /** 说错在哪：把话头交回聊天框——正路是告诉 AI 错在哪，它重抽；预填后主动 focus textarea */
   const sayWrong = (slot: string) => {
     if (!iv) return;
     setIv({ ...iv, stage: 'ask', value: `「${SLOT_LABELS[slot] || slot}」这里说得不对：` });
+    // 双保险聚焦：rAF 先试一次，setTimeout 兜底（覆盖 ask→ask 已挂载 / confirm→ask 刚重挂载 两种情况）
+    const focus = () => ivInputRef.current?.focus();
+    requestAnimationFrame(() => { focus(); setTimeout(focus, 0); });
   };
 
   const ivSend = async () => {
@@ -785,7 +791,7 @@ export function DashboardPage({ onNavigate }: Props) {
             </div>
             {iv.stage === 'ask' && (
               <>
-                <textarea className="textarea" rows={2} autoFocus value={iv.value}
+                <textarea className="textarea" rows={2} autoFocus ref={ivInputRef} value={iv.value}
                   onChange={(e) => setIv({ ...iv, value: e.target.value })}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ivSend(); } }}
                   placeholder="一句话回答，回车送出去。说'不知道'也是合法回答" />

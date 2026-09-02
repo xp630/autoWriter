@@ -533,23 +533,36 @@ function registerIpc() {
       // 空值不覆盖（T5 stale write）：六槽位列 + observation/question/insight 一律
       // COALESCE(NULLIF(?,''), col)——渲染层没传/传空不会把外部写入（extract/AI 回流）冲掉；
       // 仅 draft/title/status/publish_url 允许显式清空（draft 清空走确认弹窗）。
+      // —— D-1（owner 拍板）「丢弃」改显式清空语义：clearSlots 是渲染层显式请求清空的
+      // 列名白名单（仅六槽位列 event/reaction/development/shift/unknown/next；
+      // observation/question/insight 是卡的原始物料，不在白名单）。对**被请求**的列绕
+      // COALESCE 直接写 ''；**未被请求**的列维持 COALESCE 保护——显式请求 ≠ stale 覆盖，
+      // 与 T5 的防冲职责不冲突（只对请求的列开特例）。
+      const clearSlots = Array.isArray(params.clearSlots)
+        ? [...new Set(params.clearSlots.map((s) => String(s).toLowerCase()).filter((s) => EP_SLOT_COLUMNS.includes(s)))]
+        : [];
+      const slotBits = [];
+      const slotArgs = [];
+      for (const col of EP_SLOT_COLUMNS) {
+        if (clearSlots.includes(col)) {
+          slotBits.push(`${col}=''`);
+        } else {
+          slotBits.push(`${col}=COALESCE(NULLIF(?, ''), ${col})`);
+          slotArgs.push(params[col] || '');
+        }
+      }
       db.prepare(`UPDATE episodes SET
         season_id=?, title=?, slug=COALESCE(NULLIF(?, ''), slug), status=?,
         observation=COALESCE(NULLIF(?, ''), observation),
         question=COALESCE(NULLIF(?, ''), question),
         insight=COALESCE(NULLIF(?, ''), insight),
-        event=COALESCE(NULLIF(?, ''), event),
-        reaction=COALESCE(NULLIF(?, ''), reaction),
-        development=COALESCE(NULLIF(?, ''), development),
-        shift=COALESCE(NULLIF(?, ''), shift),
-        unknown=COALESCE(NULLIF(?, ''), unknown),
-        next=COALESCE(NULLIF(?, ''), next),
+        ${slotBits.join(',\n        ')},
         draft=?, publish_url=?, published_at=?,
         order_in_season=?, profile_id=?, updated_at=?
         WHERE id=?`).run(
           season_id || null, title || '', slug || '', status || 'observation',
           observation || '', question || '', insight || '',
-          event || '', reaction || '', development || '', shift || '', unknown || '', next || '',
+          ...slotArgs,
           draft || '', publish_url || '', published_at || null,
           Number(order_in_season) || 0, profileId || '', now, id,
         );

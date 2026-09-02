@@ -55,7 +55,7 @@ declare global {
       archiveSeason: (id: number) => Promise<{ ok: boolean }>;
       listEpisodes: (params?: { seasonId?: number; status?: EpisodeStatus | 'all'; profileId?: string }) => Promise<Episode[]>;
       getEpisode:   (id: number) => Promise<Episode | null>;
-      saveEpisode:  (params: Partial<Episode> & { profileId?: string }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
+      saveEpisode:  (params: Partial<Episode> & { profileId?: string; clearSlots?: string[] }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
       deleteEpisode: (id: number) => Promise<{ ok: boolean }>;
       linkEpisodeToArticle: (params: { episodeId: number; articleId: number }) => Promise<{ ok: boolean }>;
       listCards:  (params?: { status?: CardStatus | 'all'; episodeId?: number; profileId?: string; limit?: number }) => Promise<ObservationCard[]>;
