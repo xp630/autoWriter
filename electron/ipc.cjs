@@ -10,7 +10,8 @@ const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
-  buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, parseEvidenceOutput, saveAnalysis,
+  buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, saveAnalysis,
+  parseExtractOutput, validatePatch, validateAngles,
   evidenceCoverage, normalizeEvidence, strategyGate,
 } = require('./analysis.cjs');
 
@@ -652,29 +653,69 @@ function registerIpc() {
 
   // ===== Idea Interview V1（2026-09-02）：采访留痕 → 证据 → 观点，观点可追溯 =====
   // 留痕：interview_messages 持久化每一问一答（含 AI 的推力），关掉 app 也能续上
-  // 门槛：INSIGHT 只在「已采到 ≥3 条证据 或 已问满 3 轮」时允许提出；用户仍可"继续问"
-  // 每轮结束后异步提取证据（不阻塞访谈响应；提取失败不影响对话）
-  const extractEvidence = (observationId, cli, model, lastAnswer) => {
+  // 无门槛版：AI 随时可收尾提炼 INSIGHT，用户确认后才算数；只守"出处执法"（validatePatch）
+  // 每轮结束后异步抽一轮素材（不阻塞访谈响应；提取失败不影响对话）——
+  // ep-extract 模板属 Task 4，缺失时 renderPrompt 抛错被兜住（console.warn 不崩）
+  const EP_SLOT_COLUMNS = ['event', 'reaction', 'development', 'shift', 'unknown', 'next'];
+  const extractRound = (observationId, cli, model, lastAnswer) => {
     if (!observationId || !lastAnswer) return;
     void (async () => {
       try {
-        const p = renderPrompt('evidence', { answers: lastAnswer });
-        const { promise } = enqueueAgentRun('evidence', `证据提取: ${lastAnswer.slice(0, 20)}`, { cli, model: model || '' }, p);
-        const { content } = await promise;
-        const items = parseEvidenceOutput(content);
-        if (!items.length) return;
-        const have = db.prepare('SELECT id, content FROM evidence WHERE observation_id=?').all(observationId);
-        const norm = (t) => String(t).replace(/\s+/g, '');
-        let inserted = 0;
-        for (const it of items) {
-          const dup = have.some(h => norm(h.content).includes(norm(it)) || norm(it).includes(norm(h.content)));
-          if (dup) continue;
-          db.prepare('INSERT INTO evidence (observation_id, content, source_message_ids) VALUES (?, ?, ?)')
-            .run(observationId, it, JSON.stringify([]));
-          inserted++;
+        const obs = db.prepare('SELECT id, episode_id FROM observations WHERE id=?').get(observationId);
+        if (!obs) return;
+        // 槽位现状（accepted 直写、pending 带前缀，都在这同一批列里，不出第三态表）
+        const epRow = obs.episode_id
+          ? db.prepare(`SELECT ${EP_SLOT_COLUMNS.join(',')} FROM episodes WHERE id=?`).get(obs.episode_id)
+          : null;
+        const slotState = {};
+        if (epRow) {
+          for (const col of EP_SLOT_COLUMNS) {
+            const v = String(epRow[col] || '');
+            slotState[col] = v.startsWith('[待确认] ') ? v.slice('[待确认] '.length) : v;
+          }
         }
-        if (inserted) console.log(`[evidence] 卡 ${observationId} 新增 ${inserted} 条证据`);
-      } catch (e) { console.warn('[evidence] 提取失败（忽略，不伤访谈）:', e.message); }
+        const evidence = db.prepare('SELECT id, content, kind FROM evidence WHERE observation_id=? ORDER BY id').all(observationId);
+        const p = renderPrompt('ep-extract', {
+          slotState: JSON.stringify(slotState),
+          evidence: JSON.stringify(evidence.map((e) => e.content)),
+          answer: String(lastAnswer),
+        });
+        const { promise } = enqueueAgentRun('extract', `素材抽取: ${String(lastAnswer).slice(0, 20)}`, { cli, model: model || '' }, p);
+        const { content } = await promise;
+        const parsed = parseExtractOutput(content);
+        // 1) 证据行（复用既有落库段：查重后插入）
+        if (parsed.evidence.length) {
+          const have = db.prepare('SELECT id, content FROM evidence WHERE observation_id=?').all(observationId);
+          const norm = (t) => String(t).replace(/\s+/g, '');
+          let inserted = 0;
+          for (const it of parsed.evidence) {
+            const text = String(it.content || '').trim();
+            if (!text) continue;
+            const dup = have.some((h) => norm(h.content).includes(norm(text)) || norm(text).includes(norm(h.content)));
+            if (dup) continue;
+            db.prepare('INSERT INTO evidence (observation_id, content, kind, source_message_ids) VALUES (?, ?, ?, ?)')
+              .run(observationId, text, it.kind || 'fact', JSON.stringify([]));
+            inserted++;
+          }
+          if (inserted) console.log(`[extract] 卡 ${observationId} 新增 ${inserted} 条证据`);
+        }
+        // 2) 槽位补全：accepted 直写 / 零重叠挂"[待确认] "前缀 → 同列（无第三态表）
+        const slotKeys = parsed.slots ? Object.keys(parsed.slots) : [];
+        if (obs.episode_id && slotKeys.length) {
+          const msgs = db.prepare('SELECT id, role, content FROM interview_messages WHERE observation_id=? ORDER BY id').all(observationId);
+          const verdict = validatePatch(parsed, msgs);
+          const assigns = {};
+          for (const a of verdict.accepted) assigns[a.slot] = String(a.text || '').trim();
+          for (const pd of verdict.pending) assigns[pd.slot] = '[待确认] ' + String(pd.text || '').trim();
+          const cols = EP_SLOT_COLUMNS.filter((c) => assigns[c]);
+          if (cols.length) {
+            const setSql = cols.map((c) => `${c}=?`).join(', ');
+            db.prepare(`UPDATE episodes SET ${setSql}, updated_at=? WHERE id=?`)
+              .run(...cols.map((c) => assigns[c]), new Date().toISOString(), obs.episode_id);
+          }
+          console.log(`[extract] 卡 ${observationId} 轮抽落槽（accept ${verdict.accepted.length} / pending ${verdict.pending.length} / reject ${verdict.rejected.length}）`);
+        }
+      } catch (e) { console.warn('[extract] 提取失败（忽略，不伤访谈）:', e.message); }
     })();
   };
 
@@ -695,12 +736,12 @@ function registerIpc() {
           const r1 = db.prepare('INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, ?, ?, ?, ?)')
             .run(obsId, 'user', String(lastMe.text), round, now());
           userMsgId = Number(r1.lastInsertRowid);
-          db.prepare(`UPDATE observations SET status='interviewing', updated_at=? WHERE id=? AND status='new'`).run(now(), obsId);
+          db.prepare(`UPDATE observations SET status='interviewing', updated_at=? WHERE id=? AND status IN ('new','raw')`).run(now(), obsId);
         }
       } catch (e) { console.warn('[interview] 作者答落库失败:', e.message); }
     }
 
-    // 证据面板（给 AI 看的）：INSIGHT 门槛按"已确认轮数"计（user 行数）
+    // 证据清单（给 AI 看的上下文，无门槛）：已确认轮数按 user 行数计
     let evRows = [];
     let roundsDone = 0;
     if (obsId) {
@@ -711,10 +752,6 @@ function registerIpc() {
     } else {
       roundsDone = answers.length;
     }
-    const canConclude = evRows.length >= 3 || roundsDone >= 3;
-    const evidenceBlock = evRows.length
-      ? `已提取证据（${evRows.length} 条）：\n` + evRows.map((x) => `- ${x.content}`).join('\n')
-      : '（还没有提取到证据）';
 
     let transcript;
     if (Array.isArray(msgs) && msgs.length > 0) {
@@ -722,14 +759,12 @@ function registerIpc() {
     } else {
       transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
     }
-    console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars | 轮=${roundsDone} 证据=${evRows.length} 可收尾=${canConclude}`);
+    console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars | 轮=${roundsDone} 证据=${evRows.length}`);
     let skillBody = '';
     try { skillBody = loadInterviewSkill(); } catch (e) { /* skill 缺失则只跑模板 */ }
     let prompt;
     try {
-      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript, evidenceBlock, concludeGate: canConclude
-        ? '门槛已达：证据 ≥3 或轮数 ≥3——若对方答案已够提炼，可以输出 INSIGHT；否则继续 FOLLOWUP。'
-        : '门槛未达（证据 <3 且轮数 <3）：本轮必须 FOLLOWUP，不许提前收尾。' });
+      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript });
     } catch (err) { return { ok: false, error: err.message }; }
     let taskId = '';
     try {
@@ -737,11 +772,7 @@ function registerIpc() {
       taskId = enq.taskId;
       const { content } = await enq.promise;
       console.log(`[interview] ${cli} returned ${content.length} chars: ${content.slice(0,200).replace(/\n/g,' / ')}`);
-      let parsed = parseInterviewOutput(content);
-      // 门槛未达时 AI 硬要收尾 → 降级为追问（守"不提前总结"的规矩，但只降一次，不跟 AI 较劲）
-      if (!canConclude && parsed.type === 'insight' && obsId) {
-        parsed = { type: 'question', text: '先别急着收——再说具体点：' + parsed.text, reasoning: parsed.reasoning };
-      }
+      const parsed = parseInterviewOutput(content);
       // —— 留痕：AI 问/收尾也落库 ——
       if (obsId && userMsgId) {
         try {
@@ -753,12 +784,12 @@ function registerIpc() {
           void mid;
         } catch (e) { console.warn('[interview] AI 问落库失败:', e.message); }
       }
-      // —— 每轮结束：异步提取证据（不 await，不等它）——
+      // —— 每轮结束：异步抽一轮素材（不 await，不等它）——
       if (obsId) {
         const lastMe = [...msgs].reverse().find((m) => m.who === 'me');
-        extractEvidence(obsId, cli, model, lastMe ? String(lastMe.text) : '');
+        extractRound(obsId, cli, model, lastMe ? String(lastMe.text) : '');
       }
-      return { ok: true, ...parsed, taskId, round: roundsDone, evidenceCount: evRows.length, canConclude };
+      return { ok: true, ...parsed, taskId, round: roundsDone };
     } catch (err) {
       return { ok: false, error: err?.message || String(err), taskId };
     }
@@ -806,6 +837,125 @@ function registerIpc() {
       // 冗余副本写回卡（card:grow 与 EP 长成都读这个字段），并升状态
       db.prepare(`UPDATE observations SET insight=?, status='insight_found', updated_at=? WHERE id=? AND status!='episode_created'`).run(text, now, id);
       return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ===== 策划通道（EP→Article V1）：材料组包 → 角度提议 → 用户确认落 article_plans =====
+  // 组 EP 材料：一集 + 挂靠的观察卡 + 每张卡的证据/观点 + 已确认过的方案
+  function buildEpisodeMaterial(episodeId) {
+    const ep = db.prepare('SELECT * FROM episodes WHERE id=?').get(episodeId);
+    if (!ep) return { ep: null, observations: [], evidence: [], insights: [], plans: [] };
+    const observations = db.prepare('SELECT * FROM observations WHERE episode_id=? ORDER BY created_at').all(episodeId);
+    const obsIds = observations.map((o) => o.id);
+    let evidence = [];
+    let insights = [];
+    if (obsIds.length) {
+      const marks = obsIds.map(() => '?').join(',');
+      evidence = db.prepare(`SELECT * FROM evidence WHERE observation_id IN (${marks}) ORDER BY id`).all(...obsIds);
+      insights = db.prepare(`SELECT * FROM insights WHERE observation_id IN (${marks}) ORDER BY id`).all(...obsIds);
+    }
+    const plans = db.prepare('SELECT * FROM article_plans WHERE episode_id=? ORDER BY id DESC').all(episodeId);
+    return { ep, observations, evidence, insights, plans };
+  }
+
+  // 把 CLI 输出解析成角度句列表（JSON 数组 | 逐行列表）：与 parseExtractOutput 同族容错
+  function parseAngleProposals(raw) {
+    const t = String(raw || '').trim();
+    if (!t) return [];
+    const parsed = parseAnalysisJson(t);
+    if (parsed.ok && Array.isArray(parsed.data)) {
+      return parsed.data
+        .map((x) => {
+          if (x == null) return '';
+          if (typeof x === 'string') return x.trim();
+          if (typeof x === 'object') return String(x.title || x.text || x.angle || '').trim();
+          return '';
+        })
+        .filter(Boolean);
+    }
+    return t.split('\n').map((l) => l.replace(/^[-*\d.\s]+/, '').trim()).filter(Boolean);
+  }
+
+  // 组材料喂 CLI 出 3~5 个选题角度 → 过拔高红线（validateAngles）→ 返回 proposals，不落库
+  ipcMain.handle('plan:propose', async (_e, arg = {}) => {
+    const episodeId = typeof arg === 'number' ? arg : Number((arg && arg.episodeId) || 0);
+    if (!episodeId) return { ok: false, error: '缺少 episodeId' };
+    const ep = db.prepare('SELECT id FROM episodes WHERE id=?').get(episodeId);
+    if (!ep) return { ok: false, error: 'Episode 不存在' };
+    const cli = (typeof arg === 'object' && arg && arg.cli) || '';
+    if (!cli) return { ok: false, error: '未选择 Agent CLI' };
+    const m = buildEpisodeMaterial(episodeId);
+    let prompt;
+    try {
+      prompt = renderPrompt('plan-propose', {
+        title: m.ep.title || '',
+        observation: m.ep.observation || '',
+        question: m.ep.question || '',
+        insight: m.ep.insight || '',
+        evidence: JSON.stringify(m.evidence.map((e) => e.content)),
+        insights: JSON.stringify(m.insights.map((i) => i.content)),
+        plans: JSON.stringify(m.plans.map((p) => p.chosen_angle || '')),
+      });
+    } catch (err) {
+      // T3：plan-propose 模板属 Task 4，缺失时给结构化失败（e2e 可控）
+      return { ok: false, error: err.message };
+    }
+    try {
+      const { promise } = enqueueAgentRun('plan', `选题角度: ${String(m.ep.title || m.ep.observation || '').slice(0, 24)}`, { cli, model: arg.model || '' }, prompt);
+      const { content } = await promise;
+      const angles = parseAngleProposals(content);
+      const { ok: okAngles, rejectedHigh } = validateAngles(angles);
+      return { ok: true, proposals: okAngles, rejectedHigh };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // 用户确认方案 → 落 article_plans（confirmed=1；证据链打平存档）
+  ipcMain.handle('plan:confirm', (_e, { episodeId, plan } = {}) => {
+    const id = Number(episodeId) || 0;
+    if (!id) return { ok: false, error: '缺少 episodeId' };
+    const ep = db.prepare('SELECT id FROM episodes WHERE id=?').get(id);
+    if (!ep) return { ok: false, error: 'Episode 不存在' };
+    const p = plan && typeof plan === 'object' ? plan : {};
+    const angle = String(p.chosen_angle || p.angle || p.title || '').trim();
+    if (!angle) return { ok: false, error: '缺少 plan.chosen_angle' };
+    const now = new Date().toISOString();
+    const r = db.prepare(`INSERT INTO article_plans (
+      episode_id, proposals, chosen_angle, article_title, reader_question, core_conflict,
+      judgment_ref, evidence_ids, discussion_scope, confirmed, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`).run(
+      id,
+      JSON.stringify(Array.isArray(p.proposals) ? p.proposals : []),
+      angle,
+      String(p.article_title || '').trim(),
+      String(p.reader_question || '').trim(),
+      String(p.core_conflict || '').trim(),
+      String(p.judgment_ref || '').trim(),
+      JSON.stringify(Array.isArray(p.evidence_ids) ? p.evidence_ids : []),
+      String(p.discussion_scope || '').trim(),
+      now,
+    );
+    return { ok: true, id: Number(r.lastInsertRowid) };
+  });
+
+  ipcMain.handle('plan:list', (_e, episodeId) => {
+    const id = Number(episodeId) || 0;
+    if (!id) return { ok: false, error: '缺少 episodeId' };
+    try {
+      const plans = db.prepare('SELECT * FROM article_plans WHERE episode_id=? ORDER BY id DESC').all(id);
+      return { ok: true, plans };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // EP 材料整包（策划页/生成前置的单一取数口）
+  ipcMain.handle('episode:material', (_e, episodeId) => {
+    const id = Number(episodeId) || 0;
+    if (!id) return { ok: false, error: '缺少 episodeId' };
+    try {
+      const material = buildEpisodeMaterial(id);
+      if (!material.ep) return { ok: false, error: 'Episode 不存在' };
+      return { ok: true, ...material };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 

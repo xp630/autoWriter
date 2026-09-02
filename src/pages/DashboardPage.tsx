@@ -241,7 +241,7 @@ export function DashboardPage({ onNavigate }: Props) {
     try {
       r = await window.electronAPI?.interviewTurn?.({
         cli: ivCli, model: settings.model,
-        observation: iv.card.observation, msgs, answers,
+        observation: iv.card.observation, observationId: iv.card.id, msgs, answers,
       });
       if (r?.taskId) setIvStreamTaskId(r.taskId);
     } catch (err: any) {

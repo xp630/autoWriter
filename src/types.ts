@@ -63,8 +63,23 @@ declare global {
       deleteCard: (id: number) => Promise<{ ok: boolean }>;
       growCard:   (id: number) => Promise<{ ok: boolean; episodeId?: number; already?: boolean; error?: string }>;
       /** 对话流一问：AI 决定追问(question)还是收尾提炼(insight)；失败时给 error，UI 降级固定两问 */
-      interviewTurn: (params: { cli: string; model?: string; observation: string; answers?: string[]; msgs?: Array<{ who: 'me'|'ai'; text: string; reasoning?: string }> }) =>
-        Promise<{ ok: boolean; type?: 'question' | 'insight'; text?: string; reasoning?: string; error?: string; taskId?: string }>;
+      interviewTurn: (params: { cli: string; model?: string; observation: string; observationId?: number; answers?: string[]; msgs?: Array<{ who: 'me'|'ai'; text: string; reasoning?: string }> }) =>
+        Promise<{ ok: boolean; type?: 'question' | 'insight'; text?: string; reasoning?: string; error?: string; taskId?: string; round?: number }>;
+      /** 回放留痕：重开访谈能续上（interview_messages 全量） */
+      interviewHistory: (observationId: number) => Promise<{ ok: boolean; messages: InterviewMessage[]; error?: string }>;
+      /** 证据：列某张卡的证据清单 */
+      evidenceList: (observationId: number) => Promise<{ ok: boolean; evidence: EvidenceItem[]; error?: string }>;
+      evidenceSave: (params: { observationId: number; content: string; sourceMessageIds?: number[] }) => Promise<{ ok: boolean; id?: number; error?: string }>;
+      evidenceDelete: (id: number) => Promise<{ ok: boolean; error?: string }>;
+      /** 观点确认：AI 只提议，用户确认后写 insights + 卡冗余 + insight_found */
+      insightConfirm: (params: { observationId: number; content: string; evidenceIds?: number[] }) => Promise<{ ok: boolean; error?: string }>;
+      /** 策划：组 EP 材料喂 CLI 出 3~5 角度（过拔高红线后返回，不落库） */
+      planPropose: (params: { episodeId: number; cli?: string; model?: string }) => Promise<{ ok: boolean; proposals?: string[]; rejectedHigh?: string[]; error?: string }>;
+      /** 策划：用户确认方案 → 落 article_plans（confirmed=1） */
+      planConfirm: (params: { episodeId: number; plan: ArticlePlanDraft }) => Promise<{ ok: boolean; id?: number; error?: string }>;
+      planList: (episodeId: number) => Promise<{ ok: boolean; plans: ArticlePlan[]; error?: string }>;
+      /** EP 材料整包（策划页/生成前置的单一取数口） */
+      episodeMaterial: (episodeId: number) => Promise<{ ok: boolean; ep?: Episode | null; observations?: ObservationCard[]; evidence?: EvidenceItem[]; insights?: InsightItem[]; plans?: ArticlePlan[]; error?: string }>;
       scheduleArticle: (params: { id: number; scheduled_at: string }) => Promise<{ ok: boolean }>;
       unscheduleArticle: (id: number) => Promise<{ ok: boolean }>;
       publishArticle: (id: number) => Promise<{ ok: boolean }>;
@@ -654,6 +669,63 @@ export interface SeasonSummary {
   episode_count: number;
   published_count: number;
   latest_episode?: Episode;
+}
+
+// ===== EP→Article V1（2026-09-02）：访谈留痕 / 证据 / 观点 / 策划 =====
+export interface InterviewMessage {
+  id: number;
+  observation_id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  reasoning?: string;
+  round: number;
+  created_at: string;
+}
+
+export interface EvidenceItem {
+  id: number;
+  observation_id: number;
+  content: string;
+  kind?: string;                // fact|experience|judgment|speculation|unknown
+  source_message_ids?: string;  // JSON 数组
+  created_at: string;
+}
+
+export interface InsightItem {
+  id: number;
+  observation_id: number;
+  content: string;
+  evidence_ids?: string;        // JSON 数组
+  confirmed?: number;
+  created_at: string;
+}
+
+/** article_plans 行（落库形态） */
+export interface ArticlePlan {
+  id: number;
+  episode_id?: number | null;
+  proposals?: string;           // JSON 数组
+  chosen_angle?: string;
+  article_title?: string;
+  reader_question?: string;
+  core_conflict?: string;
+  judgment_ref?: string;
+  evidence_ids?: string;        // JSON 数组
+  discussion_scope?: string;
+  confirmed?: number;
+  created_at?: string;
+}
+
+/** planConfirm 入参（客户端形态，证据链用数组表达） */
+export interface ArticlePlanDraft {
+  proposals?: string[];
+  chosen_angle?: string;
+  article_title?: string;
+  reader_question?: string;
+  core_conflict?: string;
+  judgment_ref?: string;
+  evidence_ids?: number[];
+  discussion_scope?: string;
 }
 
 export {};
