@@ -120,4 +120,47 @@ test('EP03 槽位不被编辑页冲掉（stale write 回归）', async () => {
   await ctx.window.waitForTimeout(400);
   const got = await ctx.window.evaluate(async () => { const eps = await (window as any).electronAPI.listEpisodes(); return eps[0].development; });
   expect(got).toBe(dev);
+
+  // —— 修复轮 1/5 追加：brief 原体只覆盖“外部写→focus 刷新→读回不受影响”
+  // 全程没有真实页面保存；删除 focus 监听、或页面保存仍无条件清空槽位时该用例照样通过。
+  // 这里补上“focus 后真实保存不覆盖外部槽位”的后半段：
+  // (1) 出生自卡片的 EP 只有 observation 非空、question/insight 为空——若直接断言“未被清空”
+  //     对后两个字段是 vacuous 的，所以先外部写入非空值进 observation/question/insight；
+  // (2) 用页面可操作的输入改标题（.ep-title-input）→ 点保存按钮（走 EpisodePage.save → saveEpisode）；
+  // (3) 等标题落库（保存确实发生并完成）后再读回，断言外部写入的四个槽位全部保留。
+  const ext = {
+    observation: `外部观察 ${Date.now()}`,
+    question: `外部疑问 ${Date.now()}`,
+    insight: `外部观点 ${Date.now()}`,
+  };
+  await ctx.window.evaluate(async (slots) => {
+    const eps = await (window as any).electronAPI.listEpisodes();
+    const ep = eps[0];
+    await (window as any).electronAPI.saveEpisode({
+      id: ep.id, season_id: ep.season_id, title: ep.title, status: ep.status, profileId: '',
+      observation: slots.observation, question: slots.question, insight: slots.insight,
+    });
+  }, ext);
+  const newTitle = `stale 后改的标题 ${Date.now()}`;
+  await ctx.window.locator('.ep-title-input').fill(newTitle);
+  await ctx.window.locator('.ep-actions-row button:has-text("保存")').click();
+  // 保存完成的确定性信号：标题在库里变成新值（onBlur/保存按钮任一触发 saveEpisode 都会进来）
+  await expect.poll(async () => {
+    const eps = await ctx.window.evaluate(async () => (window as any).electronAPI.listEpisodes());
+    return eps[0].title;
+  }, { timeout: 8000 }).toBe(newTitle);
+  const after = await ctx.window.evaluate(async () => {
+    const eps = await (window as any).electronAPI.listEpisodes();
+    return {
+      development: eps[0].development,
+      observation: eps[0].observation,
+      question: eps[0].question,
+      insight: eps[0].insight,
+    };
+  });
+  // focus 刷新 → 真实页面保存后，外部写入的槽位一个都不能丢、不能被清空
+  expect(after.development).toBe(dev);
+  expect(after.observation).toBe(ext.observation);
+  expect(after.question).toBe(ext.question);
+  expect(after.insight).toBe(ext.insight);
 });
