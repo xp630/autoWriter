@@ -702,7 +702,7 @@ function charBigrams(s) {
 }
 
 /**
- * 字符 2-gram 重叠比例：交集大小 ÷ min(双方字符数-1)。
+ * 字符 2-gram 重叠比例：交集大小 ÷ min(双方 unique bigram 集合大小)。
  * 空字符串防护：任一侧为空 → 0（拿不准不背书，也不抛）。
  */
 function bigramOverlap(text, quote) {
