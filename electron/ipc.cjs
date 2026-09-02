@@ -741,8 +741,15 @@ function registerIpc() {
         // 2) 槽位补全：accepted 直写 / 零重叠挂"[待确认] "前缀 → 同列（无第三态表）
         if (obs.episode_id && slotKeys.length) {
           const assigns = {};
-          for (const a of verdict.accepted) assigns[a.slot] = String(a.text || '').trim();
-          for (const pd of verdict.pending) assigns[pd.slot] = '[待确认] ' + String(pd.text || '').trim();
+          // 槽位键大小写归一（终审修复）：契约层 parseExtractOutput/validatePatch 保留原键大小写
+          // （文档与单测都允许大写 Event/Reaction…），而落库列白名单 EP_SLOT_COLUMNS 是小写六列；
+          // 不归一的话 `assigns['Event']` 匹配不到 `assigns['event']`，大写键槽位会被静默丢一条不写。
+          for (const a of verdict.accepted) assigns[String(a.slot).toLowerCase()] = String(a.text || '').trim();
+          for (const pd of verdict.pending) assigns[String(pd.slot).toLowerCase()] = '[待确认] ' + String(pd.text || '').trim();
+          // 同源风险：契约 SLOT_WHITELIST 还含 observation/question/judgment（prompt 目前不喂），
+          // EP_SLOT_COLUMNS 没有这三列 → 落库前显式过滤 + warn，至少可观测不静默。
+          const unhandled = Object.keys(assigns).filter((k) => !EP_SLOT_COLUMNS.includes(k));
+          if (unhandled.length) console.warn(`[extract] 卡 ${observationId} 槽位 ${unhandled.join(',')} 不在 EP_SLOT_COLUMNS，本轮不落库（契约层仍保留）`);
           const cols = EP_SLOT_COLUMNS.filter((c) => assigns[c]);
           if (cols.length) {
             const setSql = cols.map((c) => `${c}=?`).join(', ');

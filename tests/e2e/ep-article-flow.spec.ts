@@ -437,3 +437,51 @@ test('Task7 文章策划：AI 提议→拔高拒收→人择一→确认落库�
   await ctx.window.evaluate(async (id) => (window as any).electronAPI.deleteCard(id), cardId);
   await ctx.window.waitForTimeout(300);
 });
+
+test('终审修复：extractRound 槽位键大小写归一——大写契约键真的写进 DB', async () => {
+  // 背景：契约允许大写槽位键（ep-contracts.test.ts 的 Event/Reaction/Shift 全是故意大写），
+  // 落库列白名单 EP_SLOT_COLUMNS 却是小写六列 → 修复前 `assigns['Event']` 匹配不到
+  // `assigns['event']`，cols=[] 一条都不写，静默丢数据。本用例走真路径：
+  // interview:turn → 假 CLI 返回大写 Event 槽 → extractRound → validatePatch(accepted) → UPDATE episodes。
+  const stamp = String(Date.now());
+  const obsText = `终审修复 ${stamp}：电梯里 AI 编剧在聊剧本`;
+  // 1) 真实出生：存卡 → 长成 EP（episode_id 就位，extractRound 才走槽位落库分支）
+  const cardId = await createCardWith(obsText);
+  const grown = await ctx.window.evaluate(async (id) => (window as any).electronAPI.growCard(id), cardId);
+  expect(grown?.ok).toBe(true);
+  const epId = grown.episodeId as number;
+  expect(epId).toBeTruthy();
+
+  // 2) 预置一条作者原话（extract 的 src 必须回指真实 message id，否则 validatePatch 拒收）
+  const answerText = `因为第一次看到人类编剧在场 ${stamp}`;
+  await execSql(ctx.window,
+    `INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, 'user', ?, 1, ?)`,
+    [cardId, answerText, new Date().toISOString()]);
+  const midRows = await execSql<Array<{ id: number }>>(ctx.window,
+    'SELECT id FROM interview_messages WHERE observation_id=? AND content=?', [cardId, answerText]);
+  const msgId = midRows[0]?.id;
+  expect(msgId).toBeTruthy();
+
+  // 3) 假 claude 换成三路分流：extract 返回大写 Event 槽（src 指向预置原话，高重叠 → accepted）
+  const extractText = `第一次看到人类编剧在场 ${stamp}`;
+  const script = `#!/bin/sh\ninput=$(cat)\ncase "$input" in\n  *"本轮原话"*) printf '%s\\n' '{"evidence":[],"slots":{"Event":{"text":"${extractText}","src":[${msgId}]}}}' ;;\n  *"# EP 材料"*) printf '%s\\n' '["角度A","角度B","角度C","角度D"]' ;;\n  *) printf '%s\\n' 'INSIGHT 你说得对，值得再想想。' ;;\nesac\n`;
+  fs.writeFileSync(path.join(fakeBin, 'claude'), script);
+  fs.chmodSync(path.join(fakeBin, 'claude'), 0o755);
+
+  // 4) 真路径触发：interview:turn（假 CLI 必可用）→ AI 回复后异步 extractRound
+  const turn = await invokeIpc<{ ok: boolean }>(ctx.window, 'interview:turn', {
+    cli: 'claude', model: '', observation: obsText,
+    msgs: [{ who: 'me', text: answerText }], answers: [], observationId: cardId,
+  });
+  expect(turn.ok).toBe(true);
+  // 5) 轮抽异步落库：poll 到 episodes.event 真的出现且是大写键那条内容（修复前此处永远空）
+  await expect.poll(async () => {
+    const ep = await ctx.window.evaluate(async (id: number) => (window as any).electronAPI.getEpisode(id), epId);
+    return ep?.event || '';
+  }, { timeout: 15000 }).toBe(extractText);
+
+  // 清理：删卡（growCard 建的 EP 一并清）
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await ctx.window.evaluate(async (id: number) => (window as any).electronAPI.deleteCard(id), cardId);
+  await ctx.window.waitForTimeout(300);
+});
