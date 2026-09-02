@@ -25,8 +25,11 @@ Date: 2026-09-02 · Status: 待用户审阅 · 来源: /skill:brainstorming（su
    字段名定为 **`reader_question`**（不用 universal）：语义是“一个陌生读者可以代入的问题”，
    不是“所有人都面对的大问题”——防 AI 把小故事拔高成方法论命题。质量红线：
    出现“每个人都会/所有人都/我们总是”式句式 = 拔高信号，Plan 提议直接拒收重做。
-3. **标题降级**。`episodes.title` = 只读内部标签（从 Judgment 自动截断派生）；
-   文章标题是策划产物，存 `article_plans.article_title`。"标题不进 EP"。
+3. **标题分层（2026-09-02 owner rescope）**。原决定"episodes.title = 只读派生"已调整为：
+   **episodes.title = 用户可编辑内部标签**（职责=帮 owner 识别这个 EP，不是表达最终判断——
+   真实使用中改 EP02/03/04 标题是在重新聚焦，不是在改判断）；
+   **article_plans.article_title = 面向读者的唯一文章标题来源**（策划产物，仍不进 EP）。
+   三层独立：EP Title=档案标签 / Judgment=当前判断 / Article Title=文章标题。
 4. **结构=状态≠剧本**。九槽位是 agent 的眼睛（prompt 输入里带当前槽位 JSON），
    不是采访脚本——删五层问题策略、删“缺口表生成问题”、删 `canConclude` 代码门槛。
    挖什么、何时收尾，agent 自主判断；人用「继续问/我定稿了」拥有一票否决。

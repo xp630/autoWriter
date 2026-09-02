@@ -16,7 +16,7 @@
 - 对话三行契约不变：`FOLLOWUP|INSIGHT / [推力] / 文本`；`parseInterviewOutput` 是唯一解析口
 - 界面中文文案；不用 emoji 做功能 icon（现有一处 `💭` 为 owner 认可的例外，新增需批准）
 - 每个 EP 槽位内容必须挂 `source_message_ids`，查无出处即丢弃；手改打 `[手改]`
-- `episodes.title` 只读派生（从 judgment 截取 30 字），EpisodePage 不再提供编辑
+- `episodes.title` = 用户可编辑内部标签（owner rescope 2026-09-02）；文章标题唯一来源=`article_plans.article_title`
 - 收尾无代码门槛：删除 `canConclude`；agent 提议 + 人「继续问/我定稿了」
 - 分支 `feat/ep-article-v1`（off develop）；每任务一 commit；测试命令：`npx vitest run <file>`、`npx playwright test <spec> -g "<name>"`
 - e2e 前必须 `npm run build`（dist 与 vite dev 不互通）
@@ -36,7 +36,7 @@
 | `src/skills/interview/idea-interview/SKILL.md` | 访谈规则 | 改：删收尾门槛段、+槽位状态输入说明（结构=状态≠剧本） |
 | `electron/preload.cjs` | API 面 | 改：+8 个方法 |
 | `src/types.ts` | 类型 | 改：+`EvidenceKind` `EpisodeSlot` `ArticlePlan`、CardStatus 四态 |
-| `src/pages/EpisodePage.tsx` | EP 编辑页 | 改：槽位只读预览+手改标记、修 stale write、title 只读、Plan 入口 |
+| `src/pages/EpisodePage.tsx` | EP 编辑页 | 改：槽位只读预览+手改标记、修 stale write、title 保持可编辑、Plan 入口 |
 | `src/pages/DashboardPage.tsx` | 访谈 UI | 改：startIv 恢复历史、observationId 传入、槽位预览面板 |
 | `tests/unit/ep-contracts.test.ts` | 纯函数测试 | 新建 |
 | `tests/e2e/ep-article-flow.spec.ts` | 全链路 e2e | 新建 |
