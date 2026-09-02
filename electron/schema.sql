@@ -259,6 +259,13 @@ CREATE TABLE IF NOT EXISTS episodes (
   insight         TEXT DEFAULT '',               -- Q3：你最想说的一句话是什么
   -- 写
   draft           TEXT DEFAULT '',               -- 草稿（markdown）
+  -- EP 活档案槽位（2026-09-02 V1）
+  event           TEXT DEFAULT '',               -- 事件
+  reaction        TEXT DEFAULT '',               -- 反应
+  development     TEXT DEFAULT '',               -- 发展
+  shift           TEXT DEFAULT '',               -- 转变
+  unknown         TEXT DEFAULT '',               -- 未知
+  next            TEXT DEFAULT '',               -- 下一步
   -- 发布后
   publish_url     TEXT DEFAULT '',               -- 公众号文章 URL
   published_at    DATETIME,
@@ -318,6 +325,7 @@ CREATE TABLE IF NOT EXISTS evidence (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   observation_id      INTEGER NOT NULL,
   content             TEXT NOT NULL,             -- 作者明确表达过的判断/选择/事实（不推测不扩写）
+  kind                TEXT DEFAULT 'fact',       -- fact|experience|judgment|speculation|unknown
   source_message_ids  TEXT DEFAULT '[]',         -- JSON 数组：来自哪些采访消息（可追溯）
   created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -332,3 +340,24 @@ CREATE TABLE IF NOT EXISTS insights (
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ins_obs ON insights(observation_id);
+
+-- ============================================================================
+-- EP→Article 转化层 V1（2026-09-02 owner 定稿）：从证据链长出文章方案
+--   article_plans 是"转化前的一次具体决策"：proposals 装候选选题 JSON，
+--   用户确认 chosen 后 confirmed=1 才允许进入生成；证据直达 judgement_ref/evidence_ids。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS article_plans (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  episode_id        INTEGER,                       -- 关联 episodes（可空：未成集也能先出方案）
+  proposals         TEXT DEFAULT '[]',             -- JSON 数组：候选选题方案
+  chosen_angle      TEXT DEFAULT '',               -- 用户选中的角度
+  article_title     TEXT DEFAULT '',
+  reader_question   TEXT DEFAULT '',               -- 读者问题：文章要回答的
+  core_conflict     TEXT DEFAULT '',               -- 核心冲突
+  judgment_ref      TEXT DEFAULT '',               -- 判断依据引用（第几轮/哪条证据）
+  evidence_ids      TEXT DEFAULT '[]',             -- JSON 数组：本文案依赖的证据 id 链
+  discussion_scope  TEXT DEFAULT '',               -- 讨论边界（不写什么也写进来）
+  confirmed         INTEGER DEFAULT 0,             -- 0 草稿 / 1 已确认（确认后才允许生成正文）
+  created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_plans_episode ON article_plans(episode_id);
