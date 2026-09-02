@@ -49,14 +49,29 @@ function loadAllSkills() {
   };
 }
 
+// kind → 目录的统一映射（之前只认 channel/analysis/persona——strategy/interview 没进表，
+// 逼得 analysis.cjs 里 4 个 load*Skill 各自拼路径、各自剥 frontmatter，重复且易漂移）
+const KIND_DIRS = {
+  channel: 'channels', persona: 'personas', analysis: 'analysis',
+  strategy: 'strategy', interview: 'interview',
+};
+
 function findSkill(name, kind) {
   const skillsRoot = path.resolve(__dirname, '..', 'src', 'skills');
-  const dir = path.join(skillsRoot, kind === 'channel' ? 'channels' : kind === 'analysis' ? 'analysis' : 'personas');
-  const skillFile = path.join(dir, name, 'SKILL.md');
+  const dirName = KIND_DIRS[kind];
+  if (!dirName) return null;
+  const skillFile = path.join(skillsRoot, dirName, name, 'SKILL.md');
   if (!fs.existsSync(skillFile)) return null;
   const raw = fs.readFileSync(skillFile, 'utf-8');
   const { frontmatter, body } = parseFrontmatter(raw);
   return { kind, name, path: skillFile, frontmatter, body };
+}
+
+/** 所有 loader 的统一出口：按 kind+name 读 skill 正文（已剥 frontmatter）。找不到抛错。 */
+function loadSkillBody(kind, name) {
+  const skill = findSkill(name, kind);
+  if (!skill) throw new Error(`Skill not found: ${kind}/${name}`);
+  return skill.body;
 }
 
 function buildSkillInjection({ channel, persona }) {
@@ -72,4 +87,4 @@ function buildSkillInjection({ channel, persona }) {
   return parts.join('\n\n---\n\n');
 }
 
-module.exports = { loadAllSkills, findSkill, buildSkillInjection };
+module.exports = { loadAllSkills, findSkill, buildSkillInjection, loadSkillBody };

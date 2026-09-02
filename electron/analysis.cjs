@@ -43,18 +43,12 @@ function parseAnalysisJson(text) {
 
 /** 读取 angle-generation skill（A 借势拆解，不依赖 skills.cjs 体系） */
 function loadAngleSkill() {
-  const p = path.resolve(__dirname, "..", "src", "skills", "strategy", "angle-generation", "SKILL.md");
-  if (!fs.existsSync(p)) throw new Error(`Angle skill not found: ${p}`);
-  return fs.readFileSync(p, "utf-8")
-    .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+  return require("./skills.cjs").loadSkillBody("strategy", "angle-generation");
 }
 
 /** 读取 topic-planning skill（B 命题策划） */
 function loadTopicSkill() {
-  const p = path.resolve(__dirname, "..", "src", "skills", "strategy", "topic-planning", "SKILL.md");
-  if (!fs.existsSync(p)) throw new Error(`Topic strategy skill not found: ${p}`);
-  return fs.readFileSync(p, "utf-8")
-    .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+  return require("./skills.cjs").loadSkillBody("strategy", "topic-planning");
 }
 
 /** 角度生成结果：必须含 angles[]（≥5）与 track_fit{block}；其他字段容错 */
@@ -459,13 +453,7 @@ function buildStrategyBlock(strategy) {
 
 /** 读取 content-analysis skill（不依赖 skills.cjs 的 channels/personas 体系） */
 function loadAnalysisSkill() {
-  const skillPath = path.resolve(__dirname, '..', 'src', 'skills', 'analysis', 'content-analysis', 'SKILL.md');
-  if (!fs.existsSync(skillPath)) {
-    throw new Error(`Analysis skill not found: ${skillPath}`);
-  }
-  const raw = fs.readFileSync(skillPath, 'utf-8');
-  // 剥掉 YAML frontmatter（---\n...\n---）：它不是给模型的指令，且以 --- 开头会干扰部分 CLI
-  return raw.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+  return require("./skills.cjs").loadSkillBody("analysis", "content-analysis");
 }
 
 /**
@@ -666,18 +654,7 @@ const GOAL_IMAGE_USE = {
  * skill 文件读 body（去掉 frontmatter）后返回。读不到返回空串。
  */
 function loadInterviewSkill() {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const SKILL_PATH = path.resolve(__dirname, '..', 'src', 'skills', 'interview', 'idea-interview', 'SKILL.md');
-  try {
-    const raw = fs.readFileSync(SKILL_PATH, 'utf-8');
-    // 去掉 YAML frontmatter
-    const m = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
-    return m ? raw.slice(m[0].length).trim() : raw.trim();
-  } catch (e) {
-    console.warn('[interview] skill 未找到:', e.message);
-    return '';
-  }
+  return require("./skills.cjs").loadSkillBody("interview", "idea-interview");
 }
 
 /**

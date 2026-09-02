@@ -116,3 +116,34 @@ describe('skills.cjs', () => {
     });
   });
 });
+
+// ===== 架构统一守卫（2026-09-02）：所有 skill 走 skills.cjs 注册表 =====
+// 之前 analysis.cjs 里 4 个 load*Skill 各自拼路径——新增一类 skill 要在两处改。
+// 现在统一进 KIND_DIRS：新 kind 只需在 skills.cjs 加一行目录映射。
+import { describe as d2, it as i2, expect as e2 } from 'vitest';
+d2('skill 架构统一', () => {
+  const path2 = require('node:path');
+  const skills = require(path2.resolve(__dirname, '../../electron/skills.cjs'));
+  const analysis = require(path2.resolve(__dirname, '../../electron/analysis.cjs'));
+
+  i2('interview 与 strategy 类 skill 经统一出口可读', () => {
+    const iv = skills.findSkill('idea-interview', 'interview');
+    expect(iv).toBeTruthy();
+    expect(iv!.body).toContain('Idea Interview');
+    const ang = skills.findSkill('angle-generation', 'strategy');
+    expect(ang).toBeTruthy();
+  });
+
+  i2('analysis.cjs 的 4 个 loader 均委托 loadSkillBody（不再自建路径）', () => {
+    // 行为等价：loader 输出 === 注册表输出
+    expect(analysis.loadInterviewSkill()).toBe(skills.loadSkillBody('interview', 'idea-interview'));
+    expect(analysis.loadAngleSkill()).toBe(skills.loadSkillBody('strategy', 'angle-generation'));
+    expect(analysis.loadTopicSkill()).toBe(skills.loadSkillBody('strategy', 'topic-planning'));
+    expect(analysis.loadAnalysisSkill()).toBe(skills.loadSkillBody('analysis', 'content-analysis'));
+  });
+
+  i2('未知 kind 返回 null；loadSkillBody 找不到抛错', () => {
+    expect(skills.findSkill('x', 'bogus-kind')).toBeNull();
+    expect(() => skills.loadSkillBody('interview', 'nonexistent-skill')).toThrow(/Skill not found/);
+  });
+});
