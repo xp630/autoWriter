@@ -109,6 +109,9 @@ export function DashboardPage({ onNavigate }: Props) {
     busy: boolean;
     candidate: string;
   } | null>(null);
+  // 流式累积：AI 当前正在输出的原始文本（taskId 用于过滤 chunk）
+  const [ivStreamText, setIvStreamText] = useState('');
+  const [ivStreamTaskId, setIvStreamTaskId] = useState<string | null>(null);
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -213,6 +216,17 @@ export function DashboardPage({ onNavigate }: Props) {
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
 
+  // 订阅 agent 流式 chunk → 实时累积访谈的推力/问题
+  useEffect(() => {
+    if (!window.electronAPI?.onAgentChunk) return;
+    const unsub = window.electronAPI.onAgentChunk((chunk: any) => {
+      if (!ivStreamTaskId || chunk.taskId !== ivStreamTaskId) return;
+      if (chunk.type === 'stdout') setIvStreamText((t) => t + chunk.text);
+      if (chunk.type === 'done' || chunk.type === 'error') setIvStreamTaskId(null);
+    });
+    return unsub;
+  }, [ivStreamTaskId]);
+
   const ivSend = async () => {
     if (!iv || iv.busy) return;
     const v = iv.value.trim();
@@ -222,12 +236,14 @@ export function DashboardPage({ onNavigate }: Props) {
     setIv({ ...iv, answers, msgs, value: '', busy: true });
     const settings = getAgentSettings();
     const ivCli = (window as any).__IV_CLI__ || settings.cli;
+    setIvStreamText('');
     let r;
     try {
       r = await window.electronAPI?.interviewTurn?.({
         cli: ivCli, model: settings.model,
         observation: iv.card.observation, msgs, answers,
       });
+      if (r?.taskId) setIvStreamTaskId(r.taskId);
     } catch (err: any) {
       console.error('[interview] IPC 调用失败:', err);
       showToast('⚠️ 访谈出错：' + (err?.message || String(err)));
@@ -255,6 +271,7 @@ export function DashboardPage({ onNavigate }: Props) {
       return;
     }
     setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text, reasoning: (r as any).reasoning || '' }], value: '', busy: false, stage: 'ask' });
+    setIvStreamText('');
   };
 
   const growCard = async (id: number) => {
@@ -605,6 +622,16 @@ export function DashboardPage({ onNavigate }: Props) {
                 </div>
               ))}
               {iv.busy && <ElapsedTimer active={iv.busy} cli={((window as any).__IV_CLI__ || settings.cli)} />}
+              {iv.busy && ivStreamText && (
+                <div className="iv-msg ai iv-streaming">
+                  {ivStreamText.split('\n').map((line, idx) => (
+                    <div key={idx} className={line.startsWith('[') ? 'iv-stream-reasoning' : 'iv-stream-body'}>
+                      {line}
+                    </div>
+                  ))}
+                  <span className="iv-cursor">▍</span>
+                </div>
+              )}
             </div>
             {iv.stage === 'ask' && (
               <>

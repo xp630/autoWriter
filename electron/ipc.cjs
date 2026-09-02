@@ -671,15 +671,17 @@ function registerIpc() {
     try {
       prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript });
     } catch (err) { return { ok: false, error: err.message }; }
+    let taskId = '';
     try {
-      const { promise } = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
-      const { content } = await promise;
+      const enq = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
+      taskId = enq.taskId;
+      const { content } = await enq.promise;
       console.log(`[interview] ${cli} returned ${content.length} chars: ${content.slice(0,200).replace(/\n/g,' / ')}`);
       const parsed = parseInterviewOutput(content);
       console.log(`[interview] parsed:`, parsed);
-      return { ok: true, ...parsed };
+      return { ok: true, ...parsed, taskId };
     } catch (err) {
-      return { ok: false, error: err?.message || String(err) };
+      return { ok: false, error: err?.message || String(err), taskId };
     }
   });
 
