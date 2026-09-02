@@ -686,7 +686,166 @@ function parseInterviewOutput(raw) {
   return { type, text: body.slice(0, 200), reasoning: reasoning.slice(0, 200) };
 }
 
+// ===== EP→Article 纯函数契约（2026-09-02 Task 2）=====
+// 九槽位白名单：只有这些名字允许进入 EP 活档案（大小写不敏感，保留原键名）
+const SLOT_WHITELIST = ['event', 'reaction', 'development', 'shift', 'unknown', 'next', 'observation', 'question', 'judgment'];
+// 证据 kind 白名单：来自 schema 注释 fact|experience|judgment|speculation|unknown
+const EVIDENCE_KINDS = ['fact', 'experience', 'judgment', 'speculation', 'unknown'];
+
+const toNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+/** 字符 2-gram 集合（空串 → 空集） */
+function charBigrams(s) {
+  const set = new Set();
+  for (let i = 0; i + 1 < s.length; i++) set.add(s.slice(i, i + 2));
+  return set;
+}
+
+/**
+ * 字符 2-gram 重叠比例：交集大小 ÷ min(双方字符数-1)。
+ * 空字符串防护：任一侧为空 → 0（拿不准不背书，也不抛）。
+ */
+function bigramOverlap(text, quote) {
+  const a = str(text);
+  const b = str(quote);
+  if (!a || !b) return 0;
+  const ga = charBigrams(a);
+  const gb = charBigrams(b);
+  if (!ga.size || !gb.size) return 0;
+  let inter = 0;
+  for (const g of ga) inter += gb.has(g) ? 1 : 0;
+  return inter / Math.min(ga.size, gb.size);
+}
+
+/** parseEvidenceOutput — JSON 数组或逐行文本 → string[]（拿不准返回保守默认 []） */
+function parseEvidenceOutput(raw) {
+  const t = typeof raw === 'string' ? raw : '';
+  if (!t.trim()) return [];
+  const parsed = parseAnalysisJson(t);
+  if (parsed.ok && Array.isArray(parsed.data)) {
+    const out = [];
+    for (const item of parsed.data) {
+      const s = typeof item === 'string'
+        ? str(item)
+        : (item && typeof item === 'object' ? str(item.content || item.text || item.item) : '');
+      if (s) out.push(s);
+    }
+    return out;
+  }
+  return t.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+/** 规格化证据条目：非法 kind 归 'fact' */
+function normalizeExtractEvidence(e) {
+  if (!e) return null;
+  let content = '';
+  let kind = 'fact';
+  if (typeof e === 'string') content = str(e);
+  else if (typeof e === 'object') {
+    content = str(e.content || e.text || e.item);
+    const k = str(e.kind);
+    if (EVIDENCE_KINDS.includes(k)) kind = k;
+  }
+  return content ? { content, kind } : null;
+}
+
+/** 规格化槽位：仅白名单保留；text 为空丢弃；src 只收数字（缺 src 留空数组，由 validatePatch 执法拒收） */
+function normalizeExtractSlot(key, v) {
+  if (!SLOT_WHITELIST.includes(String(key).toLowerCase())) return null;
+  if (!v || typeof v !== 'object') return null;
+  const text = str(v.text);
+  if (!text) return null;
+  const src = (Array.isArray(v.src) ? v.src : [])
+    .map(toNum)
+    .filter((n) => n !== null);
+  return { text, src };
+}
+
+/** parseExtractOutput — 轮抽/终抽产物：{evidence:[{content,kind}], slots:{slot:{text,src}}} */
+function parseExtractOutput(raw) {
+  const empty = { evidence: [], slots: {} };
+  const t = typeof raw === 'string' ? raw : '';
+  if (!t.trim()) return empty;
+  const parsed = parseAnalysisJson(t);
+  if (parsed.ok && parsed.data && typeof parsed.data === 'object') {
+    const data = parsed.data;
+    const evidence = (Array.isArray(data.evidence) ? data.evidence : [])
+      .map(normalizeExtractEvidence)
+      .filter(Boolean);
+    const slots = {};
+    const slotObj = data.slots && typeof data.slots === 'object' ? data.slots : {};
+    for (const [k, v] of Object.entries(slotObj)) {
+      const norm = normalizeExtractSlot(k, v);
+      if (norm) slots[k] = norm;
+    }
+    return { evidence, slots };
+  }
+  // 兜底：JSON 提取失败时逐行 `内容|kind` 文本
+  const evidence = [];
+  for (const line of t.split('\n')) {
+    const l = line.trim();
+    if (!l) continue;
+    const parts = l.split('|');
+    const content = str(parts[0]);
+    if (!content) continue;
+    const kind = parts.length > 1 && EVIDENCE_KINDS.includes(str(parts[1])) ? str(parts[1]) : 'fact';
+    evidence.push({ content, kind });
+  }
+  return { evidence, slots: {} };
+}
+
+/** validatePatch — 出处执法：无出处（缺 src / 任一 src 查无消息）拒收；与原话 zero 重叠 pending；否则 accepted */
+function validatePatch(parsed, messages) {
+  const slotObj = parsed && typeof parsed === 'object' && parsed.slots && typeof parsed.slots === 'object'
+    ? parsed.slots
+    : {};
+  const msgMap = new Map();
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (m && m.id != null) msgMap.set(String(m.id), m);
+  }
+  const accepted = [], pending = [], rejected = [];
+  for (const [slot, v] of Object.entries(slotObj)) {
+    const text = v && typeof v === 'object' ? str(v.text) : '';
+    const src = v && Array.isArray(v.src)
+      ? v.src.map(toNum).filter((n) => n !== null)
+      : [];
+    const base = { slot, text, src };
+    // 出处缺失 → 拒收（含空文本：无出处可言）
+    if (!src.length || src.some((id) => !msgMap.has(String(id)))) {
+      rejected.push(base);
+      continue;
+    }
+    const quotes = src.map((id) => str(msgMap.get(String(id)).content)).filter(Boolean);
+    // 引用原话为空 → 无法背书 → pending（保守默认，绝不静默放行）
+    if (!quotes.length) { pending.push(base); continue; }
+    const overlap = Math.max(...quotes.map((q) => bigramOverlap(text, q)));
+    if (overlap < 0.15) pending.push(base);
+    else accepted.push(base);
+  }
+  return { accepted, pending, rejected };
+}
+
+/**
+ * 拔高红线：命中泛化句式（“每个人都会 / 所有人都 / 我们总是 / 人人都 / 皆如”）→ rejectedHigh。
+ * 说明：brief 原式 `我们总是` 与 brief 测试句“我们总想…”互斥（见 task-2-report 歧义裁决），
+ * 此处放宽为 `我们总`，既继续命中规范信号“我们总是”，也命中“我们总想”这类同型泛化。
+ */
+const HIGH_PHRASE_REGEX = /每个(人|普通人都)|所有人都|我们总|人人都|皆如/;
+
+/** validateAngles — Plan 提议过拔高红线 */
+function validateAngles(list) {
+  const ok = [];
+  const rejectedHigh = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const s = String(item == null ? '' : item).trim();
+    if (HIGH_PHRASE_REGEX.test(s)) rejectedHigh.push(s);
+    else ok.push(s);
+  }
+  return { ok, rejectedHigh };
+}
+
 module.exports = {
+  parseEvidenceOutput, parseExtractOutput, validatePatch, validateAngles,
   parseAnalysisJson, parseAngleResult, parseStrategyResult,
   normalizeStrategy, normalizeAngle, normalizeStrategyValue,
   normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
