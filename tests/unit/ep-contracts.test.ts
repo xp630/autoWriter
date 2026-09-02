@@ -30,6 +30,24 @@ describe('EP→Article 纯函数契约（Task 2）', () => {
     expect(r.ok.length).toBe(1); expect(r.rejectedHigh.length).toBe(1);
   });
 
+  it('validateAngles 正则收紧（owner 裁定）：误伤句放行，规范信号与测试句仍拔高', () => {
+    // 误伤句（义务/祈愿语气，非无据普适断言）→ ok
+    const ok = validateAngles(['我们总得想办法解决', '我们总算赶上了', '我们总能找到办法']);
+    expect(ok.ok).toEqual(['我们总得想办法解决', '我们总算赶上了', '我们总能找到办法']);
+    expect(ok.rejectedHigh).toEqual([]);
+    // 规范拔高信号 → 逐句 rejectedHigh
+    for (const s of ['我们总是', '每个人都', '每个人都会', '所有人都', '人人都', '皆如']) {
+      expect(validateAngles([s]).rejectedHigh).toEqual([s]);
+      expect(validateAngles([s]).ok).toEqual([]);
+    }
+    // 裁决收紧闭包 `(是|想|觉得|以为)` 的其余分支仍算拔高
+    expect(validateAngles(['我们总觉得有问题是运气不好']).rejectedHigh).toHaveLength(1);
+    expect(validateAngles(['我们总以为努力就有回报']).rejectedHigh).toHaveLength(1);
+    // brief 测试句仍命中 rejectedHigh
+    expect(validateAngles(['为什么我们总想从一个样本找答案？']).rejectedHigh)
+      .toEqual(['为什么我们总想从一个样本找答案？']);
+  });
+
   // ==== 补充用例（Interfaces 列出的第 4 个函数，Task 3 依赖；brief 测试片段未覆盖）====
   it('parseEvidenceOutput：JSON 数组与逐行文本都出 string[]', () => {
     expect(parseEvidenceOutput('["10阅读5粉丝","也许他觉得有价值"]')).toEqual(['10阅读5粉丝', '也许他觉得有价值']);
