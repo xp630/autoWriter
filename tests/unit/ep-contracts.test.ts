@@ -62,4 +62,29 @@ describe('EP→Article 纯函数契约（Task 2）', () => {
     expect(r.evidence[1]).toEqual({ content: '也许他觉得有价值', kind: 'fact' }); // 非法 kind 兜底归 fact
     expect(r.slots).toEqual({});
   });
+
+  // ==== T5（owner 已批）：extractRound 证据落库不再写死 []，accepted 项的 src 回填进
+  // evidence.source_message_ids。这里锁住纯函数侧的契约：validatePatch 的 accepted 项必然带 src
+  // （缺 src / 查无消息 → rejected），于是 extractRound 里 `JSON.stringify(accepted.flatMap(a=>a.src))`
+  // 与“证据必须回指作者原话 message id”的落库参数对齐。 ====
+  it('validatePatch accepted 项必带 src（src 回填契约）', () => {
+    const msgs = [
+      { id: 3, role: 'user', content: '楼下的店上周日突然贴了停业通知' },
+      { id: 5, role: 'user', content: '我以为是整改，后来才听说老板回老家了' },
+    ];
+    const accepted = { Event: { text: '楼下的店突然停业了', src: [3, 5] }, Reaction: { text: '我以为是整改，后来才知道老板回老家了', src: [5] } };
+    const noSrc = { Development: { text: '店铺转让给了别人', src: [] } };
+    const badSrc = { Shift: { text: '我太早下结论', src: [99] } };
+    const p = validatePatch({ slots: { ...accepted, ...noSrc, ...badSrc } }, msgs);
+    // accepted 项：src 原样保留（数组），可直接 JSON.stringify 写入 evidence.source_message_ids
+    expect(p.accepted.map(a => a.slot).sort()).toEqual(['Event', 'Reaction']);
+    for (const a of p.accepted) {
+      expect(Array.isArray(a.src)).toBe(true);
+      expect(a.src.length).toBeGreaterThan(0);
+      expect(JSON.stringify(a.src)).toMatch(/^\[\d+(,\d+)*\]$/);
+    }
+    expect(p.accepted.find(a => a.slot === 'Event').src).toEqual([3, 5]);
+    // src 为空或查无消息：只能进 rejected，绝不混进 accepted（否则落库会拿到空回指）
+    expect(p.rejected.map(a => a.slot).sort()).toEqual(['Development', 'Shift']);
+  });
 });

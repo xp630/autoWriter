@@ -522,6 +522,7 @@ function registerIpc() {
     const {
       id, season_id, title, slug, status,
       observation, question, insight,
+      event, reaction, development, shift, unknown, next,
       draft, publish_url, published_at,
       order_in_season, profileId,
     } = params;
@@ -529,14 +530,26 @@ function registerIpc() {
     if (id) {
       // slug 只在显式传入时更新（COALESCE 保护）：编辑页保存不回传 slug，
       // 曾经的 bug——用户在 app 里编辑一次 EP，slug 就被冲成空（EP04 中招两次）
+      // 空值不覆盖（T5 stale write）：六槽位列 + observation/question/insight 一律
+      // COALESCE(NULLIF(?,''), col)——渲染层没传/传空不会把外部写入（extract/AI 回流）冲掉；
+      // 仅 draft/title/status/publish_url 允许显式清空（draft 清空走确认弹窗）。
       db.prepare(`UPDATE episodes SET
         season_id=?, title=?, slug=COALESCE(NULLIF(?, ''), slug), status=?,
-        observation=?, question=?, insight=?,
+        observation=COALESCE(NULLIF(?, ''), observation),
+        question=COALESCE(NULLIF(?, ''), question),
+        insight=COALESCE(NULLIF(?, ''), insight),
+        event=COALESCE(NULLIF(?, ''), event),
+        reaction=COALESCE(NULLIF(?, ''), reaction),
+        development=COALESCE(NULLIF(?, ''), development),
+        shift=COALESCE(NULLIF(?, ''), shift),
+        unknown=COALESCE(NULLIF(?, ''), unknown),
+        next=COALESCE(NULLIF(?, ''), next),
         draft=?, publish_url=?, published_at=?,
         order_in_season=?, profile_id=?, updated_at=?
         WHERE id=?`).run(
           season_id || null, title || '', slug || '', status || 'observation',
           observation || '', question || '', insight || '',
+          event || '', reaction || '', development || '', shift || '', unknown || '', next || '',
           draft || '', publish_url || '', published_at || null,
           Number(order_in_season) || 0, profileId || '', now, id,
         );
@@ -683,7 +696,20 @@ function registerIpc() {
         const { promise } = enqueueAgentRun('extract', `素材抽取: ${String(lastAnswer).slice(0, 20)}`, { cli, model: model || '' }, p);
         const { content } = await promise;
         const parsed = parseExtractOutput(content);
-        // 1) 证据行（复用既有落库段：查重后插入）
+        // —— 出处执法先行：在证据落库前定稿 verdict，accepted 的 src 要回填进 evidence ——
+        const slotKeys = parsed.slots ? Object.keys(parsed.slots) : [];
+        const msgs = (obs.episode_id && slotKeys.length)
+          ? db.prepare('SELECT id, role, content FROM interview_messages WHERE observation_id=? ORDER BY id').all(observationId)
+          : [];
+        const verdict = (obs.episode_id && slotKeys.length)
+          ? validatePatch(parsed, msgs)
+          : { accepted: [], pending: [], rejected: [] };
+        // accepted 的 src 数组：validatePatch 执法下缺 src / 任一 src 查无消息都会进 rejected，
+        // 所以 accepted 项必然带 src；若万一出现空 src（如无 episode 时无从验证、accepted 为空），
+        // 按 [] 落库（与旧行为一致，不因回填逻辑崩掉访谈）。
+        const srcIds = [...new Set(verdict.accepted.flatMap((a) => (a && Array.isArray(a.src) ? a.src : [])))].sort((x, y) => x - y);
+        // 1) 证据行（复用既有落库段：查重后插入）——source_message_ids 不再写死 []：
+        //    回填本轮 accepted 项的 src，守住契约“证据必须回指作者原话 message id”
         if (parsed.evidence.length) {
           const have = db.prepare('SELECT id, content FROM evidence WHERE observation_id=?').all(observationId);
           const norm = (t) => String(t).replace(/\s+/g, '');
@@ -694,16 +720,13 @@ function registerIpc() {
             const dup = have.some((h) => norm(h.content).includes(norm(text)) || norm(text).includes(norm(h.content)));
             if (dup) continue;
             db.prepare('INSERT INTO evidence (observation_id, content, kind, source_message_ids) VALUES (?, ?, ?, ?)')
-              .run(observationId, text, it.kind || 'fact', JSON.stringify([]));
+              .run(observationId, text, it.kind || 'fact', JSON.stringify(srcIds));
             inserted++;
           }
           if (inserted) console.log(`[extract] 卡 ${observationId} 新增 ${inserted} 条证据`);
         }
         // 2) 槽位补全：accepted 直写 / 零重叠挂"[待确认] "前缀 → 同列（无第三态表）
-        const slotKeys = parsed.slots ? Object.keys(parsed.slots) : [];
         if (obs.episode_id && slotKeys.length) {
-          const msgs = db.prepare('SELECT id, role, content FROM interview_messages WHERE observation_id=? ORDER BY id').all(observationId);
-          const verdict = validatePatch(parsed, msgs);
           const assigns = {};
           for (const a of verdict.accepted) assigns[a.slot] = String(a.text || '').trim();
           for (const pd of verdict.pending) assigns[pd.slot] = '[待确认] ' + String(pd.text || '').trim();

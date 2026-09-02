@@ -36,21 +36,31 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   const [status, setStatus] = useState<EpisodeStatus>('observation');
   const [publishUrl, setPublishUrl] = useState('');
 
+  // 拉最新行并 setForm——挂在初始加载 + focus 刷新两条路径上（T5 stale write）
+  const loadRow = async () => {
+    if (!window.electronAPI?.getEpisode) { setLoading(false); return; }
+    const row = await window.electronAPI.getEpisode(episodeId);
+    if (!row) { showToast('❌ Episode 不存在'); onBack(); return; }
+    setEp(row);
+    setTitle(row.title || '');
+    setDraft(row.draft || '');
+    setStatus((row.status as EpisodeStatus) || 'observation');
+    setPublishUrl(row.publish_url || '');
+    setLoading(false);
+  };
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      if (!window.electronAPI?.getEpisode) { setLoading(false); return; }
-      const row = await window.electronAPI.getEpisode(episodeId);
-      if (cancelled) return;
-      if (!row) { showToast('❌ Episode 不存在'); onBack(); return; }
-      setEp(row);
-      setTitle(row.title || '');
-      setDraft(row.draft || '');
-      setStatus((row.status as EpisodeStatus) || 'observation');
-      setPublishUrl(row.publish_url || '');
-      setLoading(false);
-    })();
+    (async () => { await loadRow(); if (cancelled) return; })();
     return () => { cancelled = true; };
+  }, [episodeId, onBack]);
+
+  // stale write 修复：外部写入（extract/AI 回流、其他路径）后回到本窗口，
+  // 先重新拉行再 setForm——编辑页 stale state 就不会把外部写入的槽位冲成空/旧值
+  useEffect(() => {
+    const onFocus = () => { void loadRow(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [episodeId, onBack]);
 
   // 自动按"哪一阶段字段已填"算当前状态

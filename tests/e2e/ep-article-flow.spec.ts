@@ -96,3 +96,28 @@ test('策划通道探测：plan 缺料/缺模板返回 {ok:false} 结构化错�
   expect(mm.ok).toBe(false);
   expect(typeof mm.error).toBe('string');
 });
+
+test('EP03 槽位不被编辑页冲掉（stale write 回归）', async () => {
+  // 前置：本 spec 没有现成 episode —— 走真实出生路径 卡片→长成 EP（带 observation/question/insight），
+  // 再打开 EP 编辑页（EpisodePage 挂载，focus 监听就位），然后跑 brief 里的 stale write 回归体。
+  await invokeIpc(ctx.window, 'season:save', { title: `T5 stale write 回归季 ${Date.now()}` });
+  const cardId = await createCardWith(`stale 卡 ${Date.now()}：电梯里没人按楼层`);
+  expect(cardId).toBeTruthy();
+  const row0 = ctx.window.locator('.obs-row').filter({ hasText: `stale 卡` }).first();
+  await expect(row0).toBeVisible({ timeout: 6000 });
+  await row0.locator('button:has-text("长成 EP")').click();
+  // 长成后 dashboard reloadTick 重拉 → 创作主线出现这集 → 点进编辑页
+  const epRow = ctx.window.locator('.season-episode-row').first();
+  await expect(epRow).toBeVisible({ timeout: 8000 });
+  await epRow.click();
+  await expect(ctx.window.locator('.ep-title-input')).toBeVisible({ timeout: 8000 });
+
+  // 打开 EP 页 → 外部 IPC 写 development → 页面派发 focus → 页面触发保存 → 读回
+  const dev = '后续数据反而更差';
+  await ctx.window.evaluate(async (d) => { const eps = await (window as any).electronAPI.listEpisodes(); const ep = eps[0];
+    await (window as any).electronAPI.saveEpisode({ id: ep.id, season_id: ep.season_id, title: ep.title, status: ep.status, profileId: '' , development: d }); }, dev);
+  await ctx.window.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await ctx.window.waitForTimeout(400);
+  const got = await ctx.window.evaluate(async () => { const eps = await (window as any).electronAPI.listEpisodes(); return eps[0].development; });
+  expect(got).toBe(dev);
+});
