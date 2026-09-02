@@ -39,6 +39,8 @@
 - **EP 正文格式（owner 定，2026-09-01）**：自然大段 3~6 段、纯文本输出；禁小标题、禁"金句一行一段"短句体——**目标是文字像人写的，不像排版的**。强调由 owner 在排版步点击改判加，生成时不加粗不切短句
 - **Idea Interview 无轮数上限（owner 定，2026-09-01）**：AI 自由追问直到出 INSIGHT 或用户主动点「我定稿了」。三轮硬收尾是错的——对话该由作者决定什么时候停，不是系统。Modal 关空白处给提示，避免误关丢进度
 - **Idea Interview 用 skill 实现（owner 定，2026-09-01）**：会话规则不再写死在 prompt 模板，挪到 `src/skills/interview/idea-interview/SKILL.md`（带 frontmatter）。`src/prompts/interview.md` 只剩 skillBody + 上下文包装。
+- **EP 是活档案、冻结的是文章（owner 定，2026-09-02）**：文章发布 = 那篇文章（公众号快照）冻结，EP 继续长——后续数据/经历回流进 Development/Shift/Unknown，只有新问题才开新卡。一个 EP 可长出多篇文章（跟进篇/收尾篇）
+- **reader_question 防拔高（owner 定，2026-09-02）**：Article Plan 用「陌生读者可以代入的问题」，不是「所有人都面对的大问题」；出现「每个人都会/我们总是」式拔高句式 = AI 加戏，Plan 提议直接拒收重做（validateAngles 执法）
 
 ---
 
