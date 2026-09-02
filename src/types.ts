@@ -73,8 +73,8 @@ declare global {
       evidenceDelete: (id: number) => Promise<{ ok: boolean; error?: string }>;
       /** 观点确认：AI 只提议，用户确认后写 insights + 卡冗余 + insight_found */
       insightConfirm: (params: { observationId: number; content: string; evidenceIds?: number[] }) => Promise<{ ok: boolean; error?: string }>;
-      /** 策划：组 EP 材料喂 CLI 出 3~5 角度（过拔高红线后返回，不落库） */
-      planPropose: (params: { episodeId: number; cli?: string; model?: string }) => Promise<{ ok: boolean; proposals?: string[]; rejectedHigh?: string[]; error?: string }>;
+      /** 策划：组 EP 材料喂 CLI 出 3~5 角度（过拔高红线后返回，不落库）。cli 必填——handler 无 cli 直接结构化失败（纠正 B：类型与实现对齐） */
+      planPropose: (params: { episodeId: number; cli: string; model?: string }) => Promise<{ ok: boolean; proposals?: string[]; rejectedHigh?: string[]; error?: string }>;
       /** 策划：用户确认方案 → 落 article_plans（confirmed=1） */
       planConfirm: (params: { episodeId: number; plan: ArticlePlanDraft }) => Promise<{ ok: boolean; id?: number; error?: string }>;
       planList: (episodeId: number) => Promise<{ ok: boolean; plans: ArticlePlan[]; error?: string }>;

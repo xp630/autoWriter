@@ -7,6 +7,9 @@
  * 但用户答仍要在 history 里查得到，重开访谈能续上。
  */
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   launchAutoWriter,
   cleanupAutoWriter,
@@ -16,13 +19,33 @@ import {
 } from './_electron-app';
 
 let ctx: LaunchedApp;
+let fakeBin: string;
+
+/** Task 7：把假 claude 放到 PATH —— propose 走真 handler + 真模板 + 固定注入输出（不入真 LLM） */
+function createFakeClaudeBin(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'autowriter-fakebin-'));
+  const script = `#!/bin/sh
+cat > /dev/null 2>&1
+printf '%s\n' '["电梯里没人按楼层——都市人的静默协议","编剧对着空白文档叹气——创作现场的真实瞬间","AI 编剧最兴奋,人类编剧最沉默——谁在替谁创作","我们总是从别人的样本里找答案——这次不如从自己开始"]'
+`;
+  const f = path.join(dir, 'claude');
+  fs.writeFileSync(f, script);
+  fs.chmodSync(f, 0o755);
+  return dir;
+}
 
 test.beforeAll(async () => {
-  ctx = await launchAutoWriter({ resetDb: true });
+  // 假 claude 只服务本 spec：其它用例全部显式传 __nonexistent_cli__，不受影响
+  fakeBin = createFakeClaudeBin();
+  ctx = await launchAutoWriter({
+    resetDb: true,
+    env: { PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ''}` },
+  });
 });
 
 test.afterAll(async () => {
   if (ctx) await cleanupAutoWriter(ctx.app, ctx.userDataDir);
+  if (fakeBin) { try { fs.rmSync(fakeBin, { recursive: true, force: true }); } catch {} }
 });
 
 /** 在仪表盘"今日观察"里建一张观察卡，返回卡 id（卡片唯一标识以观察句为准） */
@@ -310,6 +333,106 @@ test('Task6 修复轮1：丢弃走 clearSlots 显式清空（DB 真空串）+ CO
     mask?.click();
   });
   await ctx.window.waitForTimeout(200);
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await ctx.window.evaluate(async (id) => (window as any).electronAPI.deleteCard(id), cardId);
+  await ctx.window.waitForTimeout(300);
+});
+
+test('Task7 文章策划：AI 提议→拔高拒收→人择一→确认落库（fake claude 注入固定输出）', async () => {
+  const stamp = String(Date.now());
+  const obsText = `T7 策划卡 ${stamp}：电梯里 AI 编剧在聊剧本`;
+  // 1) 真实出生：存卡 → 长成 EP → 拿 epId（槽位与 plans 都在 episodes 上）
+  const cardId = await createCardWith(obsText);
+  const row0 = ctx.window.locator('.obs-row').filter({ hasText: `T7 策划卡 ${stamp}` }).first();
+  await expect(row0).toBeVisible({ timeout: 6000 });
+  await row0.locator('button:has-text("长成 EP")').click();
+  await expect.poll(async () => {
+    const r = await execSql<Array<{ episode_id: number | null }>>(ctx.window, 'SELECT episode_id FROM observations WHERE id=?', [cardId]);
+    return r[0]?.episode_id ?? null;
+  }, { timeout: 8000 }).toBeTruthy();
+  const epRows = await execSql<Array<{ episode_id: number }>>(ctx.window, 'SELECT episode_id FROM observations WHERE id=?', [cardId]);
+  const epId = epRows[0]?.episode_id;
+  expect(epId).toBeTruthy();
+
+  // 2) 进 EP 页：暂无 judgment → 入口灰显 + 提示（不拦截弹层）
+  const epRowUi = ctx.window.locator('.season-episode-row').filter({ hasText: `T7 策划卡 ${stamp}` }).first();
+  await expect(epRowUi).toBeVisible({ timeout: 8000 });
+  await epRowUi.click();
+  await expect(ctx.window.locator('.ep-title-input')).toBeVisible({ timeout: 8000 });
+  const proposeBtn = ctx.window.locator('.plan-propose-btn');
+  await expect(proposeBtn).toBeVisible({ timeout: 8000 });
+  await expect(proposeBtn).toBeDisabled();
+  await expect(ctx.window.locator('.plan-gate-hint')).toContainText('先有已确认观点');
+
+  // 3) IPC 预置 judgment（episodes.insight 非空即可，无完整度要求）+ 两条证据（证据链候选）
+  const epRow = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  const judgment = `已确认观点 ${stamp}：兴奋不代表看过成片`;
+  await invokeIpc(ctx.window, 'episode:save', {
+    id: epId, season_id: epRow?.season_id, title: epRow?.title || '', slug: epRow?.slug, status: epRow?.status || 'observation',
+    observation: epRow?.observation || '', question: epRow?.question || '', insight: judgment,
+    draft: epRow?.draft || '', publish_url: epRow?.publish_url || '', published_at: epRow?.published_at ?? null,
+    order_in_season: epRow?.order_in_season ?? 0, profileId: epRow?.profile_id || '',
+  });
+  const ev1r = await invokeIpc<{ ok: boolean; id?: number }>(ctx.window, 'evidence:save', { observationId: cardId, content: `证据A ${stamp}：编剧席只有两台笔记本` });
+  const ev2r = await invokeIpc<{ ok: boolean; id?: number }>(ctx.window, 'evidence:save', { observationId: cardId, content: `证据B ${stamp}：AI 编剧从没看过成片` });
+  expect(ev1r.ok).toBe(true);
+  expect(ev2r.ok).toBe(true);
+  const evId1 = ev1r.id as number;
+
+  // 4) 域断言：plan:propose 假CLI 返回 4 角度 → validateAngles 只放行 3、拒收 1（含"我们总是"）
+  const propose = await invokeIpc<{ ok: boolean; proposals?: string[]; rejectedHigh?: string[]; error?: string }>(
+    ctx.window, 'plan:propose', { episodeId: epId, cli: 'claude' },
+  );
+  expect(propose.ok).toBe(true);
+  expect(propose.error).toBeUndefined();
+  expect(propose.proposals?.length).toBe(3);
+  expect(propose.rejectedHigh?.length).toBe(1);
+  expect(propose.rejectedHigh?.[0]).toContain('我们总是');
+  const chosen = (propose.proposals || [])[0];
+
+  // 5) focus 触发页面重拉（insight 落库）→ 入口亮起 → 点提议
+  await ctx.window.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(proposeBtn).toBeEnabled({ timeout: 8000 });
+  await proposeBtn.click();
+
+  // 6) UI 只显示 3 个候选 + 一行"1 个提议因拔高被拒"，拒收句不出现在候选里
+  await expect(ctx.window.locator('.plan-candidate')).toHaveCount(3, { timeout: 12000 });
+  await expect(ctx.window.locator('.plan-rejected-hint')).toContainText('1 个提议因拔高被拒');
+  await expect(ctx.window.locator('.plan-candidate').filter({ hasText: '我们总是' })).toHaveCount(0);
+  const candidateTexts = await ctx.window.locator('.plan-candidate').allTextContents();
+  expect(candidateTexts).toContain(chosen);
+
+  // 7) 点选一个 → 补三问 / scope → 勾选一条证据 → 确认落库
+  await ctx.window.locator('.plan-candidate').filter({ hasText: chosen }).first().click();
+  const rq = `读者问题 ${stamp}：为什么同事都在聊 AI 编剧，却没人在意成片？`;
+  const cc = `核心冲突 ${stamp}：兴奋的 AI 编剧 vs 沉默的人类编剧`;
+  const scope = `讨论边界 ${stamp}：不讨论技术原理`;
+  await ctx.window.locator('.plan-rq').fill(rq);
+  await ctx.window.locator('.plan-cc').fill(cc);
+  await ctx.window.locator('.plan-scope').fill(scope);
+  const firstEv = ctx.window.locator('.plan-evidence-option').first();
+  await expect(firstEv).toBeVisible({ timeout: 8000 });
+  await firstEv.locator('input[type=checkbox]').check();
+  await ctx.window.locator('.plan-confirm-btn').click();
+
+  // 8) plan:list 回读 chosen_angle 与 evidence_ids（走真 DB）
+  await expect.poll(async () => {
+    const l = await invokeIpc<{ ok: boolean; plans: any[] }>(ctx.window, 'plan:list', epId);
+    return l.ok ? (l.plans.length || 0) : -1;
+  }, { timeout: 8000 }).toBeGreaterThan(0);
+  const list = await invokeIpc<{ ok: boolean; plans: any[] }>(ctx.window, 'plan:list', epId);
+  const plan = list.plans[0];
+  expect(plan.chosen_angle).toBe(chosen);
+  expect(plan.reader_question).toBe(rq);
+  expect(plan.core_conflict).toBe(cc);
+  expect(plan.discussion_scope).toBe(scope);
+  expect(plan.confirmed).toBe(1);
+  expect(JSON.parse(plan.evidence_ids)).toEqual([evId1]);
+  expect(plan.judgment_ref).toBe(judgment);
+  // UI 侧方案回读可见（selected 行展示 chosen_angle）
+  await expect(ctx.window.locator('.plan-row-angle').filter({ hasText: chosen })).toBeVisible({ timeout: 8000 });
+
+  // 清理：删卡（growCard 建的 EP 一并清）
   ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
   await ctx.window.evaluate(async (id) => (window as any).electronAPI.deleteCard(id), cardId);
   await ctx.window.waitForTimeout(300);
