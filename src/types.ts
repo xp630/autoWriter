@@ -615,7 +615,7 @@ export interface Season {
   episode_count?: number;
 }
 
-export type CardStatus = 'raw' | 'grown';
+export type CardStatus = 'new' | 'interviewing' | 'insight_found' | 'episode_created';
 
 /** 观察卡：生活账。一天可多张；长成 EP 时才挂 episode_id */
 export interface ObservationCard {

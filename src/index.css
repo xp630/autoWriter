@@ -2777,3 +2777,21 @@ select:focus-visible {
 .iv-msg.me { background: #ecfdf5; color: #065f46; align-self: flex-end; border-bottom-right-radius: 3px; }
 .iv-thinking { opacity: .55; font-style: italic; }
 .iv-candidate { font-size: 16px; font-weight: 700; color: #047857; background: #ecfdf5; border-left: 3px solid #10b981; padding: 10px 14px; border-radius: 4px; margin-top: 4px; line-height: 1.6; }
+
+/* ===== Task 6：EP 槽位生长预览（访谈弹窗内，聊天旁边不断长出来的档案） ===== */
+.iv-preview { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; max-height: 32vh; overflow: auto; }
+.iv-preview-title { font-size: 12px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+.iv-preview-hint { font-weight: 400; font-size: 10.5px; color: var(--muted); margin-left: 4px; }
+.iv-preview-sub { font-size: 11px; font-weight: 700; color: var(--muted); margin: 10px 0 4px; }
+.iv-preview-empty { font-size: 12px; color: var(--muted); padding: 6px 0; line-height: 1.6; }
+.iv-slot-list { display: flex; flex-direction: column; gap: 6px; }
+.iv-slot { border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--bg-soft); margin-top: 6px; }
+.iv-slot-ok { border-left: 3px solid var(--line); }
+.iv-slot-pending { border-left: 3px solid #f59e0b; background: #fffbeb; }
+.iv-slot-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.iv-slot-label { font-size: 11px; font-weight: 700; color: var(--muted); }
+.iv-slot-flag { font-size: 10px; color: #b45309; background: #fef3c7; border-radius: 4px; padding: 0 6px; line-height: 1.5; }
+.iv-slot-text { font-size: 13px; line-height: 1.5; color: var(--ink); word-break: break-word; }
+.iv-slot-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.iv-evidence { display: flex; flex-direction: column; gap: 4px; }
+.iv-evidence-item { font-size: 12px; color: var(--ink-3); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; margin-top: 4px; line-height: 1.5; }

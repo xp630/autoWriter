@@ -164,3 +164,74 @@ test('EP03 槽位不被编辑页冲掉（stale write 回归）', async () => {
   expect(after.question).toBe(ext.question);
   expect(after.insight).toBe(ext.insight);
 });
+test('Task6 访谈 UI：历史恢复 + 槽位生长预览（pending 可裁决）', async () => {
+  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
+  const stamp = String(Date.now());
+  // 1) 存卡（真实出生路径：UI 建卡）
+  const cardId = await createCardWith(`T6 预览卡 ${stamp}：电梯里 AI 编剧在聊剧本`);
+  // 2) 长成 EP → 拿 episodeId（槽位列在 episodes 上）
+  const grown = await ctx.window.evaluate(async (id) => (window as any).electronAPI.growCard(id), cardId);
+  expect(grown?.ok).toBe(true);
+  const epId = grown.episodeId as number;
+  expect(epId).toBeTruthy();
+  // 3) 假 CLI 访谈一轮：作者答落库（留痕），AI 不可用 → modal 自动关
+  await openInterviewAndAnswer(cardId, '他们兴奋但显然没看过成片');
+  // 4) 预置：history 两行 + evidence 两条 + [待确认] Event: 直写
+  const presetQ = `预置质问 ${stamp}：为什么这件事让你停顿三秒？`;
+  const presetA = `预置回答 ${stamp}：因为我第一次看到人类编剧在场`;
+  await execSql(ctx.window,
+    `INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, 'assistant', ?, 10, ?)`,
+    [cardId, presetQ, new Date().toISOString()]);
+  await execSql(ctx.window,
+    `INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, 'user', ?, 11, ?)`,
+    [cardId, presetA, new Date().toISOString()]);
+  const ev1 = `预置证据A ${stamp}：编剧席只有两台笔记本`;
+  const ev2 = `预置证据B ${stamp}：有人对着空白文档叹气`;
+  const e1 = await invokeIpc<{ ok: boolean }>(ctx.window, 'evidence:save', { observationId: cardId, content: ev1 });
+  const e2 = await invokeIpc<{ ok: boolean }>(ctx.window, 'evidence:save', { observationId: cardId, content: ev2 });
+  expect(e1.ok).toBe(true);
+  expect(e2.ok).toBe(true);
+  const pendingText = `Event: ${stamp} 唯一在场的编剧家属`;
+  const epRow = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  await invokeIpc(ctx.window, 'episode:save', {
+    id: epId,
+    season_id: epRow?.season_id, title: epRow?.title || '', slug: epRow?.slug, status: epRow?.status || 'observation',
+    observation: epRow?.observation || '', question: epRow?.question || '', insight: epRow?.insight || '',
+    event: `[待确认] ${pendingText}`,
+    draft: epRow?.draft || '', publish_url: epRow?.publish_url || '', published_at: epRow?.published_at ?? null,
+    order_in_season: epRow?.order_in_season ?? 0, profileId: epRow?.profile_id || '',
+  });
+  const verifyBefore = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+  expect(verifyBefore?.event).toBe(`[待确认] ${pendingText}`);
+  // 5) 开访谈 → 断言：历史气泡恢复；pending 行带 采纳/丢弃/说错在哪；证据进预览
+  const obs = await execSql<Array<{ observation: string }>>(ctx.window, 'SELECT observation FROM observations WHERE id=?', [cardId]);
+  const row = ctx.window.locator('.obs-row').filter({ hasText: obs[0]?.observation || '' }).first();
+  await row.locator('button.iv-open').click();
+  await expect(ctx.window.locator('.iv-mask')).toBeVisible();
+  await expect(ctx.window.locator('.iv-msg').filter({ hasText: presetQ })).toBeVisible({ timeout: 8000 });
+  await expect(ctx.window.locator('.iv-msg').filter({ hasText: presetA })).toBeVisible();
+  const pendingRow = ctx.window.locator('.iv-preview .iv-slot-pending').filter({ hasText: 'Event' }).first();
+  await expect(pendingRow).toBeVisible({ timeout: 8000 });
+  await expect(pendingRow).toContainText(pendingText);
+  await expect(pendingRow.locator('button:has-text("采纳")')).toBeVisible();
+  await expect(pendingRow.locator('button:has-text("丢弃")')).toBeVisible();
+  await expect(pendingRow.locator('button:has-text("说错在哪")')).toBeVisible();
+  await expect(ctx.window.locator('.iv-preview')).toContainText(ev1);
+  await expect(ctx.window.locator('.iv-preview')).toContainText(ev2);
+  // 6) 采纳 → 去前缀 → 槽位落定（DB 无 [待确认] 前缀 + UI pending chip 消失）
+  await pendingRow.locator('button:has-text("采纳")').click();
+  await expect.poll(async () => {
+    const after = await ctx.window.evaluate(async (id) => (window as any).electronAPI.getEpisode(id), epId);
+    return after?.event || '';
+  }, { timeout: 8000 }).toBe(pendingText);
+  await expect(ctx.window.locator('.iv-preview .iv-slot-pending').filter({ hasText: pendingText })).toHaveCount(0);
+  // 清理：关 modal + 删卡（growCard 建的 EP 一并清）
+  await ctx.window.evaluate(() => {
+    const mask = document.querySelector('.iv-mask') as HTMLElement | null;
+    mask?.click();
+  });
+  await ctx.window.waitForTimeout(200);
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await ctx.window.evaluate(async (id) => (window as any).electronAPI.deleteCard(id), cardId);
+  await ctx.window.waitForTimeout(300);
+});

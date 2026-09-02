@@ -28,7 +28,7 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
-import type { Article, Episode, ObservationCard, QueueSnapshot, Season } from '../types';
+import type { Article, ArticlePlan, Episode, EvidenceItem, InsightItem, ObservationCard, QueueSnapshot, Season } from '../types';
 
 interface Props {
   onNavigate: (page: string) => void;
@@ -44,6 +44,19 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 const AGENT_LABEL: Record<string, string> = {
   pi: 'pi', claude: 'Claude Code', opencode: 'opencode', codex: 'Codex CLI',
 };
+
+// ===== Task 6：EP 槽位生长预览（六列的展示顺序与中文标签） =====
+const EP_SLOTS = ['event', 'reaction', 'development', 'shift', 'unknown', 'next'] as const;
+const SLOT_LABELS: Record<string, string> = {
+  event: '事件 Event',
+  reaction: '反应 Reaction',
+  development: '发展 Development',
+  shift: '转折 Shift',
+  unknown: '未知 Unknown',
+  next: '下一步 Next',
+};
+/** pending 槽位标记：T3 契约——带此前缀就是“AI 提议、等人裁决”，裁决=去前缀调 saveEpisode */
+const PENDING_PREFIX = '[待确认] ';
 
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
@@ -112,6 +125,16 @@ export function DashboardPage({ onNavigate }: Props) {
   // 流式累积：AI 当前正在输出的原始文本（taskId 用于过滤 chunk）
   const [ivStreamText, setIvStreamText] = useState('');
   const [ivStreamTaskId, setIvStreamTaskId] = useState<string | null>(null);
+  // Task 6：EP 槽位生长预览（有 EP 时轮询 episode:material；previewTick 用于采纳/丢弃后立即刷新）
+  const [preview, setPreview] = useState<{
+    ep?: Episode | null;
+    observations?: ObservationCard[];
+    evidence?: EvidenceItem[];
+    insights?: InsightItem[];
+    plans?: ArticlePlan[];
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTick, setPreviewTick] = useState(0);
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -204,6 +227,20 @@ export function DashboardPage({ onNavigate }: Props) {
   // modal 起来时 textarea 为空，作者先说一句，AI 自己从 observation + 第一答生成追问
   const startIv = (c: ObservationCard) => {
     setIv({ card: c, msgs: [], answers: [], stage: 'ask', value: '', busy: false, candidate: '' });
+    // Task 6：重开访谈先回放留痕（interview_messages 全量）——真答案续上，不重新开始
+    void (async () => {
+      try {
+        if (!window.electronAPI?.interviewHistory) return;
+        const h = await window.electronAPI.interviewHistory(c.id);
+        if (!h?.ok || !Array.isArray(h.messages)) return;
+        const msgs = h.messages.map((m) => ({
+          who: (m.role === 'user' ? 'me' : 'ai') as 'me' | 'ai',
+          text: m.content,
+          reasoning: m.reasoning || undefined,
+        }));
+        setIv((prev) => (prev && prev.card.id === c.id && prev.msgs.length === 0 ? { ...prev, msgs } : prev));
+      } catch (err) { console.warn('[interview] 历史恢复失败:', err); }
+    })();
   };
 
   /** 存访谈成果：question=第一答（停顿），insight=确认过的观点句 */
@@ -226,6 +263,75 @@ export function DashboardPage({ onNavigate }: Props) {
     });
     return unsub;
   }, [ivStreamTaskId]);
+
+  // Task 6：EP 槽位生长预览——卡有 EP 时轮询 episode:material，EP 长出来后也自动跟上
+  useEffect(() => {
+    if (!iv || !iv.card.episode_id) { setPreview(null); setPreviewLoading(false); return; }
+    let cancelled = false;
+    const load = async () => {
+      if (!window.electronAPI?.episodeMaterial) return;
+      setPreviewLoading(true);
+      try {
+        const m = await window.electronAPI.episodeMaterial(iv.card.episode_id!);
+        if (!cancelled && m?.ok) setPreview(m);
+      } catch (err) { console.warn('[interview] 槽位预览刷新失败:', err); }
+      finally { if (!cancelled) setPreviewLoading(false); }
+    };
+    void load();
+    const t = setInterval(load, 2000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [iv?.card?.id, iv?.card?.episode_id, previewTick]);
+
+  /** 组装 saveEpisode 载荷：槽位更新必须带全渲染层已知字段，避免 T5 不对称保护把 title/season/status/draft 冲空 */
+  const slotPayload = (slot: string, value: string) => {
+    const ep = preview?.ep;
+    if (!ep) return null;
+    const p: Record<string, unknown> = {
+      id: ep.id,
+      season_id: ep.season_id,
+      title: ep.title || '',
+      slug: ep.slug,
+      status: ep.status,
+      observation: ep.observation || '',
+      question: ep.question || '',
+      insight: ep.insight || '',
+      draft: ep.draft || '',
+      publish_url: ep.publish_url || '',
+      published_at: ep.published_at ?? null,
+      order_in_season: ep.order_in_season ?? 0,
+      profileId: ep.profile_id || '',
+    };
+    p[slot] = value;
+    return p;
+  };
+
+  /** 采纳 pending：裁决=去掉前缀调 saveEpisode */
+  const adoptSlot = async (slot: string, raw: string) => {
+    const payload = slotPayload(slot, raw.replace(/^\[待确认\]\s*/, ''));
+    if (!payload) return;
+    try {
+      const r = await window.electronAPI?.saveEpisode?.(payload as any);
+      if (r?.ok) { showToast('✅ 已采纳——槽位落定'); setPreviewTick((t) => t + 1); }
+      else showToast('❌ 采纳失败');
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+
+  /** 丢弃 pending：把这条 AI 提议从槽位里清掉（槽位恢复空缺） */
+  const discardSlot = async (slot: string) => {
+    const payload = slotPayload(slot, ' ');
+    if (!payload) return;
+    try {
+      const r = await window.electronAPI?.saveEpisode?.(payload as any);
+      if (r?.ok) { showToast('🗑 已丢弃——该槽位恢复空缺'); setPreviewTick((t) => t + 1); }
+      else showToast('❌ 丢弃失败');
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+
+  /** 说错在哪：把话头交回聊天框——正路是告诉 AI 错在哪，它重抽 */
+  const sayWrong = (slot: string) => {
+    if (!iv) return;
+    setIv({ ...iv, stage: 'ask', value: `「${SLOT_LABELS[slot] || slot}」这里说得不对：` });
+  };
 
   const ivSend = async () => {
     if (!iv || iv.busy) return;
@@ -351,7 +457,7 @@ export function DashboardPage({ onNavigate }: Props) {
           <div className="obs-feed">
             {cards.slice(0, 6).map((c) => (
               <div key={c.id} className="obs-row">
-                <span className={`obs-dot ${c.status === 'grown' ? 'grown' : 'raw'}`} />
+                <span className={`obs-dot ${c.status === 'episode_created' ? 'grown' : 'raw'}`} />
                 <div className="obs-main">
                   <div className="obs-text">{c.observation}</div>
                   {c.insight && <div className="obs-insight">→ {c.insight}</div>}
@@ -359,7 +465,7 @@ export function DashboardPage({ onNavigate }: Props) {
                 <div className="obs-side">
                   <span className="obs-date">{new Date(c.created_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
                   <button type="button" className="btn btn-ghost btn-sm iv-open" onClick={() => startIv(c)} title="对着这张卡做两问访谈：什么让你停顿？最想说什么？">Idea Interview</button>
-                  {c.status === 'grown'
+                  {c.status === 'episode_created'
                     ? <span className="obs-grown-tag">🌳 {c.episode_title || '已长成 EP'}</span>
                     : <button type="button" className="btn btn-ghost btn-sm" onClick={() => void growCard(c.id)} title="用这张卡开一个新的 Episode">长成 EP</button>}
                   <button type="button" className="obs-del" title="删除" onClick={() => void deleteCard(c.id)}>×</button>
@@ -631,6 +737,50 @@ export function DashboardPage({ onNavigate }: Props) {
                   ))}
                   <span className="iv-cursor">▍</span>
                 </div>
+              )}
+            </div>
+            {/* Task 6：EP 槽位生长预览——聊天旁边不断长出来的档案（AI 提议、人来裁） */}
+            <div className="iv-preview">
+              <div className="iv-preview-title">EP 槽位生长 <span className="iv-preview-hint">AI 逐轮抽取 · 人来裁</span></div>
+              {previewLoading && !preview ? (
+                <div className="iv-preview-empty">读取中…</div>
+              ) : !iv.card.episode_id ? (
+                <div className="iv-preview-empty">这张卡还没长成 EP——点卡片上的「长成 EP」之后，这里会实时长出槽位与证据。</div>
+              ) : !preview || !preview.ep ? (
+                <div className="iv-preview-empty">Episode 找不到了，预览暂缺。</div>
+              ) : (
+                <>
+                  {EP_SLOTS.map((slot) => {
+                    const raw = String((preview.ep as any)?.[slot] || '').trim();
+                    if (!raw) return null;
+                    const pending = raw.startsWith(PENDING_PREFIX);
+                    const text = pending ? raw.slice(PENDING_PREFIX.length) : raw;
+                    return (
+                      <div key={slot} className={`iv-slot ${pending ? 'iv-slot-pending' : 'iv-slot-ok'}`}>
+                        <div className="iv-slot-head">
+                          <span className="iv-slot-label">{SLOT_LABELS[slot] || slot}</span>
+                          {pending && <span className="iv-slot-flag">待确认</span>}
+                        </div>
+                        <div className="iv-slot-text">{text}</div>
+                        {pending && (
+                          <div className="iv-slot-actions">
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void adoptSlot(slot, raw)}>采纳</button>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void discardSlot(slot)}>丢弃</button>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => sayWrong(slot)}>说错在哪</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {preview.evidence && preview.evidence.length > 0 && (
+                    <div className="iv-evidence">
+                      <div className="iv-preview-sub">证据（AI 从对话里抽出）</div>
+                      {preview.evidence.map((ev) => (
+                        <div key={ev.id} className="iv-evidence-item">{ev.content}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
             {iv.stage === 'ask' && (

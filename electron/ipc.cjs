@@ -625,7 +625,7 @@ function registerIpc() {
     const text = String(observation || '').trim();
     if (!text) throw new Error('观察不能为空——这就是卡片的唯一必填');
     const r = db.prepare(`INSERT INTO observations (observation, question, insight, status, season_id, profile_id, created_at, updated_at)
-      VALUES (?, ?, ?, 'raw', ?, ?, ?, ?)`)
+      VALUES (?, ?, ?, 'new', ?, ?, ?, ?)`)
       .run(text, question || '', insight || '', season_id || null, profileId || '', now, now);
     return { ok: true, id: r.lastInsertRowid };
   });
@@ -660,7 +660,7 @@ function registerIpc() {
         now,
         now,
       );
-    db.prepare(`UPDATE observations SET status='grown', episode_id=?, updated_at=? WHERE id=?`).run(ep.lastInsertRowid, now, id);
+    db.prepare(`UPDATE observations SET status='episode_created', episode_id=?, updated_at=? WHERE id=?`).run(ep.lastInsertRowid, now, id);
     return { ok: true, episodeId: ep.lastInsertRowid };
   });
 
@@ -759,7 +759,7 @@ function registerIpc() {
           const r1 = db.prepare('INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, ?, ?, ?, ?)')
             .run(obsId, 'user', String(lastMe.text), round, now());
           userMsgId = Number(r1.lastInsertRowid);
-          db.prepare(`UPDATE observations SET status='interviewing', updated_at=? WHERE id=? AND status IN ('new','raw')`).run(now(), obsId);
+          db.prepare(`UPDATE observations SET status='interviewing', updated_at=? WHERE id=? AND status='new'`).run(now(), obsId);
         }
       } catch (e) { console.warn('[interview] 作者答落库失败:', e.message); }
     }
