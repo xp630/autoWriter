@@ -1,7 +1,7 @@
 # EP → Article 转化层 V1 · 设计规格
 
 Date: 2026-09-02 · Status: 待用户审阅 · 来源: /skill:brainstorming（superpowers v6.2.0）
-范围裁决: 本 spec = A（EP 结构+抽取）+ B（Article Plan）；C（Article 生成槽位）另立 spec。
+范围裁决: 本 spec = A（EP 结构+抽取）+ B（Article Plan）；C 期另立 spec：**Article Generation Harness V1**（见 §7）。
 
 ---
 
@@ -106,12 +106,39 @@ Article
 - extractRound 失败/超时：静默重试 1 次，再失败仅 console.warn；终抽兜底。
 - validatePatch 拒收：丢弃项进 pending 列表，不静默——被 AI 编出来的东西要看得见。
 
-## 7. V1 边界（Non-Goals，沿用 owner 文档）
+## 7. Harness 控制层（owner 定稿 2026-09-02，C 期主体）
 
-不做：文章生成槽位（Hook/Story/…）·观点库·排行榜·知识图谱·belief_before/after·
-多 Agent 协作·自动发文·自动确认观点。生成仍走人肉 + Quick Publish，直到本层跑出 20~30 张真卡。
+三权分立：**EP = Source of Truth；Article Plan = Editorial Decision；Harness = Execution Boundary。**
+Harness 不是新模块，是流水线上的控制层：
 
-## 8. 风险与未验证假设
+```
+Article Plan ─→ [ Harness：事实包组装 + 语态规则 + 出口校验 ] ─→ AI 写作 ─→ Claim 对账 ─→ PASS / REVIEW(人裁)
+```
+
+四条执法规则：
+1. **事实包封闭世界**：生成输入 = plan 四件套 + judgment_ref 一条 + evidence_ids 若干（含 kind），
+   其余库内容/模型记忆一律不可达。harness 化接入（如终端 agent）只给
+   `get_fact_pack(plan_id)`，不给万能查库口。
+2. **kind→语态映射表单一真值源**（生成 prompt 与校验器同读一份）：
+   fact=可直陈 | experience=必须第一人称亲历句式 | judgment=可作作者观点
+   | speculation=只能显式推测句式（"我猜/我当时觉得"）| unknown=禁止作答，不得补答案
+3. **出口校验是主体，prompt 规则是附属**：逐句切分（确定性代码）→ 候选证据圈定
+   （数字/关键词匹配）→ LLM 判 supported/unsupported/conflict（只有提名权）→
+   unsupported 进 REVIEW 队列，原文句与证据原文并排呈人——定罪权在人。
+4. **数字逐字对账**：文中数字与 evidence 值精确匹配，不匹配=硬拦截；
+   动机句（他/读者+觉得/认为）无 speculation 背书=硬拦截；材料外引用=删。
+
+C 期 spec 改名：**Article Generation Harness V1**——生成槽位（Hook/Story/Conflict/…）
+是挂在 Harness 下的子项，不是独立功能。架构从 "EP→Article" 升级为
+"EP→Evidence→Plan→Generation Harness→Article"。
+
+## 8. V1 边界（Non-Goals，沿用 owner 文档）
+
+不做（本 spec 与 V1 范围）：文章生成（移交给 C 期 Harness spec，见 §7）·观点库·排行榜·知识图谱·
+belief_before/after·多 Agent 协作·自动发文·自动确认观点。生成仍走人肉 + Quick Publish，
+直到本层跑出 20~30 张真卡。
+
+## 9. 风险与未验证假设
 
 1. **未验证**："AI 能从生的、乱的用户口述中抽出可信九槽位"——dry-run 被 owner 跳过，
    文档内 EP03 示例系另一 AI 整理，不构成证据。首个实施里程碑应含一次真口述验证。
