@@ -122,9 +122,8 @@ export function DashboardPage({ onNavigate }: Props) {
     busy: boolean;
     candidate: string;
   } | null>(null);
-  // 流式累积：AI 当前正在输出的原始文本（taskId 用于过滤 chunk）
+  // 流式累积：AI 当前正在输出的原始文本（常驻订阅 + streamingActiveRef 标志，见 ivSend）
   const [ivStreamText, setIvStreamText] = useState('');
-  const [ivStreamTaskId, setIvStreamTaskId] = useState<string | null>(null);
   // D-2（owner 拍板）：「说错在哪」预填后 textarea 自动获得焦点（ask 态已挂载时 autoFocus 不重新触发，需 ref 主动 focus）
   const ivInputRef = useRef<HTMLTextAreaElement | null>(null);
   // Task 6：EP 槽位生长预览（有 EP 时轮询 episode:material；previewTick 用于采纳/丢弃后立即刷新）
@@ -255,16 +254,17 @@ export function DashboardPage({ onNavigate }: Props) {
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
 
-  // 订阅 agent 流式 chunk → 实时累积访谈的推力/问题
+  // 常驻订阅 agent 流式 chunk：访谈期间（streamingActiveRef=true）的 stdout 直接实时累积
+  // 之前等 await 返回 taskId 才订阅 —— chunk 早已发完，流式是死代码（owner 实测发现的 bug）
+  const streamingActiveRef = useRef(false);
   useEffect(() => {
     if (!window.electronAPI?.onAgentChunk) return;
     const unsub = window.electronAPI.onAgentChunk((chunk: any) => {
-      if (!ivStreamTaskId || chunk.taskId !== ivStreamTaskId) return;
+      if (!streamingActiveRef.current) return;
       if (chunk.type === 'stdout') setIvStreamText((t) => t + chunk.text);
-      if (chunk.type === 'done' || chunk.type === 'error') setIvStreamTaskId(null);
     });
     return unsub;
-  }, [ivStreamTaskId]);
+  }, []);
 
   // Task 6：EP 槽位生长预览——卡有 EP 时轮询 episode:material，EP 长出来后也自动跟上
   useEffect(() => {
@@ -349,14 +349,15 @@ export function DashboardPage({ onNavigate }: Props) {
     const settings = getAgentSettings();
     const ivCli = (window as any).__IV_CLI__ || settings.cli;
     setIvStreamText('');
+    streamingActiveRef.current = true;   // 常驻订阅从这里开始收流
     let r;
     try {
       r = await window.electronAPI?.interviewTurn?.({
         cli: ivCli, model: settings.model,
         observation: iv.card.observation, observationId: iv.card.id, msgs, answers,
       });
-      if (r?.taskId) setIvStreamTaskId(r.taskId);
     } catch (err: any) {
+      streamingActiveRef.current = false;
       console.error('[interview] IPC 调用失败:', err);
       showToast('⚠️ 访谈出错：' + (err?.message || String(err)));
       setIv(null);
@@ -364,6 +365,7 @@ export function DashboardPage({ onNavigate }: Props) {
       return;
     }
     if (!r?.ok) {
+      streamingActiveRef.current = false;
       // 把后端的 error 带出来——这样能看见到底是 spawn 失败还是 CLI 报 401 之类
       const why = (r as any)?.error ? `：${(r as any).error}` : '';
       console.warn('[interview] AI 不可用:', r);
@@ -372,6 +374,7 @@ export function DashboardPage({ onNavigate }: Props) {
       setReloadTick((t) => t + 1);
       return;
     }
+    streamingActiveRef.current = false;   // 本次 turn 结束，停止收流
     if (r.type === 'insight') {
       setIv({ ...iv, answers, msgs, value: '', busy: false, stage: 'confirm', candidate: r.text || '' });
       return;
