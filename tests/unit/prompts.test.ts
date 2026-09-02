@@ -72,6 +72,19 @@ describe('prompts.cjs', () => {
     }
   });
 
+  it('渲染 ep-extract 模板（Task 4 抽取契约）', () => {
+    const out = prompts.renderPrompt('ep-extract', { slotState: '{}', evidence: '无', answer: 'x' });
+    expect(out).toContain('只提取用户明确表达的');
+    expect(out).toContain('不允许出现');
+    // 五档 kind 名（英文码 + 中文档名都在契约里）
+    for (const en of ['fact', 'experience', 'judgment', 'speculation', 'unknown']) expect(out).toContain(en);
+    for (const zh of ['事实', '经历', '判断', '推测', '未知']) expect(out).toContain(zh);
+    // 提供的三个变量都被替换，无残留
+    expect(out).not.toContain('{{slotState}}');
+    expect(out).not.toContain('{{evidence}}');
+    expect(out).not.toContain('{{answer}}');
+  });
+
   it('返回值去除首尾空白', () => {
     const realPath = path.join(prompts.PROMPTS_DIR, '_test_trim.md');
     fs.writeFileSync(realPath, '\n\n  content  \n\n');

@@ -655,7 +655,7 @@ function registerIpc() {
   // 留痕：interview_messages 持久化每一问一答（含 AI 的推力），关掉 app 也能续上
   // 无门槛版：AI 随时可收尾提炼 INSIGHT，用户确认后才算数；只守"出处执法"（validatePatch）
   // 每轮结束后异步抽一轮素材（不阻塞访谈响应；提取失败不影响对话）——
-  // ep-extract 模板属 Task 4，缺失时 renderPrompt 抛错被兜住（console.warn 不崩）
+  // ep-extract 模板（Task 4）：renderPrompt 抛错也兜住（console.warn 不崩）
   const EP_SLOT_COLUMNS = ['event', 'reaction', 'development', 'shift', 'unknown', 'next'];
   const extractRound = (observationId, cli, model, lastAnswer) => {
     if (!observationId || !lastAnswer) return;
@@ -776,12 +776,8 @@ function registerIpc() {
       // —— 留痕：AI 问/收尾也落库 ——
       if (obsId && userMsgId) {
         try {
-          const r2 = db.prepare('INSERT INTO interview_messages (observation_id, role, content, reasoning, round, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+          db.prepare('INSERT INTO interview_messages (observation_id, role, content, reasoning, round, created_at) VALUES (?, ?, ?, ?, ?, ?)')
             .run(obsId, 'assistant', parsed.text, parsed.reasoning || '', round, now());
-          const mid = Number(r2.lastInsertRowid);
-          // 回填本轮来源（作者答 + AI 问）到后续提取的证据上
-          db.prepare('SELECT 1').get(); // no-op keep shape
-          void mid;
         } catch (e) { console.warn('[interview] AI 问落库失败:', e.message); }
       }
       // —— 每轮结束：异步抽一轮素材（不 await，不等它）——
@@ -897,7 +893,7 @@ function registerIpc() {
         plans: JSON.stringify(m.plans.map((p) => p.chosen_angle || '')),
       });
     } catch (err) {
-      // T3：plan-propose 模板属 Task 4，缺失时给结构化失败（e2e 可控）
+      // 模板缺失时给结构化失败（Task 4 已建 plan-propose.md，正常不会走到）
       return { ok: false, error: err.message };
     }
     try {
