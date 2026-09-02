@@ -84,7 +84,7 @@ Harness 执行改写 → 只重检受影响区域 → 收敛
 |---|---|---|
 | PASS | 有 Evidence 背书 | 入稿 |
 | HUMAN_OVERRIDE | 人裁放行（局部，本稿本句持久） | 入稿；**≠ 写进事实库**——是"允许这句话出现"，不是"这句话成为世界记录" |
-| HUMAN_AUTHORED | 人笔（人自己写的句子） | 入稿；**责任转移，不是 Evidence**；Harness 不再自动改写；免再审计（作者即事实源） |
+| HUMAN_AUTHORED | 人笔（作者自行接管） | 入稿；**责任转移，不是 Evidence**；Harness 不再自动改写（V1 不再自动审计），**该句不进入事实库**——是 HUMAN_RESPONSIBILITY，不是“作者即事实源” |
 | UNRESOLVED | 未决 | 见出口 2 |
 
 - 放行权**单句级**：`1 放` = 这一句在这篇里的豁免，**不产生模式级豁免**。（同一句后续复检不得再举——override 按 draft_id+句哈希 记账。）
@@ -95,7 +95,7 @@ Harness 执行改写 → 只重检受影响区域 → 收敛
 fact_pack(plan_id) = {
   plan      : reader_question / core_conflict / discussion_scope / scope_excludes
   spine     : chosen judgment + 其 supporting evidence 列表（结论与支撑同给，禁止模型发明支撑配结论）
-  confirmed   : EP 已确认槽位文本（event/reaction/development/shift/unknown）—— 已经人确认的压缩叙事，与证据共享出处
+  confirmed   : EP 已确认槽位文本（event/observation/reaction/question/development/shift/unknown）—— 已经人确认的压缩叙事，与证据共享出处
   evidence  : Plan 圈定条目 {id, kind, 原文, date?}
   unknowns  : 双重角色——禁止 AI 替作者回答 + 作者可主动声明"不知道"（文章的合法内容）
   timeline  : 被选 fact 的先后；无日期依据 = 写"顺序未知"，禁止 AI 自行排序

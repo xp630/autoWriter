@@ -52,7 +52,7 @@
 - Test: `tests/unit/schema-ep.spec.ts`（新建，用 better-sqlite3 :memory: 执行）
 
 **Interfaces:**
-- Produces: 表 `interview_messages(id,observation_id,role,content,reasoning,round,created_at)`、`evidence(id,observation_id,content,kind,source_message_ids,created_at)`、`insights(id,observation_id,content,evidence_ids,confirmed,created_at)`、`article_plans(id,episode_id,proposals,chosen_angle,article_title,reader_question,core_conflict,judgment_ref,evidence_ids,discussion_scope,confirmed,created_at)`；列 `episodes.{event,reaction,development,shift,unknown,next}`；status 值域 `new|raw→new、grown→episode_created、interviewing、insight_found`
+- Produces: 表 `interview_messages(id,observation_id,role,content,reasoning,round,created_at)`、`evidence(id,observation_id,content,kind,source_message_ids,created_at)`、`insights(id,observation_id,content,evidence_ids,confirmed,created_at)`、`article_plans(id,episode_id,proposals,chosen_angle,article_title,reader_question,core_conflict,judgment_ref,evidence_ids,discussion_scope,confirmed,created_at)`（evidence_ids=本策划选用的支撑证据集，即 fact-pack 证据集，confirm 时一并持久化——C spec §11.2）；列 `episodes.{event,reaction,development,shift,unknown,next}`；status 值域 `new|raw→new、grown→episode_created、interviewing、insight_found`
 
 - [ ] **Step 1: 写失败测试**（`tests/unit/schema-ep.spec.ts`）
 
@@ -281,3 +281,20 @@ test('EP03 槽位不被编辑页冲掉（stale write 回归）', async () => {
 1. Spec 覆盖：决定 1↔T1/T3/T5(回流通道)+T6；决定 2/3↔T1/T2/T7；决定 4↔T3(删门槛)/T4；决定 5↔T7(入口亮起条件)；风险 1↔T8 步骤 2；风险 3↔T5。✅
 2. 占位符：T3 的 pending 前缀方案是对"不加第三态表"的显式选择，非 TBD。✅
 3. 类型一致：`validatePatch/parseExtractOutput` 签名以 T2 为准；`episode:material` 返回形在 T3/T6/T7 引用相同。✅
+
+
+---
+
+## 附录 A：与 C spec（Article Generation Harness V1）一致性检查结论（2026-09-02）
+
+| # | 检查点 | 结论 |
+|---|---|---|
+| 1 | chosen judgment + supporting evidence_ids | ✅ T1 `article_plans.evidence_ids` 即 fact-pack 证据集；**补充明确**：confirm 时的 evidence_ids 语义 = spine 支撑证据，不得事后从全库猜 |
+| 2 | evidence.kind 五档 | ✅ T1 已含（fact 默认） |
+| 3 | pending 栅栏 | ✅ T3 `[待确认]` 前缀与 C §FactPack"pending 不进输入"一致 |
+| 4 | get_fact_pack | ✅ A+B 只需保障 `article_plans` 字段完整（T1 已含），组装入口属 C 期实现，不占 A+B 任务 |
+| 5 | voice.json / flags.json | ✅ 真值文件归 C 期 harness 目录，A+B 任务零依赖 |
+| 6 | T1 schema | ✅ episodes 六新列 + 既有 observation/question 恰好覆盖 C §7 confirmed 七槽 |
+| 7 | CLI ↔ runAgent/resolveCli/Queue 边界 | ✅ C CLI 复用 resolveCli；DB 已 journal_mode=WAL，CLI 与 app 并行读安全；C CLI 自有执行时序，不占 app 队列 |
+
+结论：A+B 8 任务可直接开工，C 不再扩。唯一落档修正 = 第 1 行 investigative 语义，已在 T1 Produces 补齐。
