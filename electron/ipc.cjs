@@ -802,12 +802,30 @@ function registerIpc() {
     } else {
       transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
     }
+
+    // 槽位状态（给 agent 的眼睛：已有什么、缺什么 → 判断采访阶段倾向）。V1 只读六新槽列 + 证据条数
+    let slotStateTxt = '（该卡尚未关联 EP，槽位为空）';
+    if (obsId) {
+      try {
+        const obs = db.prepare('SELECT episode_id FROM observations WHERE id=?').get(obsId);
+        if (obs && obs.episode_id) {
+          const epRow = db.prepare(`SELECT ${EP_SLOT_COLUMNS.join(',')} FROM episodes WHERE id=?`).get(obs.episode_id);
+          const filled = [];
+          for (const col of EP_SLOT_COLUMNS) {
+            const v = String(epRow ? epRow[col] : '').trim();
+            if (v) filled.push(`${col}: ${v.startsWith('[待确认] ') ? v.slice('[待确认] '.length) + '（待确认）' : v}`);
+          }
+          const evCnt = db.prepare('SELECT COUNT(*) c FROM evidence WHERE observation_id=?').get(obsId).c;
+          slotStateTxt = (filled.length ? filled.join('\n') : '（六槽暂无已确认内容）') + `\n已提取证据 ${evCnt} 条`;
+        }
+      } catch (e) { /* 容错：拼不出就用默认文案 */ }
+    }
     console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars | 轮=${roundsDone} 证据=${evRows.length}`);
     let skillBody = '';
     try { skillBody = loadInterviewSkill(); } catch (e) { /* skill 缺失则只跑模板 */ }
     let prompt;
     try {
-      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript });
+      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript, slotState: slotStateTxt });
     } catch (err) { return { ok: false, error: err.message }; }
     let taskId = '';
     try {
