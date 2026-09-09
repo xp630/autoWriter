@@ -49,14 +49,15 @@ declare global {
       getArticle: (id: number) => Promise<Article | null>;
 
       // ===== P0 Week 1: Season + Episode（Episode-centric）=====
-      listSeasons: (params?: { status?: SeasonStatus; profileId?: string }) => Promise<Season[]>;
+      listSeasons: (params?: { status?: SeasonStatus | 'all'; profileId?: string }) => Promise<Season[]>;
       getSeason:   (id: number) => Promise<(Season & { episode_count?: number }) | null>;
       saveSeason:  (params: Partial<Season> & { title: string; profileId?: string }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
       archiveSeason: (id: number) => Promise<{ ok: boolean }>;
+      unarchiveSeason: (id: number) => Promise<{ ok: boolean }>;
       listEpisodes: (params?: { seasonId?: number; status?: EpisodeStatus | 'all'; profileId?: string }) => Promise<Episode[]>;
       getEpisode:   (id: number) => Promise<Episode | null>;
       saveEpisode:  (params: Partial<Episode> & { profileId?: string; clearSlots?: string[] }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
-      deleteEpisode: (id: number) => Promise<{ ok: boolean }>;
+      deleteEpisode: (id: number) => Promise<{ ok: boolean; detachedCards?: number }>;
       linkEpisodeToArticle: (params: { episodeId: number; articleId: number }) => Promise<{ ok: boolean }>;
       listCards:  (params?: { status?: CardStatus | 'all'; episodeId?: number; profileId?: string; limit?: number }) => Promise<ObservationCard[]>;
       saveCard:   (params: { id?: number; observation?: string; question?: string; insight?: string; season_id?: number | null; profileId?: string }) => Promise<{ ok: boolean; id: number }>;
@@ -652,12 +653,20 @@ export interface Episode {
   question: string;             // Q2
   insight: string;              // Q3
   draft: string;                // 草稿 markdown
+  // EP 活档案六槽（DB 早已建列，接口缺声明——EpisodePage 读这些列时吃了 9 条既有类型错）
+  event?: string;
+  reaction?: string;
+  development?: string;
+  shift?: string;
+  unknown?: string;
+  next?: string;
   publish_url?: string;
   published_at?: string | null;
   read_count: number;
   likes: number;
   comments: number;
   order_in_season: number;
+  card_count?: number;          // 来自 episode:get：挂着几张观察卡（删除确认用）
   profile_id?: string;
   created_at: string;
   updated_at: string;

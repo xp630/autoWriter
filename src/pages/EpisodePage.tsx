@@ -4,7 +4,7 @@
 // 设计原则（"不锁死"）：4 字段独立保存，不强求"全部填完才能写"
 // Task 7：文章策划区块——AI 提议 3~5 个读者入口（过拔高红线）→ 人选一 → 补三问/scope/证据链 → 确认落 article_plans
 import { useEffect, useState } from 'react';
-import { ArrowLeft, CheckCircle2, FileText, Lightbulb, Sparkles } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, FileText, Lightbulb, Sparkles, Trash2 } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { showToast } from '../toast';
@@ -248,6 +248,23 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   // status 现在是受控 state（下拉可改），不再从 ep 派生
   const canPublish = Boolean(draft.trim());
 
+  /** 删除这一集：出版账清掉，但观察卡（生活账）必须留下——后端会断链并把卡片退回未成集态 */
+  const remove = async () => {
+    if (!ep) return;
+    if (!window.electronAPI?.deleteEpisode) { showToast('❌ IPC 未就绪'); return; }
+    const cards = ep.card_count ?? 0;
+    const warn = ep.status === 'published'
+      ? '\n⚠️ 这是已发布文章的记录（标题/链接/时间），删了这笔出版账就找不回来。\n'
+      : '';
+    const cardMsg = cards > 0 ? `\n挂着 ${cards} 张观察卡：删 EP 不删卡，它们会退回「有观点、未成集」。` : '';
+    if (!window.confirm(`删掉这一集？${warn}${cardMsg}\n\n「${ep.title || '无标题'}」`)) return;
+    try {
+      const r = await window.electronAPI.deleteEpisode(ep.id);
+      showToast(r?.detachedCards ? `🗑 已删除 · ${r.detachedCards} 张卡已脱钩` : '🗑 已删除');
+      onBack();
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+
   return (
     <>
       <PageHeader
@@ -269,6 +286,15 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
             <Sparkles size={14} /> 快速发布
           </button>
         )}
+        <button
+          type="button"
+          className="btn btn-outline btn-sm ep-delete-btn"
+          onClick={() => void remove()}
+          title="删除这一集（观察卡会保留）"
+          style={{ marginLeft: 'auto' }}
+        >
+          <Trash2 size={14} /> 删除这集
+        </button>
       </div>
 
       <Card title="标题与状态">

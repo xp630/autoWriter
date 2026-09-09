@@ -491,6 +491,14 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // 取消归档：只改 status。不能走 season:save——那条 UPDATE 会把没传的 started_at/ended_at 写成 null
+  ipcMain.handle('season:unarchive', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare(`UPDATE seasons SET status='active', ended_at=NULL, updated_at=? WHERE id=?`)
+      .run(new Date().toISOString(), id);
+    return { ok: true };
+  });
+
   // --- Episode ---
   ipcMain.handle('episode:list', (_e, { seasonId, status, profileId } = {}) => {
     let sql = `SELECT e.*, s.title AS season_title
@@ -515,7 +523,12 @@ function registerIpc() {
                             FROM episodes e
                             LEFT JOIN seasons s ON e.season_id = s.id
                             WHERE e.id=?`).get(id);
-    return row || null;
+    if (!row) return null;
+    // 牵连计数：删除确认时要告诉用户「这张 EP 挂着几张观察卡」
+    try {
+      row.card_count = db.prepare('SELECT COUNT(*) c FROM observations WHERE episode_id=?').get(id).c;
+    } catch (e) { row.card_count = 0; }
+    return row;
   });
 
   ipcMain.handle('episode:save', (_e, params = {}) => {
@@ -591,8 +604,21 @@ function registerIpc() {
 
   ipcMain.handle('episode:delete', (_e, id) => {
     if (!id) throw new Error('缺少 id');
+    // 软引用没有外键约束（schema 有意为之），裸删会留下孤儿：观察卡显示「已长成」但 EP 不存在。
+    // 所以删之前先断链——卡是生活账，不该被出版账的一集带走：episode_id 置空、
+    // 状态从 episode_created 退回 insight_found（它仍然带着已确认的观点）。
+    let detachedCards = 0;
+    try {
+      detachedCards = db.prepare('SELECT COUNT(*) c FROM observations WHERE episode_id=?').get(id).c;
+      db.prepare("UPDATE observations SET status='insight_found', updated_at=? WHERE episode_id=? AND status='episode_created'").run(new Date().toISOString(), id);
+      db.prepare('UPDATE observations SET episode_id=NULL WHERE episode_id=?').run(id);
+    } catch (e) { console.warn('[episode:delete] 观察卡断链失败:', e.message); }
+    // 策划方案允许无 EP 存在（未成集也能先出方案），所以同样置空而非级联删
+    try {
+      db.prepare('UPDATE article_plans SET episode_id=NULL WHERE episode_id=?').run(id);
+    } catch (e) { /* 表可能未迁移，容错 */ }
     db.prepare('DELETE FROM episodes WHERE id=?').run(id);
-    return { ok: true };
+    return { ok: true, detachedCards };
   });
 
   ipcMain.handle('episode:linkArticle', (_e, { episodeId, articleId }) => {
@@ -654,7 +680,11 @@ function registerIpc() {
     const card = db.prepare('SELECT * FROM observations WHERE id=?').get(id);
     if (!card) throw new Error('卡片不存在');
     if (card.episode_id) return { ok: true, episodeId: card.episode_id, already: true };
-    const season = db.prepare(`SELECT id FROM seasons WHERE status='active' ORDER BY created_at DESC LIMIT 1`).get();
+    // 长成哪一季：优先卡自己的 season_id。这里以前只取“最新 active 季”，
+    // 多季并存后会把旧季的卡长到新季去（owner 开 Season 2 时由 e2e 抓出）。
+    const season = card.season_id
+      ? { id: card.season_id }
+      : db.prepare(`SELECT id FROM seasons WHERE status='active' ORDER BY created_at DESC LIMIT 1`).get();
     const title = (String(card.insight || card.observation || '未命名').replace(/[*#>]/g, '').trim()).slice(0, 30);
     const order = (db.prepare('SELECT COALESCE(MAX(order_in_season),0) m FROM episodes WHERE season_id=?').get(season ? season.id : null).m) + 1;
     const now = new Date().toISOString();

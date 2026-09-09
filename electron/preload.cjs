@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSeason:     (id) => ipcRenderer.invoke('season:get', id),
   saveSeason:    (params) => ipcRenderer.invoke('season:save', params),
   archiveSeason: (id) => ipcRenderer.invoke('season:archive', id),
+  unarchiveSeason: (id) => ipcRenderer.invoke('season:unarchive', id),
   listEpisodes:  (params) => ipcRenderer.invoke('episode:list', params),
   getEpisode:    (id) => ipcRenderer.invoke('episode:get', id),
   saveEpisode:   (params) => ipcRenderer.invoke('episode:save', params),

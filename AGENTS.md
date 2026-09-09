@@ -41,6 +41,9 @@
 - **Idea Interview 用 skill 实现（owner 定，2026-09-01）**：会话规则不再写死在 prompt 模板，挪到 `src/skills/interview/idea-interview/SKILL.md`（带 frontmatter）。`src/prompts/interview.md` 只剩 skillBody + 上下文包装。
 - **EP 是活档案、冻结的是文章（owner 定，2026-09-02）**：文章发布 = 那篇文章（公众号快照）冻结，EP 继续长——后续数据/经历回流进 Development/Shift/Unknown，只有新问题才开新卡。一个 EP 可长出多篇文章（跟进篇/收尾篇）
 - **reader_question 防拔高（owner 定，2026-09-02）**：Article Plan 用「陌生读者可以代入的问题」，不是「所有人都面对的大问题」；出现「每个人都会/我们总是」式拔高句式 = AI 加戏，Plan 提议直接拒收重做（validateAngles 执法）
+- **Interview 是经历采访者，不是概念审问员（owner 定，2026-09-09）**：四条硬规则写进 `src/skills/interview/idea-interview/SKILL.md`——① 事件优先（不知道发生了什么就先问事实，事实没钉死禁止问观点）② 一次一个认知点 ③ 具体优先于抽象（遇概念词先追对应经历）④ 允许收手（不为了填满槽位制造问题）。采访阶段是**轻状态倾向**（事件→变化→判断），由 agent 读槽位状态自行判断，**不做代码状态机**
+- **Season 2 主线：AI 时代为什么还需要 DSL（owner 定，2026-09-09）**：1 序章 + 10 集见 `docs/AUTOWRITER_SEASON_2.md`。**Season 1 做不下去的教训：主角不能是工具本身**——素材会枯竭；AutoWriter 在 Season 2 降级成后台，不再是被写的对象
+- **多季并存（owner 定，2026-09-09）**：主页用**季度标签**切季（含已归档季可回看），末尾「+ 新主线」开新一季；归档 = 标记不删数据。**删 EP 不删观察卡**：EP 是出版账、卡是生活账，删除时卡自动断链退回 `insight_found`
 
 ---
 

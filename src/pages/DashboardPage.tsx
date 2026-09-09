@@ -109,6 +109,12 @@ export function DashboardPage({ onNavigate }: Props) {
   const [season, setSeason] = useState<Season | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  // 季度切换：拿全季（含归档）。没这个切换器时，新一季一建，旧季连同它的 EP 在界面上彻底消失
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasonPick, setSeasonPick] = useState<number | null>(null);
+  // Season 生命周期：开新季要自己填主线名（旧版写死 "Season 1"，开第二季会建出重名季）
+  // Electron 不支持 window.prompt，所以用内联表单
+  const [seasonForm, setSeasonForm] = useState<{ open: boolean; title: string; subtitle: string }>({ open: false, title: '', subtitle: '' });
   // 观察卡（生活账）
   const [cards, setCards] = useState<ObservationCard[]>([]);
   const [capture, setCapture] = useState('');
@@ -166,11 +172,14 @@ export function DashboardPage({ onNavigate }: Props) {
         }
         // P0 Season + Episode：创作主线
         if (window.electronAPI?.listSeasons) {
-          const seasons = await window.electronAPI.listSeasons({ profileId: profile.id });
-          const active = Array.isArray(seasons) && seasons.length > 0 ? seasons[0] : null;
-          if (!cancelled) setSeason(active);
-          if (active && window.electronAPI?.listEpisodes) {
-            const eps = await window.electronAPI.listEpisodes({ seasonId: active.id, profileId: profile.id });
+          const listRaw = await window.electronAPI.listSeasons({ profileId: profile.id, status: 'all' });
+          const list = Array.isArray(listRaw) ? listRaw : [];
+          if (!cancelled) setSeasons(list);
+          // 选过的季仍在就用它；否则取最新一季（season:list 按 created_at DESC）
+          const chosen = (seasonPick != null ? list.find((s) => s.id === seasonPick) : undefined) || list[0] || null;
+          if (!cancelled) setSeason(chosen);
+          if (chosen && window.electronAPI?.listEpisodes) {
+            const eps = await window.electronAPI.listEpisodes({ seasonId: chosen.id, profileId: profile.id });
             if (!cancelled) setEpisodes(Array.isArray(eps) ? eps : []);
           } else if (!cancelled) {
             setEpisodes([]);
@@ -181,7 +190,7 @@ export function DashboardPage({ onNavigate }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [profile.id, reloadTick]);   // 切身份/创建 Season/EP 后重拉
+  }, [profile.id, reloadTick, seasonPick]);   // 切身份/切季/创建 Season、EP 后重拉
 
   // 订阅队列状态
   useEffect(() => {
@@ -202,15 +211,41 @@ export function DashboardPage({ onNavigate }: Props) {
     .slice(0, 5);
 
   // P0：真正能"建"的入口（之前按钮只跳转不创建，是断的）
+  // 标题不写死：每一季的主线由作者自己命名；新季建后 dashboard 自动显示最新一季（season:list 按 created_at DESC）
   const createSeason = async () => {
     if (!window.electronAPI?.saveSeason) { showToast('❌ IPC 未就绪'); return; }
+    const t = seasonForm.title.trim();
+    if (!t) { showToast('❌ 给这一季起个主线名（一个问题也行）'); return; }
     try {
       const r = await window.electronAPI.saveSeason({
-        title: 'AutoWriter Season 1',
-        subtitle: '一个程序员用 AI 重构写作和思考的真实记录',
+        title: t,
+        subtitle: seasonForm.subtitle.trim(),
         profileId: profile.id,
       });
-      if (r?.ok) { showToast('✅ Season 1 已开启'); setReloadTick((t) => t + 1); }
+      if (r?.ok) {
+        showToast(`✅ 新季已开启：${t}`);
+        setSeasonForm({ open: false, title: '', subtitle: '' });
+        setReloadTick((tk) => tk + 1);
+      }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  /** 归档当前季：数据不删（status=archived），主页收起；靠头部季度切换器可回看 */
+  const archiveCurrentSeason = async () => {
+    if (!season || !window.electronAPI?.archiveSeason) { showToast('❌ IPC 未就绪'); return; }
+    if (!window.confirm(`归档《${season.title}》？\n\n这一季会从主页收起（数据不删、EP 不删）。要删做不下去的 EP，点进那一集用「删除这集」。`)) return;
+    try {
+      await window.electronAPI.archiveSeason(season.id);
+      showToast('📦 已归档');
+      setReloadTick((tk) => tk + 1);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  /** 取消归档：把一季恢复成 active（不改标题/开始时间） */
+  const unarchiveCurrentSeason = async () => {
+    if (!season || !window.electronAPI?.unarchiveSeason) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      await window.electronAPI.unarchiveSeason(season.id);
+      showToast('↩ 已恢复为当前季');
+      setReloadTick((tk) => tk + 1);
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
   const saveCapture = async () => {
@@ -487,16 +522,79 @@ export function DashboardPage({ onNavigate }: Props) {
 
       {/* ===== P0 Week 1：创作主线（Season + Episode）=====
           第一层卡片：用户打开 app 第一眼看到的不再是"新建文章"，而是他的创作主线。 */}
-      <Card title={season ? `${season.title}` : '还没有创作主线'} icon={Layers} accent="insight">
+      <Card
+        title="创作主线"
+        icon={Layers}
+        accent="insight"
+        actions={season ? (
+          <div className="row" style={{ gap: 6 }}>
+            {season.status === 'archived' ? (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={unarchiveCurrentSeason} title="把这一季恢复为当前季">
+                取消归档
+              </button>
+            ) : (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={archiveCurrentSeason} title="数据不删，只在标签上标成已归档">
+                归档本季
+              </button>
+            )}
+          </div>
+        ) : undefined}
+      >
+        {/* 季度 tab：点标签切季（归档季也能回看），末尾 + 开新季 */}
+        {seasons.length > 0 && (
+          <div className="season-tabs">
+            {seasons.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`season-tab ${season?.id === s.id ? 'active' : ''} ${s.status === 'archived' ? 'archived' : ''}`}
+                onClick={() => setSeasonPick(s.id)}
+                title={s.title}
+              >
+                <span className="season-tab-name">{s.title}</span>
+                {s.status === 'archived' && <span className="season-tab-flag">档</span>}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="season-tab season-tab-add"
+              onClick={() => setSeasonForm((f) => ({ ...f, open: !f.open }))}
+              title="开一季新主线"
+            >
+              <Plus size={13} /> 新主线
+            </button>
+          </div>
+        )}
         {season?.subtitle && <div className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>{season.subtitle}</div>}
+        {seasonForm.open && (
+          <div className="season-create-form">
+            <input
+              className="input"
+              placeholder="这一季的主线（一个问题也行：AI 时代，我们为什么还需要 DSL？）"
+              value={seasonForm.title}
+              onChange={(e) => setSeasonForm((f) => ({ ...f, title: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="副标题：一句话说明这条线怎么走（可留空）"
+              value={seasonForm.subtitle}
+              onChange={(e) => setSeasonForm((f) => ({ ...f, subtitle: e.target.value }))}
+            />
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSeasonForm({ open: false, title: '', subtitle: '' })}>取消</button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => void createSeason()}>开启新一季</button>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>新季会出现在上方标签里并自动选中；旧季点标签就能回去继续看/继续删。</div>
+          </div>
+        )}
         {!season && !loading && (
           <Empty
             icon={Layers}
             title="还没有 Season"
-            description="Season 是你一段时间的创作主线。比如：AutoWriter Season 1（半年）。点下方按钮开第一季。"
+            description="Season 是你一段时间的创作主线。下面填主线名开一季——不用一次想完整季，先有第一段。"
             action={
-              <button type="button" className="btn btn-primary btn-sm" onClick={createSeason}>
-                <Plus size={14} /> 开始第一季
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => setSeasonForm({ open: true, title: '', subtitle: '' })}>
+                <Plus size={14} /> 开一季
               </button>
             }
           />
@@ -526,13 +624,15 @@ export function DashboardPage({ onNavigate }: Props) {
               <div key={ep.id} className="season-episode-row" onClick={() => onNavigate(`episode:${ep.id}`)} role="button" tabIndex={0}
                    onKeyDown={(e) => { if (e.key === 'Enter') onNavigate(`episode:${ep.id}`); }}>
                 <div className="season-ep-side">
-                  <span className="season-ep-index">{ep.order_in_season || '·'}</span>
+                  <span className="season-ep-index">{ep.order_in_season ?? '·'}</span>
                 </div>
                 <div className="season-ep-main">
                   <div className="season-ep-edit-hint">点击编辑 · 改标题与状态</div>
                   <div className="season-ep-title">
                     {ep.title || (ep.observation ? ep.observation.slice(0, 22) + '…' : '（未命名 Episode）')}
                   </div>
+                  {/* 每集的命题（question 列）：计划里的「这一集要回答什么」，序章/计划阶段靠它辨认 */}
+                  {ep.question && <div className="season-ep-question">{ep.question}</div>}
                   <div className="season-ep-meta">
                     <span className={`ep-status-pill ep-status-${ep.status}`}>{statusLabel(ep.status)}</span>
                     {ep.insight && <span className="season-ep-insight">“{ep.insight.slice(0, 36)}{ep.insight.length > 36 ? '…' : ''}”</span>}
