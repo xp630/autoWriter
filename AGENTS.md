@@ -44,6 +44,8 @@
 - **Interview 是经历采访者，不是概念审问员（owner 定，2026-09-09）**：四条硬规则写进 `src/skills/interview/idea-interview/SKILL.md`——① 事件优先（不知道发生了什么就先问事实，事实没钉死禁止问观点）② 一次一个认知点 ③ 具体优先于抽象（遇概念词先追对应经历）④ 允许收手（不为了填满槽位制造问题）。采访阶段是**轻状态倾向**（事件→变化→判断），由 agent 读槽位状态自行判断，**不做代码状态机**
 - **Season 2 主线：AI 时代为什么还需要 DSL（owner 定，2026-09-09）**：1 序章 + 10 集见 `docs/AUTOWRITER_SEASON_2.md`。**Season 1 做不下去的教训：主角不能是工具本身**——素材会枯竭；AutoWriter 在 Season 2 降级成后台，不再是被写的对象
 - **多季并存（owner 定，2026-09-09）**：主页用**季度标签**切季（含已归档季可回看），末尾「+ 新主线」开新一季；归档 = 标记不删数据。**删 EP 不删观察卡**：EP 是出版账、卡是生活账，删除时卡自动断链退回 `insight_found`
+- **当前产品是 Observer，不是 Operator（owner 定，2026-09-09）**：`docs/AUTONOMOUS_CONTENT_OBSERVER.md` = 当前建设范围（Signal → Opportunity → Human Decision，只提入口不代判断）；`docs/AUTONOMOUS_CONTENT_OPERATOR_VISION.md` = 长期愿景（Phase 3），**不进 roadmap、不当作当前需求来源**。核心原则：**先手工喂信号，再决定系统要不要帮**；验证指标 = **Opportunity Adoption Rate**
+- **不做公众号自动发布（owner 定，2026-09-09）**：理由不是"以后不能做"，是**它不是当前验证变量**——当前要验的是"AI 能不能帮我发现值得写的东西"，不是"AI 能不能替我点发布"。同理不提前建设：RSS / 定时任务 / 24小时后台 / 事件总线
 
 ---
 
