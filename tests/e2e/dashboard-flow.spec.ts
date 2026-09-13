@@ -119,3 +119,83 @@ test('点击仪表盘「写新文章」磁贴跳到写文章页', async () => {
   // 验证写文章页渲染
   await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible();
 });
+
+// Season 生命周期回归（2026-09-09）：owner 开 Season 2 后暴露的两个坑——
+// ① dashboard 只取 seasons[0]，新季一建旧季连同 EP 在界面上彻底消失（无切换入口）
+// ② episode:delete 后端有但 UI 无入口，且裸删会留孤儿（卡显示"已长成"但 EP 不存在）
+test('Season 标签：开新一季 → 点标签回旧季 → 删 EP 时观察卡脱钩保留', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
+  await ctx.window.waitForTimeout(600);
+
+  const form = ctx.window.locator('.season-create-form');
+  const tabA = ctx.window.locator('.season-tab').filter({ hasText: 'Season A：测试主线' });
+  const tabB = ctx.window.locator('.season-tab').filter({ hasText: 'Season B：另一条线' });
+
+  // ① 空态开第一季：标题由作者填（旧版写死 "AutoWriter Season 1"）
+  const emptyBtn = ctx.window.locator('button:has-text("开一季")');
+  if (await emptyBtn.count()) await emptyBtn.first().click();
+  await expect(form).toBeVisible({ timeout: 6000 });
+  await form.locator('input').first().fill('Season A：测试主线');
+  await form.locator('input').nth(1).fill('一个副标题');
+  await ctx.window.locator('button:has-text("开启新一季")').click();
+  await expect(tabA).toBeVisible({ timeout: 8000 });
+  await expect(tabA).toHaveClass(/active/);
+
+  // ② 开第二季 → 两个标签并存，默认选中最新一季
+  await ctx.window.locator('.season-tab-add').click();
+  await expect(form).toBeVisible({ timeout: 4000 });
+  await form.locator('input').first().fill('Season B：另一条线');
+  await ctx.window.locator('button:has-text("开启新一季")').click();
+  await expect(tabB).toHaveClass(/active/, { timeout: 8000 });
+  await expect(tabA).toBeVisible();
+
+  // ③ 在 Season A 下让一张卡长成 EP（长成的 EP 带 question 命题）
+  const made = await ctx.window.evaluate(async () => {
+    // @ts-ignore
+    const seasons = await window.electronAPI.listSeasons({ status: 'all' });
+    const a = seasons.find((s: any) => s.title === 'Season A：测试主线');
+    // @ts-ignore
+    const saved = await window.electronAPI.saveCard({
+      observation: '被一只猫盯了五秒',
+      question: '命题：先建立基本认知',
+      insight: '等的人不开口，被等的人就赢了',
+      season_id: a.id,
+    });
+    // @ts-ignore
+    const grown = await window.electronAPI.growCard(saved.id);
+    return { seasonA: a.id, cardId: saved.id, episodeId: grown.episodeId };
+  });
+  expect(made.episodeId).toBeTruthy();
+
+  // ④ 点标签回 Season A：EP 必须看得见（旧实现下这一季根本打不开）
+  // 注：card:grow 建的 EP 标题取 insight 优先，所以按命题文本定位
+  await tabA.click();
+  await expect(tabA).toHaveClass(/active/, { timeout: 6000 });
+  const epRow = ctx.window.locator('.season-episode-row').filter({ hasText: '命题：先建立基本认知' }).first();
+  await expect(epRow).toBeVisible({ timeout: 6000 });
+  // EP 行的命题（question 列）渲染出来
+  await expect(epRow.locator('.season-ep-question')).toContainText('命题：先建立基本认知');
+  await expect(epRow.locator('.season-ep-title')).toContainText('等的人不开口');
+
+  // ⑤ 进 EP 编辑页删除（确认框接受）
+  await epRow.click();
+  await expect(ctx.window.locator('button:has-text("删除这集")')).toBeVisible({ timeout: 6000 });
+  ctx.window.once('dialog', (d) => void d.accept());
+  await ctx.window.locator('button:has-text("删除这集")').click();
+  await ctx.window.waitForTimeout(1200);
+
+  // ⑥ EP 没了，但观察卡保留且退回未成集态——删出版账不带走生活账
+  const after = await ctx.window.evaluate(async (id) => {
+    // @ts-ignore
+    const ep = await window.electronAPI.getEpisode(id);
+    // @ts-ignore
+    const cards = await window.electronAPI.listCards({});
+    const c = cards.find((x: any) => x.id === id) || cards.find((x: any) => x.observation === '被一只猫盯了五秒');
+    return { epGone: ep === null, card: c ? { status: c.status, episode_id: c.episode_id, insight: c.insight } : null };
+  }, made.episodeId);
+  expect(after.epGone).toBe(true);
+  expect(after.card).not.toBeNull();
+  expect(after.card!.episode_id).toBeFalsy();
+  expect(after.card!.status).toBe('insight_found');
+  expect(after.card!.insight).toContain('等的人不开口');
+});

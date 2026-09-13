@@ -2582,3 +2582,367 @@ select:focus-visible {
 .intro-banner-text strong { color: var(--ink); font-weight: 700; }
 .intro-banner-sub { font-size: 11px; color: var(--muted); }
 .intro-banner-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ===== 创作主线（Season + Episode）P0 ===== */
+/* ===== Season 标签：点标签切季（归档季也能回看），末尾「+ 新主线」开新一季 ===== */
+.season-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 2px 0 10px;
+}
+.season-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ink-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.season-tab:hover { border-color: var(--line); color: var(--ink); }
+.season-tab.active {
+  background: var(--line-light);
+  border-color: var(--line);
+  color: var(--line-2);
+  font-weight: 600;
+}
+.season-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.season-tab-flag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--bg3);
+  color: var(--ink-3);
+}
+.season-tab-add {
+  max-width: none;
+  gap: 3px;
+  color: var(--ink-3);
+  background: transparent;
+  border-style: dashed;
+}
+.season-tab-add:hover { color: var(--line-2); background: var(--line-light); }
+
+/* 开新季内联表单（Electron 不支持 window.prompt，所以不用弹框） */
+.season-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+/* EP 行的命题：这一集要回答什么（question 列） */
+.season-ep-question {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.45;
+  margin: -2px 0 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* EP 编辑页删除钮：平时低调，hover 才变红（破坏性动作不该主动吆喊） */
+.ep-delete-btn { color: var(--ink-3); }
+.ep-delete-btn:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+
+/* ===== Content Observer V1（外部信号 → 机会入口 → 人决策）===== */
+.opp-capture { display: flex; gap: 8px; align-items: flex-start; }
+.opp-capture .textarea { flex: 1; font-size: 14px; }
+.opp-error { font-size: 12.5px; color: var(--danger); background: var(--danger-soft); border-radius: var(--r-sm); padding: 8px 10px; margin-top: 8px; }
+.opp-result { margin-top: 12px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); }
+.opp-head { align-items: center; gap: 8px; margin-bottom: 6px; }
+.opp-title { font-size: 15px; font-weight: 600; color: var(--ink); }
+.opp-summary { font-size: 13px; color: var(--ink-2); line-height: 1.6; margin: 0 0 6px; }
+.opp-why { font-size: 13.5px; color: var(--ink); line-height: 1.65; margin: 0 0 8px; padding-left: 9px; border-left: 2px solid var(--line); }
+.opp-tags { flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.opp-tag { font-size: 11.5px; color: var(--ink-3); background: var(--bg2); border-radius: 999px; padding: 3px 8px; line-height: 1.4; }
+.opp-block { margin: 6px 0; }
+.opp-block-title { font-size: 11.5px; color: var(--muted); letter-spacing: .02em; margin-bottom: 3px; }
+.opp-block ul { margin: 0; padding-left: 18px; }
+.opp-block li { font-size: 12.5px; color: var(--ink-2); line-height: 1.6; }
+.opp-conf { font-size: 12px; color: var(--muted); font-style: italic; margin: 6px 0; line-height: 1.55; }
+.opp-reason { margin: 8px 0 6px; font-size: 13px; }
+.opp-decisions { justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.opp-verdict { flex: 0 0 auto; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; line-height: 1.5; }
+.opp-verdict-opportunity { background: var(--line-light); color: var(--line-2); }
+.opp-verdict-not_opportunity { background: var(--bg3); color: var(--ink-3); }
+.opp-verdict-insufficient { background: var(--accent-soft); color: #92400e; }
+.opp-feed { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.opp-adoption { font-size: 11.5px; margin-bottom: 2px; }
+.opp-row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--card); }
+.opp-row-main { flex: 1; min-width: 0; }
+.opp-row-title { font-size: 13px; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opp-row-sub { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opp-status { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.opp-status-observed, .opp-status-thinking, .opp-status-creating { color: var(--line-2); font-weight: 600; }
+
+.season-episode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.season-episode-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.season-episode-row:hover { background: var(--bg-soft); border-color: var(--ink-3); }
+.season-episode-row:focus-visible { outline: 2px solid var(--brand, #07c160); outline-offset: 2px; }
+.season-ep-side {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-soft);
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.season-ep-main { flex: 1; min-width: 0; }
+.season-ep-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.season-ep-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+  flex-wrap: wrap;
+}
+.season-ep-insight {
+  color: var(--ink-2);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.ep-status-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+}
+.ep-status-observation { color: #b45309; background: #fef3c7; border-color: #fcd34d; }
+.ep-status-questioning { color: #6d28d9; background: #ede9fe; border-color: #c4b5fd; }
+.ep-status-thinking    { color: #1e40af; background: #dbeafe; border-color: #93c5fd; }
+.ep-status-drafting    { color: #4b5563; background: var(--bg-soft); border-color: var(--line); }
+.ep-status-published   { color: #047857; background: var(--line-soft); border-color: #a7f3d0; }
+.ep-status-archived    { color: var(--muted); background: var(--bg-soft); border-color: var(--line); }
+
+/* ===== Episode 编辑页 (P0) ===== */
+.ep-actions-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.ep-actions-row .ep-status-pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+.ep-filled { color: var(--ink-3); font-size: 12px; }
+.ep-title-input {
+  font-size: 16px; font-weight: 600; padding: 10px 12px;
+}
+/* 本集命题输入（计划位）：比标题轻一档，但不隐藏——Season 2 的 11 集靠这行辨认 */
+.ep-intent-input {
+  font-size: 13px; padding: 8px 12px; margin-top: 6px;
+  color: var(--ink-2); line-height: 1.5;
+}
+.ep-hint {
+  font-size: 12px; margin: 8px 0 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  color: var(--ink-3);
+}
+.ep-hint svg { vertical-align: middle; }
+
+/* ===== Task 7 文章策划（Episode 页）===== */
+.plan-intro { display: block; line-height: 1.6; margin-bottom: 10px; }
+.plan-gate { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plan-gate-hint { font-size: 11.5px; }
+.plan-empty-slots { font-size: 11.5px; }
+.plan-error { font-size: 12px; color: var(--danger, #ef4444); margin: 8px 0 0; }
+.plan-candidates { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.plan-candidates-title { font-size: 12px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+.plan-candidate-list { display: flex; flex-direction: column; gap: 6px; }
+.plan-candidate {
+  text-align: left; font-size: 13px; line-height: 1.5; color: var(--ink);
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; cursor: pointer;
+}
+.plan-candidate:hover:not(:disabled) { border-color: var(--ink-3); background: var(--line-soft); }
+.plan-candidate.selected {
+  border-color: var(--line); border-left: 3px solid var(--line); background: var(--line-soft);
+}
+.plan-rejected-hint { font-size: 11.5px; color: #b45309; margin: 8px 0 0; }
+.plan-form { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.plan-form-selected { font-size: 12.5px; color: var(--ink); background: var(--line-soft); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; line-height: 1.5; }
+.plan-field-label { font-size: 11.5px; font-weight: 600; margin-top: 4px; }
+.plan-form .textarea { font-size: 13px; }
+.plan-evidence { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.plan-evidence-option {
+  display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--ink-3);
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; line-height: 1.5;
+  cursor: pointer;
+}
+.plan-evidence-option input { margin-top: 2px; }
+.plan-actions { margin-top: 10px; }
+.plan-list { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.plan-list-title { font-size: 12px; font-weight: 700; color: var(--ink); }
+.plan-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg-soft); }
+.plan-row-angle { font-size: 13px; line-height: 1.5; color: var(--ink); }
+.plan-row-meta { font-size: 11.5px; margin-top: 2px; }
+
+/* ===== Quick Publish v2：五步流水线 ===== */
+.qp-steps {
+  display: flex; gap: 4px; margin: 4px 0 14px; padding: 4px;
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--r);
+}
+.qp-step {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 4px; font-size: 13px; font-weight: 600; color: var(--ink-3);
+  background: transparent; border: 0; border-radius: calc(var(--r) - 3px); cursor: pointer;
+}
+.qp-step:hover { color: var(--ink); }
+.qp-step.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.qp-step.done { color: #047857; }
+.qp-step-no {
+  width: 18px; height: 18px; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 11px;
+  background: var(--border); color: var(--ink-3);
+}
+.qp-step.active .qp-step-no { background: var(--line); color: #fff; }
+.qp-step.done .qp-step-no { background: #d1fae5; color: #047857; }
+.qp-panel { background: var(--card); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; }
+.qp-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.qp-textarea { width: 100%; font-size: 14px; line-height: 1.7; }
+.qp-preview { border: 1px dashed var(--border); border-radius: var(--r); padding: 18px; background: #f8fafb; max-height: 60vh; overflow: auto; }
+.qp-preview .qp-viewpoint { background: #ecfdf5; border-left: 4px solid #10b981; padding: 12px 16px; margin: 1em 0; border-radius: 4px; font-weight: 500; }
+.qp-preview .qp-quote { border-left: 4px solid #c8d9d3; padding: 6px 14px; margin: 1em 0; color: #374151; font-style: italic; background: #f1f5f4; }
+.qp-preview .qp-h1 { font-size: 24px; color: #047857; margin: .6em 0; }
+.qp-preview .qp-h2 { font-size: 20px; border-left: 4px solid #10b981; padding-left: 10px; color: #047857; }
+.qp-preview .qp-h3 { font-size: 17px; color: #4a4a4a; }
+.qp-preview .qp-divider { border: 0; height: 1px; background: #e2ebe7; margin: 1.8em auto; width: 48px; }
+.qp-preview p { margin: 0 0 1em; }
+.qp-preview strong { color: #059669; }
+.qp-slot { display: block; }
+.qp-slot-preview { display: flex; align-items: center; gap: 12px; }
+.qp-slot-preview img { width: 220px; border-radius: 6px; border: 1px solid var(--border); object-fit: cover; }
+.qp-role-block { padding: 10px 0; border-bottom: 1px dashed var(--border); }
+.qp-role-block:last-child { border-bottom: 0; }
+.qp-role-label { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+.qp-nav { display: flex; justify-content: space-between; gap: 8px; margin: 14px 0 40px; }
+.qp-export-summary { background: var(--bg-soft); border-radius: var(--r); padding: 12px 14px; font-size: 13px; line-height: 2; }
+.qp-gallery-mask { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.qp-gallery { width: min(720px, 92vw); max-height: 80vh; overflow: auto; background: var(--card); border-radius: var(--r); padding: 16px; }
+.qp-gallery-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.qp-gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.qp-gallery-cell { padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; overflow: hidden; }
+.qp-gallery-cell:hover { border-color: var(--line); }
+.qp-gallery-cell img { width: 100%; height: 100px; object-fit: cover; display: block; }
+/* 排版步：点击改判 */
+.qp-block-wrap { cursor: pointer; border-radius: 4px; transition: outline .1s; outline: 1px dashed transparent; }
+.qp-block-wrap:hover { outline-color: var(--line); }
+.qp-block-wrap > span > p, .qp-block-wrap > span > div { margin-top: 0; }
+.qp-block-wrap.is-box > span > p { background: #ecfdf5; border-left: 4px solid #10b981; padding: 12px 16px; border-radius: 4px; }
+
+/* ===== 观察卡（生活账）===== */
+.obs-capture { display: flex; gap: 8px; align-items: flex-start; }
+.obs-capture .textarea { flex: 1; font-size: 14px; }
+.obs-feed { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.obs-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; }
+.obs-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.obs-dot.raw { background: #f59e0b; }
+.obs-dot.grown { background: #10b981; }
+.obs-main { flex: 1; min-width: 0; }
+.obs-text { font-size: 13.5px; color: var(--ink); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-insight { font-size: 12px; color: #047857; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.obs-date { font-size: 11px; color: var(--muted); }
+.obs-grown-tag { font-size: 11.5px; color: #047857; }
+.obs-del, .opp-del { border: 0; background: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 0 2px; }
+.obs-del:hover, .opp-del:hover { color: var(--danger, #ef4444); }
+.ep-status-planned { color: #1e40af; background: #dbeafe; border-color: #93c5fd; }
+
+/* ===== Idea Interview（卡片两问）===== */
+.iv-mask { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; z-index: 70; }
+.iv-card { width: min(520px, 92vw); background: var(--card); border-radius: var(--r); padding: 20px 22px; box-shadow: 0 16px 48px rgba(0,0,0,.22); }
+.iv-brand { font-size: 10.5px; letter-spacing: .12em; color: var(--muted); margin-bottom: 8px; }
+.iv-obs { font-size: 14.5px; color: var(--ink); background: var(--bg-soft); border-left: 3px solid var(--line); padding: 8px 12px; border-radius: 3px; margin-bottom: 14px; line-height: 1.6; }
+.iv-q { font-size: 15px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+.iv-open { font-size: 11.5px !important; padding: 2px 8px !important; color: #047857 !important; border: 1px solid #a7f3d0; }
+.iv-open:hover { background: #ecfdf5; }
+/* EP 状态显式控制 */
+.ep-status-row { margin-top: 10px; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ep-status-select { width: 110px; font-size: 13px; padding: 6px 8px; }
+.ep-url-input { flex: 1; min-width: 220px; font-size: 12px; padding: 6px 8px; }
+.season-ep-edit-hint { font-size: 10.5px; color: var(--muted); margin-top: 2px; letter-spacing: .02em; }
+.season-episode-row:hover .season-ep-edit-hint { color: #047857; }
+/* Idea Interview v2：对话流 */
+.iv-msgs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 40vh; overflow: auto; }
+.iv-msg { font-size: 14px; line-height: 1.6; padding: 8px 12px; border-radius: 10px; max-width: 92%; }
+.iv-streaming { background: #f9fafb; border: 1px dashed #d1d5db; padding: 8px 10px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; }
+.iv-stream-reasoning { color: #6b7280; font-style: italic; }
+.iv-stream-body { color: #111827; margin-top: 4px; }
+.iv-cursor { display: inline-block; color: #10b981; animation: ivBlink 1s infinite; }
+@keyframes ivBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+.iv-reasoning-bubble { font-size: 12px; color: #4b5563; background: #f9fafb; border-left: 3px solid #d1d5db; padding: 6px 10px; border-radius: 4px; margin-bottom: 4px; font-style: italic; }
+.iv-reasoning-label { font-weight: 600; color: #6b7280; }
+.iv-msg.ai { background: var(--bg-soft); color: var(--ink); align-self: flex-start; border-bottom-left-radius: 3px; }
+.iv-msg.me { background: #ecfdf5; color: #065f46; align-self: flex-end; border-bottom-right-radius: 3px; }
+.iv-thinking { opacity: .55; font-style: italic; }
+.iv-candidate { font-size: 16px; font-weight: 700; color: #047857; background: #ecfdf5; border-left: 3px solid #10b981; padding: 10px 14px; border-radius: 4px; margin-top: 4px; line-height: 1.6; }
+
+/* ===== Task 6：EP 槽位生长预览（访谈弹窗内，聊天旁边不断长出来的档案） ===== */
+.iv-preview { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; max-height: 32vh; overflow: auto; }
+.iv-preview-title { font-size: 12px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+.iv-preview-hint { font-weight: 400; font-size: 10.5px; color: var(--muted); margin-left: 4px; }
+.iv-preview-sub { font-size: 11px; font-weight: 700; color: var(--muted); margin: 10px 0 4px; }
+.iv-preview-empty { font-size: 12px; color: var(--muted); padding: 6px 0; line-height: 1.6; }
+.iv-slot-list { display: flex; flex-direction: column; gap: 6px; }
+.iv-slot { border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; background: var(--bg-soft); margin-top: 6px; }
+.iv-slot-ok { border-left: 3px solid var(--line); }
+.iv-slot-pending { border-left: 3px solid #f59e0b; background: #fffbeb; }
+.iv-slot-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.iv-slot-label { font-size: 11px; font-weight: 700; color: var(--muted); }
+.iv-slot-flag { font-size: 10px; color: #b45309; background: #fef3c7; border-radius: 4px; padding: 0 6px; line-height: 1.5; }
+.iv-slot-text { font-size: 13px; line-height: 1.5; color: var(--ink); word-break: break-word; }
+.iv-slot-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.iv-evidence { display: flex; flex-direction: column; gap: 4px; }
+.iv-evidence-item { font-size: 12px; color: var(--ink-3); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; margin-top: 4px; line-height: 1.5; }

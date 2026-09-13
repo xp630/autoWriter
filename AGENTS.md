@@ -36,6 +36,18 @@
 - **长文深度技术文章**我们系统写不出来，**也不打算让它写**——"AI 是放大器不是发明者"已确认
 - **PR 流程已建立**——work on `feat/*` / `docs/*` / `fix/*` off `develop`，开 PR；不要绕过 branch protection
 - **写文章代码已经"保留现状"**——V2/V3/V4 闸门不砍但默认折叠；不在 ta 拒绝之前主动重提
+- **EP 正文格式（owner 定，2026-09-01）**：自然大段 3~6 段、纯文本输出；禁小标题、禁"金句一行一段"短句体——**目标是文字像人写的，不像排版的**。强调由 owner 在排版步点击改判加，生成时不加粗不切短句
+- **Idea Interview 无轮数上限（owner 定，2026-09-01）**：AI 自由追问直到出 INSIGHT 或用户主动点「我定稿了」。三轮硬收尾是错的——对话该由作者决定什么时候停，不是系统。Modal 关空白处给提示，避免误关丢进度
+- **Idea Interview 用 skill 实现（owner 定，2026-09-01）**：会话规则不再写死在 prompt 模板，挪到 `src/skills/interview/idea-interview/SKILL.md`（带 frontmatter）。`src/prompts/interview.md` 只剩 skillBody + 上下文包装。
+- **EP 是活档案、冻结的是文章（owner 定，2026-09-02）**：文章发布 = 那篇文章（公众号快照）冻结，EP 继续长——后续数据/经历回流进 Development/Shift/Unknown，只有新问题才开新卡。一个 EP 可长出多篇文章（跟进篇/收尾篇）
+- **reader_question 防拔高（owner 定，2026-09-02）**：Article Plan 用「陌生读者可以代入的问题」，不是「所有人都面对的大问题」；出现「每个人都会/我们总是」式拔高句式 = AI 加戏，Plan 提议直接拒收重做（validateAngles 执法）
+- **Interview 是经历采访者，不是概念审问员（owner 定，2026-09-09）**：四条硬规则写进 `src/skills/interview/idea-interview/SKILL.md`——① 事件优先（不知道发生了什么就先问事实，事实没钉死禁止问观点）② 一次一个认知点 ③ 具体优先于抽象（遇概念词先追对应经历）④ 允许收手（不为了填满槽位制造问题）。采访阶段是**轻状态倾向**（事件→变化→判断），由 agent 读槽位状态自行判断，**不做代码状态机**
+- **Season 2 主线：AI 时代为什么还需要 DSL（owner 定，2026-09-09）**：1 序章 + 10 集见 `docs/AUTOWRITER_SEASON_2.md`。**Season 1 做不下去的教训：主角不能是工具本身**——素材会枯竭；AutoWriter 在 Season 2 降级成后台，不再是被写的对象
+- **人不是 loop 的工位（owner 定，2026-09-14）**：**偶尔介入、低频互动**。三条约束——① 永不阻塞（没决策就标 pending 留痕继续跑）② 批量升级（要人判断的攒着按周给，升级条件由 Policy 定，不由「我做完一步」定）③ **靠权限守边界，不靠点击守边界**（永不交出的动词应是系统没这个能力，不是每次都问你；现有 `[待确认]` + `insight:confirm` 就是正确形状）。详见 `docs/FINAL_FORM.md` §一·六
+- **终局一句话（owner 定，2026-09-14）**：**把账号交给 AI，把观点留给自己**——AI 替你运营，但不能替你成为你。哪些动词交得出、哪些永远交不出，见 `docs/FINAL_FORM.md` §一·五 的两栏表；加任何 AI 能力前先确认它在左栏
+- **多季并存（owner 定，2026-09-09）**：主页用**季度标签**切季（含已归档季可回看），末尾「+ 新主线」开新一季；归档 = 标记不删数据。**删 EP 不删观察卡**：EP 是出版账、卡是生活账，删除时卡自动断链退回 `insight_found`
+- **当前产品是 Observer，不是 Operator（owner 定，2026-09-09）**：`docs/AUTONOMOUS_CONTENT_OBSERVER.md` = 当前建设范围（Signal → Opportunity → Human Decision，只提入口不代判断）；`docs/AUTONOMOUS_CONTENT_OPERATOR_VISION.md` = 长期愿景（Phase 3），**不进 roadmap、不当作当前需求来源**。核心原则：**先手工喂信号，再决定系统要不要帮**；验证指标 = **Opportunity Adoption Rate**
+- **不做公众号自动发布（owner 定，2026-09-09）**：理由不是"以后不能做"，是**它不是当前验证变量**——当前要验的是"AI 能不能帮我发现值得写的东西"，不是"AI 能不能替我点发布"。同理不提前建设：RSS / 定时任务 / 24小时后台 / 事件总线
 
 ---
 
@@ -78,6 +90,7 @@
 | `README.md` | 项目入口 / 安装 / 启动 |
 | `docs/USER_GUIDE.md` | **用户视角**的功能说明（不是助手视角） |
 | `docs/WEEKLY_RECAP.md` | 周记计划的 9 段模板 + 节奏——写周报时读 |
+| **`docs/FINAL_FORM.md`** | **这个系统最终是什么 + 六层模型 + 反目标 + 停止线——想加功能前先读这一页** |
 | `docs/PRODUCT_PLAN.md` | 产品方向 + 阶段规划 |
 | `docs/MODULE_STATUS.md` | 模块成色（哪些是真实现，哪些是壳） |
 | `docs/CHANGELOG.md` | 最近变更 + 待办 |

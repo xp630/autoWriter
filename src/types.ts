@@ -32,7 +32,7 @@ declare global {
       saveMarkdownFile: (params: { filename?: string; content: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>;
       updateArticle: (params: { id: number; content: string }) => Promise<{ ok: boolean; wordCount: number }>;
       saveImageFile: (params: { dataUrl: string; filename?: string }) => Promise<{ ok: boolean; url: string; path: string }>;
-      generateImage: (params: { prompt: string; filename?: string; width?: number; height?: number; model?: 'flux' | 'turbo' | 'kontext' }) => Promise<{ ok: boolean; url: string; path: string; prompt: string }>;
+      generateImage: (params: { prompt: string; filename?: string; width?: number; height?: number; providerId?: string; modelId?: string; model?: string; tags?: string }) => Promise<{ ok: boolean; id?: number; url?: string; path?: string; prompt?: string; provider?: string; model?: string; error?: string }>;
       listArticleImages: (articleId: number) => Promise<ArticleImage[]>;
       generateImageFor: (p: { articleId: number; placeholderId: string; prompt: string; tags?: string; aspect?: string; useCraft?: boolean; craftCli?: string; providerId?: string; modelId?: string }) => Promise<{ ok: boolean; url: string; path?: string; prompt: string; imageId: number; provider?: string; model?: string }>;
       uploadImageFor: (p: { articleId: number; placeholderId: string; dataUrl: string; tags?: string }) => Promise<{ ok: boolean; url: string; imageId: number }>;
@@ -47,6 +47,45 @@ declare global {
       savePrompt: (params: { name: string; content: string }) => Promise<{ ok: boolean; name: string }>;
       listArticles: (params?: { status?: string; search?: string; profileId?: string }) => Promise<Article[]>;
       getArticle: (id: number) => Promise<Article | null>;
+
+      // ===== P0 Week 1: Season + Episode（Episode-centric）=====
+      listSeasons: (params?: { status?: SeasonStatus | 'all'; profileId?: string }) => Promise<Season[]>;
+      getSeason:   (id: number) => Promise<(Season & { episode_count?: number }) | null>;
+      saveSeason:  (params: Partial<Season> & { title: string; profileId?: string }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
+      archiveSeason: (id: number) => Promise<{ ok: boolean }>;
+      unarchiveSeason: (id: number) => Promise<{ ok: boolean }>;
+      listEpisodes: (params?: { seasonId?: number; status?: EpisodeStatus | 'all'; profileId?: string }) => Promise<Episode[]>;
+      getEpisode:   (id: number) => Promise<Episode | null>;
+      saveEpisode:  (params: Partial<Episode> & { profileId?: string; clearSlots?: string[] }) => Promise<{ ok: boolean; id: number; created_at?: string; updated_at?: string }>;
+      deleteEpisode: (id: number) => Promise<{ ok: boolean; detachedCards?: number }>;
+      linkEpisodeToArticle: (params: { episodeId: number; articleId: number }) => Promise<{ ok: boolean }>;
+      listCards:  (params?: { status?: CardStatus | 'all'; episodeId?: number; profileId?: string; limit?: number }) => Promise<ObservationCard[]>;
+      saveCard:   (params: { id?: number; observation?: string; question?: string; insight?: string; season_id?: number | null; profileId?: string }) => Promise<{ ok: boolean; id: number }>;
+      deleteCard: (id: number) => Promise<{ ok: boolean }>;
+      growCard:   (id: number) => Promise<{ ok: boolean; episodeId?: number; already?: boolean; error?: string }>;
+      /** 对话流一问：AI 决定追问(question)还是收尾提炼(insight)；失败时给 error，UI 降级固定两问 */
+      // Content Observer V1
+      observerAnalyze: (params: { cli: string; model?: string; type?: 'url' | 'text' | 'image'; content: string; source?: string; positioning?: string; profileId?: string }) => Promise<{ ok: boolean; error?: string; signalId?: number; opportunityId?: number; opportunity?: Opportunity; taskId?: string }>;
+      observerDecide: (params: { opportunityId: number; decision: 'ignore' | 'observe' | 'think' | 'create'; reasoning?: string; seasonId?: number | null; profileId?: string }) => Promise<{ ok: boolean; error?: string; decisionId?: number; observationId?: number | null; status?: string }>;
+      observerList: (params?: { profileId?: string; limit?: number }) => Promise<{ ok: boolean; error?: string; opportunities: Opportunity[]; stats: { presented: number; accepted: number } }>;
+      observerDelete: (id: number) => Promise<{ ok: boolean; error?: string }>;
+      interviewTurn: (params: { cli: string; model?: string; observation: string; observationId?: number; answers?: string[]; msgs?: Array<{ who: 'me'|'ai'; text: string; reasoning?: string }> }) =>
+        Promise<{ ok: boolean; type?: 'question' | 'insight'; text?: string; reasoning?: string; error?: string; taskId?: string; round?: number }>;
+      /** 回放留痕：重开访谈能续上（interview_messages 全量） */
+      interviewHistory: (observationId: number) => Promise<{ ok: boolean; messages: InterviewMessage[]; error?: string }>;
+      /** 证据：列某张卡的证据清单 */
+      evidenceList: (observationId: number) => Promise<{ ok: boolean; evidence: EvidenceItem[]; error?: string }>;
+      evidenceSave: (params: { observationId: number; content: string; sourceMessageIds?: number[] }) => Promise<{ ok: boolean; id?: number; error?: string }>;
+      evidenceDelete: (id: number) => Promise<{ ok: boolean; error?: string }>;
+      /** 观点确认：AI 只提议，用户确认后写 insights + 卡冗余 + insight_found */
+      insightConfirm: (params: { observationId: number; content: string; evidenceIds?: number[] }) => Promise<{ ok: boolean; error?: string }>;
+      /** 策划：组 EP 材料喂 CLI 出 3~5 角度（过拔高红线后返回，不落库）。cli 必填——handler 无 cli 直接结构化失败（纠正 B：类型与实现对齐） */
+      planPropose: (params: { episodeId: number; cli: string; model?: string }) => Promise<{ ok: boolean; proposals?: string[]; rejectedHigh?: string[]; error?: string }>;
+      /** 策划：用户确认方案 → 落 article_plans（confirmed=1） */
+      planConfirm: (params: { episodeId: number; plan: ArticlePlanDraft }) => Promise<{ ok: boolean; id?: number; error?: string }>;
+      planList: (episodeId: number) => Promise<{ ok: boolean; plans: ArticlePlan[]; error?: string }>;
+      /** EP 材料整包（策划页/生成前置的单一取数口） */
+      episodeMaterial: (episodeId: number) => Promise<{ ok: boolean; ep?: Episode | null; observations?: ObservationCard[]; evidence?: EvidenceItem[]; insights?: InsightItem[]; plans?: ArticlePlan[]; error?: string }>;
       scheduleArticle: (params: { id: number; scheduled_at: string }) => Promise<{ ok: boolean }>;
       unscheduleArticle: (id: number) => Promise<{ ok: boolean }>;
       publishArticle: (id: number) => Promise<{ ok: boolean }>;
@@ -560,6 +599,171 @@ export interface ImageModel {
   enabled: number;
   extra_params: Record<string, any> | string;
   created_at: string;
+}
+
+// ===== P0 Week 1：Season + Episode（Episode-centric 数据模型）=====
+// 设计原则："不锁死"。所有字段宽松，不强制 EP ↔ Article 关联。
+
+export type SeasonStatus = 'active' | 'archived';
+
+export interface Season {
+  id: number;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  status: SeasonStatus;
+  started_at?: string | null;
+  ended_at?: string | null;
+  profile_id?: string;
+  created_at: string;
+  updated_at: string;
+  /** 顺手算的：本 season 下的 episode 数（来自 season:get）*/
+  episode_count?: number;
+}
+
+export type CardStatus = 'new' | 'interviewing' | 'insight_found' | 'episode_created';
+
+/** 观察卡：生活账。一天可多张；长成 EP 时才挂 episode_id */
+export interface ObservationCard {
+  id: number;
+  observation: string;
+  question?: string;
+  insight?: string;
+  status: CardStatus;
+  episode_id?: number | null;
+  episode_title?: string;
+  season_id?: number | null;
+  profile_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type EpisodeStatus =
+  | 'planned'       // 计划位：有标题、还没开写（季节目单）
+  | 'observation'   // Q1: 刚记观察
+  | 'questioning'   // Q2: 在停顿/追问
+  | 'thinking'      // Q3: 在提炼
+  | 'drafting'      // 正在写
+  | 'published'     // 已发
+  | 'archived';     // 归档
+
+/** Content Observer V1：一次外部信号经判断后的机会入口（无评分字段——那是伪确定感）*/
+export interface Opportunity {
+  id: number;
+  signalId: number;
+  verdict: 'opportunity' | 'not_opportunity' | 'insufficient' | string;
+  title: string;
+  summary: string;
+  whyWorthAttention: string;
+  relevance: string;
+  timeliness: string;
+  differentiation: string;
+  audienceValue: string;
+  missingContext: string[];
+  risks: string[];
+  confidenceNote: string;
+  status: 'candidate' | 'presented' | 'ignored' | 'observed' | 'thinking' | 'creating' | string;
+  createdAt?: string;
+  signalContent?: string;
+  signalSource?: string;
+  signalType?: string;
+  decisions?: number;
+}
+
+export interface Episode {
+  id: number;
+  season_id?: number | null;
+  season_title?: string;       // 来自 join
+  title: string;
+  slug?: string;
+  intent?: string;              // 本集命题（计划位：这一集要回答什么）
+  status: EpisodeStatus;
+  observation: string;          // Q1
+  question: string;             // Q2
+  insight: string;              // Q3
+  draft: string;                // 草稿 markdown
+  // EP 活档案六槽（DB 早已建列，接口缺声明——EpisodePage 读这些列时吃了 9 条既有类型错）
+  event?: string;
+  reaction?: string;
+  development?: string;
+  shift?: string;
+  unknown?: string;
+  next?: string;
+  publish_url?: string;
+  published_at?: string | null;
+  read_count: number;
+  likes: number;
+  comments: number;
+  order_in_season: number;
+  card_count?: number;          // 来自 episode:get：挂着几张观察卡（删除确认用）
+  profile_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Dashboard 主页要展示的"创作主线"摘要 */
+export interface SeasonSummary {
+  season: Season;
+  episode_count: number;
+  published_count: number;
+  latest_episode?: Episode;
+}
+
+// ===== EP→Article V1（2026-09-02）：访谈留痕 / 证据 / 观点 / 策划 =====
+export interface InterviewMessage {
+  id: number;
+  observation_id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  reasoning?: string;
+  round: number;
+  created_at: string;
+}
+
+export interface EvidenceItem {
+  id: number;
+  observation_id: number;
+  content: string;
+  kind?: string;                // fact|experience|judgment|speculation|unknown
+  source_message_ids?: string;  // JSON 数组
+  created_at: string;
+}
+
+export interface InsightItem {
+  id: number;
+  observation_id: number;
+  content: string;
+  evidence_ids?: string;        // JSON 数组
+  confirmed?: number;
+  created_at: string;
+}
+
+/** article_plans 行（落库形态） */
+export interface ArticlePlan {
+  id: number;
+  episode_id?: number | null;
+  proposals?: string;           // JSON 数组
+  chosen_angle?: string;
+  article_title?: string;
+  reader_question?: string;
+  core_conflict?: string;
+  judgment_ref?: string;
+  evidence_ids?: string;        // JSON 数组
+  discussion_scope?: string;
+  confirmed?: number;
+  created_at?: string;
+}
+
+/** planConfirm 入参（客户端形态，证据链用数组表达） */
+export interface ArticlePlanDraft {
+  proposals?: string[];
+  chosen_angle?: string;
+  article_title?: string;
+  reader_question?: string;
+  core_conflict?: string;
+  judgment_ref?: string;
+  evidence_ids?: number[];
+  discussion_scope?: string;
 }
 
 export {};

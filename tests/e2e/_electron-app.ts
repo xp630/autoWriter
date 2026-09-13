@@ -42,8 +42,18 @@ export async function launchAutoWriter(opts: {
    * 入参就是即将传给 --user-data-dir 的目录。
    */
   seedUserData?: (dir: string) => void | Promise<void>;
+  /**
+   * 复用已有的 userData 目录再启动一次——用来验证“重启后会发生什么”这类问题。
+   * 典型场景：启动期数据迁移必须只跑一次，不跳的话每次重启都会重复造数据。
+   */
+  userDataDir?: string;
 } = {}): Promise<LaunchedApp> {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autowriter-e2e-'));
+  let userDataDir = opts.userDataDir;
+  if (userDataDir) {
+    fs.mkdirSync(userDataDir, { recursive: true });
+  } else {
+    userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autowriter-e2e-'));
+  }
 
   if (opts.seedUserData) await opts.seedUserData(userDataDir);
 

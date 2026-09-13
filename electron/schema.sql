@@ -220,3 +220,199 @@ CREATE TABLE IF NOT EXISTS strategy_articles (
 );
 CREATE INDEX IF NOT EXISTS idx_strategy_articles_strategy ON strategy_articles(strategy_id, adopted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_strategy_articles_article ON strategy_articles(article_id);
+
+-- ============================================================================
+-- P0 (Week 1): Season + Episode 数据结构
+-- 设计原则（"不锁死"）：
+--   1. 新表是补充，不是替代；article_drafts 保留作为 Episode 的"已发布快照"
+--   2. 所有新字段 nullable；不强制 EP 必须有 Article，反之亦然
+--   3. observation/question/insight/draft 都是 TEXT（不用 JSON 列），灵活
+--   4. article_drafts 加 season_id + episode_id 列，可空，不建外键约束
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS seasons (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  title        TEXT NOT NULL,                     -- "AutoWriter Season 1"
+  subtitle     TEXT DEFAULT '',                  -- "一个程序员用 AI 重构写作和思考的真实记录"
+  description  TEXT DEFAULT '',
+  status       TEXT DEFAULT 'active',            -- active / archived
+  started_at   DATETIME,
+  ended_at     DATETIME,
+  profile_id   TEXT DEFAULT '',
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_seasons_status ON seasons(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_seasons_profile ON seasons(profile_id, status);
+
+-- Episode 是 Season 下的核心对象
+-- 状态机：observation → questioning → thinking → drafting → published → archived
+CREATE TABLE IF NOT EXISTS episodes (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  season_id       INTEGER,                       -- 可空：未归入 Season 的 episode
+  title           TEXT DEFAULT '',               -- 短标题，如"我以为自己没有观点"
+  slug            TEXT DEFAULT '',               -- 友好 ID 如 ep-002，未来可作 URL
+  intent          TEXT DEFAULT '',               -- 本集命题（计划位：“这一集要回答什么”）。
+                                                 -- 不用 question 存：那是 2026-08-31 分离迁移的作用域，会被剥走
+  status          TEXT DEFAULT 'observation',    -- observation/questioning/thinking/drafting/published/archived
+  -- 3 问审问器的核心字段（按"不锁死"原则，全是 TEXT 不强结构）
+  observation     TEXT DEFAULT '',               -- Q1：今天你观察到了什么
+  question        TEXT DEFAULT '',               -- Q2：今天有什么事让你停顿了 3 秒
+  insight         TEXT DEFAULT '',               -- Q3：你最想说的一句话是什么
+  -- 写
+  draft           TEXT DEFAULT '',               -- 草稿（markdown）
+  -- EP 活档案槽位（2026-09-02 V1）
+  event           TEXT DEFAULT '',               -- 事件
+  reaction        TEXT DEFAULT '',               -- 反应
+  development     TEXT DEFAULT '',               -- 发展
+  shift           TEXT DEFAULT '',               -- 转变
+  unknown         TEXT DEFAULT '',               -- 未知
+  next            TEXT DEFAULT '',               -- 下一步
+  -- 发布后
+  publish_url     TEXT DEFAULT '',               -- 公众号文章 URL
+  published_at    DATETIME,
+  -- 反馈
+  read_count      INTEGER DEFAULT 0,
+  likes           INTEGER DEFAULT 0,
+  comments        INTEGER DEFAULT 0,
+  -- 元
+  order_in_season INTEGER DEFAULT 0,             -- Season 内顺序
+  profile_id      TEXT DEFAULT '',               -- 身份隔离
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_episodes_season ON episodes(season_id, order_in_season);
+CREATE INDEX IF NOT EXISTS idx_episodes_status ON episodes(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_episodes_profile ON episodes(profile_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_slug ON episodes(slug) WHERE slug != '';
+
+-- ============================================================================
+-- 2026-08-31 owner 定稿：观察卡与 Episode 分离
+--   观察卡 = 生活账（每天，一秒捕获，N 张）；Episode = 出版账（双周，一集）
+--   N 张卡 : 0..1 个 EP——卡"长成"EP 时才回填 episode_id
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS observations (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation  TEXT NOT NULL DEFAULT '',        -- Q1 必填：今天观察到什么
+  question     TEXT DEFAULT '',                 -- Q2 可空：什么让我停顿了
+  insight      TEXT DEFAULT '',                 -- Q3 可空：可能观点（= 已确认 insight 的冗余副本，向后兼容）
+  status       TEXT DEFAULT 'new',              -- V1 四态：new / interviewing / insight_found / episode_created（legacy raw/grown 启动时迁移）
+  episode_id   INTEGER,                         -- 长成哪一集（可空）
+  season_id    INTEGER,
+  profile_id   TEXT DEFAULT '',
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_obs_status  ON observations(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_obs_episode ON observations(episode_id);
+CREATE INDEX IF NOT EXISTS idx_obs_profile ON observations(profile_id, created_at DESC);
+
+
+-- ============================================================================
+-- Idea Interview V1（2026-09-02 owner 定稿）：采访留痕 → 证据 → 观点，观点必须可追溯
+--   最重要的资产不是 Insight，是 Evidence——有证据链的观点才立得住、才复用得了。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS interview_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation_id  INTEGER NOT NULL,
+  role            TEXT NOT NULL,                -- user | assistant
+  content         TEXT NOT NULL,
+  reasoning       TEXT DEFAULT '',              -- assistant 的"我的推力"（思考过程留档）
+  round           INTEGER NOT NULL DEFAULT 0,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_imsg_obs ON interview_messages(observation_id, round);
+
+CREATE TABLE IF NOT EXISTS evidence (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation_id      INTEGER NOT NULL,
+  content             TEXT NOT NULL,             -- 作者明确表达过的判断/选择/事实（不推测不扩写）
+  kind                TEXT DEFAULT 'fact',       -- fact|experience|judgment|speculation|unknown
+  source_message_ids  TEXT DEFAULT '[]',         -- JSON 数组：来自哪些采访消息（可追溯）
+  created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ev_obs ON evidence(observation_id);
+
+CREATE TABLE IF NOT EXISTS insights (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  observation_id  INTEGER NOT NULL,
+  content         TEXT NOT NULL,
+  evidence_ids    TEXT DEFAULT '[]',             -- JSON 数组：观点建立在哪几条证据上
+  confirmed       INTEGER NOT NULL DEFAULT 1,    -- V1 只存已确认的（用户点'存入这张卡'才算）
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ins_obs ON insights(observation_id);
+
+-- ============================================================================
+-- EP→Article 转化层 V1（2026-09-02 owner 定稿）：从证据链长出文章方案
+--   article_plans 是"转化前的一次具体决策"：proposals 装候选选题 JSON，
+--   用户确认 chosen 后 confirmed=1 才允许进入生成；证据直达 judgement_ref/evidence_ids。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS article_plans (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  episode_id        INTEGER,                       -- 关联 episodes（可空：未成集也能先出方案）
+  proposals         TEXT DEFAULT '[]',             -- JSON 数组：候选选题方案
+  chosen_angle      TEXT DEFAULT '',               -- 用户选中的角度
+  article_title     TEXT DEFAULT '',
+  reader_question   TEXT DEFAULT '',               -- 读者问题：文章要回答的
+  core_conflict     TEXT DEFAULT '',               -- 核心冲突
+  judgment_ref      TEXT DEFAULT '',               -- 判断依据引用（第几轮/哪条证据）
+  evidence_ids      TEXT DEFAULT '[]',             -- JSON 数组：本文案依赖的证据 id 链
+  discussion_scope  TEXT DEFAULT '',               -- 讨论边界（不写什么也写进来）
+  confirmed         INTEGER DEFAULT 0,             -- 0 草稿 / 1 已确认（确认后才允许生成正文）
+  created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_plans_episode ON article_plans(episode_id);
+
+-- ============================================================================
+-- Content Observer V1（2026-09-09，Phase 1：Signal → Opportunity → Human Decision）
+-- 设计约束（owner 定）：
+--   1) 不存任何评分/概率字段——当前样本不足以支撑精确数字，存了就是伪确定感
+--   2) Opportunity 的采纳结果落 decision_records；Observation 复用已有 observations 表
+--   3) 不做自动抓取：signal 只能由人手工录入（URL 也只在被点分析时才 fetch）
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS signals (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  type         TEXT NOT NULL DEFAULT 'text',      -- url | text | image
+  content      TEXT NOT NULL DEFAULT '',          -- 原文 / 链接 / 图片说明
+  source       TEXT DEFAULT '',                   -- 站点名或来源描述
+  normalized   TEXT DEFAULT '',                   -- URL 抓取并规整后的正文（非 URL 则空）
+  profile_id   TEXT DEFAULT '',
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_signals_profile ON signals(profile_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS opportunities (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  signal_id            INTEGER NOT NULL,
+  verdict              TEXT DEFAULT 'opportunity',  -- opportunity | not_opportunity | insufficient
+  title                TEXT DEFAULT '',             -- ≤20 字入口名（不是文章标题）
+  summary              TEXT DEFAULT '',             -- 这件事是什么（只说 Signal 里有的）
+  why_worth_attention  TEXT DEFAULT '',             -- 为什么值得你看（必须给连接点）
+  relevance            TEXT DEFAULT '',
+  timeliness           TEXT DEFAULT '',
+  differentiation      TEXT DEFAULT '',
+  audience_value       TEXT DEFAULT '',
+  missing_context      TEXT DEFAULT '[]',           -- JSON 数组：还缺哪些背景
+  risks                TEXT DEFAULT '[]',           -- JSON 数组：可能不值得的理由
+  confidence_note      TEXT DEFAULT '',             -- 自然语言不确定性（禁概率数字）
+  status               TEXT DEFAULT 'presented',    -- candidate|presented|ignored|observed|thinking|creating
+  profile_id           TEXT DEFAULT '',
+  created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_opps_signal ON opportunities(signal_id);
+CREATE INDEX IF NOT EXISTS idx_opps_status ON opportunities(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS decision_records (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  opportunity_id  INTEGER NOT NULL,
+  user_decision   TEXT NOT NULL,                   -- ignore | observe | think | create
+  reasoning       TEXT DEFAULT '',                 -- 我为什么这么判（"判断痕迹"，不是预测数字）
+  observation_id  INTEGER,                         -- 采纳为观察时回链 observations.id
+  profile_id      TEXT DEFAULT '',
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_opp ON decision_records(opportunity_id);
+-- Adoption Rate 的可算性靠这两张表，不在库里预先算好指标（V1 只留痕迹，不做统计系统）

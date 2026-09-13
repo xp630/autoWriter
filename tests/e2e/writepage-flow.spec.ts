@@ -311,6 +311,9 @@ test('写文章页：首次引导横幅显示，点了「知道了」后 localSt
 });
 
 test('写文章页：有草稿时显示「清空草稿」按钮，点击后清掉所有字段并消失', async () => {
+  // 测试隔离：显式清掉前序用例可能留下的草稿，不依赖"碰巧干净"
+  await ctx.window.evaluate(() => localStorage.removeItem('aw_draft'));
+  await ctx.window.reload({ waitUntil: 'domcontentloaded' });
   await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
   await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
 
@@ -326,7 +329,7 @@ test('写文章页：有草稿时显示「清空草稿」按钮，点击后清�
   await expect(ctx.window.locator('.btn-reset-draft')).toBeVisible();
 
   // 弹窗 confirm 选 "OK"
-  ctx.window.on('dialog', (d) => d.accept());
+  ctx.window.on('dialog', (d) => { d.accept().catch(() => {}); });
   await ctx.window.locator('.btn-reset-draft').click();
 
   // 按钮消失，主题框回到空，localStorage 清空
@@ -356,7 +359,15 @@ test('写文章页：草稿恢复后，分析/策略也一起回来（修复不�
       channel: 'wechat', style: 'tech', length: 'medium', needImage: true,
       analysis: { summary: '上次 AI 跑出来的 7 维分析' },
       analysisId: 42,
-      strategy: { strategyId: 7, title: '上次采纳的策略' },
+      // 真实形状：StrategySelection（外层 selection 信息 + 内层 strategy 行）
+      strategy: {
+        strategyId: 7, mode: 'topic',
+        strategy: {
+          topic: '上次写的主题', title: '上次采纳的策略', core_point: '观点句',
+          belief_before: '读者旧认知', belief_after: '读后新认知', belief_source: '评论区常见说法',
+          evidence_needed: [{ item: '一个数据', status: 'ready' }],
+        },
+      },
       angles: [{ title: '上次角度 1' }, { title: '上次角度 2' }],
       step: 1,
       savedAt: Date.now(),
@@ -364,12 +375,177 @@ test('写文章页：草稿恢复后，分析/策略也一起回来（修复不�
   });
   await ctx.window.reload({ waitUntil: 'domcontentloaded' });
   await ctx.window.locator('.nav-item').filter({ hasText: '写文章' }).first().click();
-  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
+  // seed 里 step:1 → 恢复后直接落在 Step 2（编辑大纲）
+  await expect(ctx.window.locator('text=Step 2 — 编辑大纲').first()).toBeVisible({ timeout: 5000 });
 
-  // 参考文应已就绪
+  // 返回 Step 1：参考文与主题应完整恢复（"不对称修复"的核心断言）
+  await ctx.window.locator('button:has-text("返回 Step 1")').first().click();
+  await expect(ctx.window.locator('text=Step 1 — 主题与参考').first()).toBeVisible({ timeout: 5000 });
   await expect(ctx.window.locator('text=参考文已就绪')).toBeVisible();
-  // 主题框恢复
-  await expect(ctx.window.locator('.textarea').first()).toHaveValue('上次写的主题');
-  // 应自动进到 Step 2（因 draft.step=1）
-  await expect(ctx.window.locator('text=Step 2')).toBeVisible({ timeout: 5000 });
+  await expect(ctx.window.locator('textarea.textarea').first()).toHaveValue('上次写的主题');
 });
+
+test('Quick Publish v4：四步流水线渲染 + 草稿排版改判 + 配图步无生成按钮', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
+  await expect(ctx.window.locator('.qp-steps')).toBeVisible({ timeout: 5000 });
+  // 5 个步骤名
+  for (const s of ['润色', '排版', '配图', '导出']) {
+    await expect(ctx.window.locator('.qp-step').filter({ hasText: s })).toBeVisible();
+  }
+  // 粘草稿 → 下一步进排版预览 → 观点盒应出现
+  await ctx.window.locator('.qp-textarea').fill('我以为自己没有观点。\n\n**观察背后，藏着你所有的观点。**');
+  await ctx.window.locator('.qp-nav .btn-primary').click();
+  await expect(ctx.window.locator('.qp-preview')).toBeVisible();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toBeVisible();
+  // 导览可回退
+  await ctx.window.locator('.qp-nav .btn-outline').first().click();
+  await expect(ctx.window.locator('.qp-textarea')).toBeVisible();
+});
+
+test('Quick Publish v5 配图步：生图走 Provider，无可用 provider 时给引导而不是烂图', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
+  await expect(ctx.window.locator('.qp-steps')).toBeVisible({ timeout: 5000 });
+  await ctx.window.locator('.qp-step').filter({ hasText: '配图' }).click();
+  // 生成按钮存在（生图功能保留），但必须经 provider
+  await expect(ctx.window.locator('button:has-text("生成封面")').first()).toBeVisible();
+  await expect(ctx.window.locator('button:has-text("从图库选")').first()).toBeVisible();
+  // 契合文章：提示词自动含观点句内容（先回第 1 步粘草稿）
+  await ctx.window.locator('.qp-step').filter({ hasText: '润色' }).click();
+  await ctx.window.locator('.qp-textarea').fill('# 我以为自己没有观点\n\n**观察背后，藏着你所有的观点。**');
+  await ctx.window.locator('.qp-step').filter({ hasText: '配图' }).click();
+  const promptBox = ctx.window.locator('.qp-panel textarea').first();
+  await expect(promptBox).not.toHaveValue('', { timeout: 5000 });
+  expect(await promptBox.inputValue()).toContain('我以为自己没有观点');
+  // e2e 环境：tensorart 已 seed 但无 Token → 点生成应得到"填 Token"引导
+  await ctx.window.locator('button:has-text("生成封面")').first().click();
+  await expect(ctx.window.locator('#aw-toast')).toContainText('Token', { timeout: 15000 });
+});
+
+test('Idea Interview：AI 不可用 → 直接关掉访谈 + toast（owner 定则 2026-09-01）', async () => {
+  // 注入不存在的 CLI 模拟 AI 不可用——不再走拷问池，直接关访谈
+  await ctx.window.evaluate(() => { (window as any).__IV_CLI__ = '__nonexistent_cli__'; });
+  await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
+  await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
+  const stamp = String(Date.now());
+  const cap = ctx.window.locator('.obs-capture textarea');
+  await cap.fill(`不可用卡 ${stamp}：测试 AI 不可用行为`);
+  await ctx.window.locator('button:has-text("存这张卡")').click();
+  const row = ctx.window.locator('.obs-row').filter({ hasText: `不可用卡 ${stamp}` }).first();
+  await expect(row).toBeVisible({ timeout: 6000 });
+
+  await row.locator('button.iv-open').click();
+  // modal 起来（textarea 空、不再有预设开场）→ 作者打一句 → 点下一步 → AI 不可用 → 关掉
+  await expect(ctx.window.locator('.iv-mask')).toBeVisible();
+  await ctx.window.locator('.iv-card textarea').fill('今天观察了一只猫');
+  await ctx.window.locator('.iv-card button:has-text("下一步")').click();
+  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0, { timeout: 10000 });
+  await expect(ctx.window.locator('#aw-toast')).toContainText('AI 不可用', { timeout: 6000 });
+
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await row.locator('.obs-del').click();
+  await ctx.window.waitForTimeout(400);
+});
+
+test('排版改判回归：AI 观点盒可以点掉（降级生效），段落可以点成观点', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '快速发布' }).first().click();
+  await ctx.window.locator('.qp-textarea').fill('第一段普通叙述。\n\n**这是一句观点。**');
+  await ctx.window.locator('.qp-nav .btn-primary').click();
+  await expect(ctx.window.locator('.qp-preview')).toBeVisible();
+  // 初始：1 个观点盒
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(1);
+  // 降级：点观点盒 → 消失
+  await ctx.window.locator('.qp-preview .qp-viewpoint').first().click();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(0);
+  // 再点回来恢复
+  await ctx.window.locator('.qp-block-wrap').last().click();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(1);
+  // 升级：点第一段普通段 → 变盒
+  await ctx.window.locator('.qp-block-wrap').first().click();
+  await expect(ctx.window.locator('.qp-preview .qp-viewpoint')).toHaveCount(2);
+});
+
+
+test('card:grow 把卡的 observation/question/insight 传给新 EP（owner 发现空壳 bug 回归）', async () => {
+  // 走仪表盘
+  await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
+  await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
+  const stamp = String(Date.now());
+  const cap = ctx.window.locator('.obs-capture textarea');
+  await cap.fill(`回归卡 ${stamp}：今天被一只猫盯了五秒`);
+  await ctx.window.locator('button:has-text("存这张卡")').click();
+  const row = ctx.window.locator('.obs-row').filter({ hasText: `回归卡 ${stamp}` }).first();
+  await expect(row).toBeVisible({ timeout: 6000 });
+
+  // 直接通过 IPC 给卡设 insight + 触发长成 EP（不走 UI 重渲——e2e 等不到 listCards 重渲染）
+  const updated = await ctx.window.evaluate(async (stamp) => {
+    // @ts-ignore
+    const list = await window.electronAPI.listCards?.({}) || [];
+    const c = list.find((x: any) => (x.observation || '').includes(`回归卡 ${stamp}`));
+    if (!c) return null;
+    // @ts-ignore
+    const r = await window.electronAPI.saveCard({
+      id: c.id,
+      observation: `回归卡 ${stamp}：今天被一只猫盯了五秒`,
+      question: '它为什么盯我',
+      insight: '等的人不开口，被等的人就赢了',
+    });
+    // @ts-ignore
+    const grown = await window.electronAPI.growCard?.(c.id);
+    return { id: c.id, r, grown };
+  }, stamp);
+  expect(updated?.r?.ok).toBeTruthy();
+  expect(updated?.grown?.ok).toBeTruthy();
+  await ctx.window.waitForTimeout(400);
+
+  // 通过 IPC 读回新 EP
+  const ep = await ctx.window.evaluate(async () => {
+    // @ts-ignore
+    const all = await window.electronAPI.listEpisodes?.();
+    return all || [];
+  });
+  expect(Array.isArray(ep)).toBeTruthy();
+  const grown = ep.find(e => (e.insight || '').includes('等的人不开口'));
+  expect(grown, '新建 EP 应可被检索到（insight 命中）').toBeTruthy();
+  expect(grown.observation).toContain(`回归卡 ${stamp}`);
+  expect(grown.insight).toContain('等的人不开口');
+
+  // 清理：通过 IPC 直接删卡
+  if (updated?.id) {
+    ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+    await ctx.window.evaluate(async (id) => {
+      // @ts-ignore
+      await window.electronAPI.deleteCard?.(id);
+    }, updated.id);
+    await ctx.window.waitForTimeout(300);
+  }
+});
+
+test('Idea Interview：无轮数上限 + 我定稿了 + mask 关提示（owner 定则 2026-09-01）', async () => {
+  await ctx.window.locator('.nav-item').filter({ hasText: '仪表盘' }).first().click();
+  await expect(ctx.window.locator('text=今日观察')).toBeVisible({ timeout: 5000 });
+
+  // 不走真 AI、不走降级——直接用 '我定稿了' 验证流程
+  const stamp = String(Date.now());
+  const cap = ctx.window.locator('.obs-capture textarea');
+  await cap.fill(`定稿卡 ${stamp}：邻居小孩今天没和我打招呼`);
+  await ctx.window.locator('button:has-text("存这张卡")').click();
+  const row = ctx.window.locator('.obs-row').filter({ hasText: `定稿卡 ${stamp}` }).first();
+  await row.locator('button.iv-open').click();
+
+  // modal 起来后 textarea 是空的（不再预设开场），'我定稿了' 也应可用
+  await expect(ctx.window.locator('.iv-mask')).toBeVisible();
+  await expect(ctx.window.locator('.iv-card button:has-text("我定稿了")')).toBeDisabled();
+  await ctx.window.locator('.iv-card textarea').fill('我开始怀疑他是不是在躲我');
+  await expect(ctx.window.locator('.iv-card button:has-text("我定稿了")')).toBeEnabled();
+  await ctx.window.locator('.iv-card button:has-text("我定稿了")').click();
+  await expect(ctx.window.locator('.iv-candidate')).toContainText('他是不是在躲我');
+  await ctx.window.locator('.iv-card button:has-text("存入这张卡")').click();
+  await expect(ctx.window.locator('.iv-mask')).toHaveCount(0);
+  const card2 = ctx.window.locator('.obs-row').filter({ hasText: `定稿卡 ${stamp}` }).first();
+  await expect(card2.locator('.obs-insight')).toContainText('他是不是在躲我');
+
+  // 清理
+  ctx.window.once('dialog', (d) => { d.accept().catch(() => {}); });
+  await card2.locator('.obs-del').click();
+  await ctx.window.waitForTimeout(400);
+});;

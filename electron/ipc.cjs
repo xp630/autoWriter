@@ -3,14 +3,16 @@ const { ipcMain, BrowserWindow } = require('electron');
 const { getDb } = require('./db.cjs');
 const { runAgent, detectAvailableClis, listModels } = require('./agent.cjs');
 const { fetchUrl } = require('./fetcher.cjs');
-const { loadAllSkills, buildSkillInjection } = require('./skills.cjs');
+const { loadAllSkills, buildSkillInjection, loadSkillBody } = require('./skills.cjs');
 const { renderPrompt } = require('./prompts.cjs');
 const { TaskQueue } = require('./queue.cjs');
 const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
+  parseObserverOutput, validateOpportunity,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
-  buildImageRoleHint, saveAnalysis,
+  buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, saveAnalysis,
+  parseExtractOutput, validatePatch, validateAngles,
   evidenceCoverage, normalizeEvidence, strategyGate,
 } = require('./analysis.cjs');
 
@@ -37,6 +39,21 @@ function emitQueueState() {
 agentQueue.on('state', emitQueueState);
 
 /** 队列化运行 runAgent：返回 { taskId, promise }，调用方 await promise 拿结果 */
+/** 生图统一入队：与文本任务同一队列闸门（provider 不被连点轰炸，UI 可见排队） */
+function queuedGenerateImage(providerId, promptFor, opts = {}) {
+  const { generateImage } = require('./image-providers.cjs');
+  const t = agentQueue.enqueue(
+    'image',
+    `生图: ${String(promptFor).slice(0, 24)}`,
+    ({ signal }) => {
+      if (signal.aborted) throw Object.assign(new Error('已取消'), { code: 'ABORTED' });
+      return generateImage(providerId, promptFor, opts);
+    },
+    { meta: { provider: providerId, model: opts.model || '', kind: 'image' } },
+  );
+  return t.promise;
+}
+
 function enqueueAgentRun(type, label, cfg, prompt, meta = {}) {
   let taskId = '';
   const task = agentQueue.enqueue(
@@ -425,6 +442,616 @@ function registerIpc() {
   // 不依赖 renderer状态（跨页面、跨时间时它是唯一可靠来源）。
   ipcMain.handle('article:strategyFor', (_e, articleId) => strategyForArticle(articleId));
 
+  // ===== P0 Week 1：Season + Episode 管理（Episode-centric）=====
+  // 设计原则："不锁死"。所有字段宽松，新表是补充不替代。
+  // 用户/文章/Episode 三者解耦，可任意组合：EP 不必带 Article，Article 不必挂 EP。
+
+  // --- Season ---
+  ipcMain.handle('season:list', (_e, { status = 'active', profileId } = {}) => {
+    let sql = 'SELECT * FROM seasons WHERE 1=1';
+    const params = [];
+    if (status && status !== 'all') { sql += ' AND status=?'; params.push(status); }
+    const pid = String(profileId || '');
+    if (pid) {
+      sql += ' AND (profile_id = ? OR profile_id = \'\' OR profile_id IS NULL)';
+      params.push(pid);
+    }
+    sql += ' ORDER BY created_at DESC LIMIT 20';
+    return db.prepare(sql).all(...params);
+  });
+
+  ipcMain.handle('season:get', (_e, id) => {
+    if (!id) return null;
+    const row = db.prepare('SELECT * FROM seasons WHERE id=?').get(id);
+    if (!row) return null;
+    // 顺手算一下这个 season 下有多少 episode
+    const epCount = db.prepare('SELECT COUNT(*) AS n FROM episodes WHERE season_id=?').get(id);
+    row.episode_count = epCount ? epCount.n : 0;
+    return row;
+  });
+
+  ipcMain.handle('season:save', (_e, params = {}) => {
+    const { id, title, subtitle, description, status, started_at, ended_at, profileId } = params;
+    if (!title) throw new Error('缺少 title');
+    const now = new Date().toISOString();
+    if (id) {
+      db.prepare(`UPDATE seasons SET title=?, subtitle=?, description=?, status=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`)
+        .run(title, subtitle || '', description || '', status || 'active', started_at || null, ended_at || null, now, id);
+      return { ok: true, id, updated_at: now };
+    }
+    const r = db.prepare(`INSERT INTO seasons (title, subtitle, description, status, started_at, ended_at, profile_id, created_at, updated_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(title, subtitle || '', description || '', status || 'active', started_at || null, ended_at || null, profileId || '', now, now);
+    return { ok: true, id: r.lastInsertRowid, created_at: now };
+  });
+
+  ipcMain.handle('season:archive', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare(`UPDATE seasons SET status='archived', updated_at=? WHERE id=?`)
+      .run(new Date().toISOString(), id);
+    return { ok: true };
+  });
+
+  // 取消归档：只改 status。不能走 season:save——那条 UPDATE 会把没传的 started_at/ended_at 写成 null
+  ipcMain.handle('season:unarchive', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare(`UPDATE seasons SET status='active', ended_at=NULL, updated_at=? WHERE id=?`)
+      .run(new Date().toISOString(), id);
+    return { ok: true };
+  });
+
+  // --- Episode ---
+  ipcMain.handle('episode:list', (_e, { seasonId, status, profileId } = {}) => {
+    let sql = `SELECT e.*, s.title AS season_title
+               FROM episodes e
+               LEFT JOIN seasons s ON e.season_id = s.id
+               WHERE 1=1`;
+    const params = [];
+    if (seasonId) { sql += ' AND e.season_id=?'; params.push(seasonId); }
+    if (status && status !== 'all') { sql += ' AND e.status=?'; params.push(status); }
+    const pid = String(profileId || '');
+    if (pid) {
+      sql += ' AND (e.profile_id = ? OR e.profile_id = \'\' OR e.profile_id IS NULL)';
+      params.push(pid);
+    }
+    sql += ' ORDER BY COALESCE(e.order_in_season, 0) ASC, e.updated_at DESC LIMIT 100';
+    return db.prepare(sql).all(...params);
+  });
+
+  ipcMain.handle('episode:get', (_e, id) => {
+    if (!id) return null;
+    const row = db.prepare(`SELECT e.*, s.title AS season_title
+                            FROM episodes e
+                            LEFT JOIN seasons s ON e.season_id = s.id
+                            WHERE e.id=?`).get(id);
+    if (!row) return null;
+    // 牵连计数：删除确认时要告诉用户「这张 EP 挂着几张观察卡」
+    try {
+      row.card_count = db.prepare('SELECT COUNT(*) c FROM observations WHERE episode_id=?').get(id).c;
+    } catch (e) { row.card_count = 0; }
+    return row;
+  });
+
+  ipcMain.handle('episode:save', (_e, params = {}) => {
+    const {
+      id, season_id, title, slug, status, intent,
+      observation, question, insight,
+      event, reaction, development, shift, unknown, next,
+      draft, publish_url, published_at,
+      order_in_season, profileId,
+    } = params;
+    const now = new Date().toISOString();
+    if (id) {
+      // slug 只在显式传入时更新（COALESCE 保护）：编辑页保存不回传 slug，
+      // 曾经的 bug——用户在 app 里编辑一次 EP，slug 就被冲成空（EP04 中招两次）
+      // 空值不覆盖（T5 stale write）：六槽位列 + observation/question/insight 一律
+      // COALESCE(NULLIF(?,''), col)——渲染层没传/传空不会把外部写入（extract/AI 回流）冲掉；
+      // 仅 draft/title/status/publish_url 允许显式清空（draft 清空走确认弹窗）。
+      // —— D-1（owner 拍板）「丢弃」改显式清空语义：clearSlots 是渲染层显式请求清空的
+      // 列名白名单（仅六槽位列 event/reaction/development/shift/unknown/next；
+      // observation/question/insight 是卡的原始物料，不在白名单）。对**被请求**的列绕
+      // COALESCE 直接写 ''；**未被请求**的列维持 COALESCE 保护——显式请求 ≠ stale 覆盖，
+      // 与 T5 的防冲职责不冲突（只对请求的列开特例）。
+      // 可显式清空的列：六槽位 + intent（命题清空输入框是合法意图，不能只加不能减）
+      const EP_CLEARABLE = [...EP_SLOT_COLUMNS, 'intent'];
+      const clearSlots = Array.isArray(params.clearSlots)
+        ? [...new Set(params.clearSlots.map((s) => String(s).toLowerCase()).filter((s) => EP_CLEARABLE.includes(s)))]
+        : [];
+      const clearIntent = clearSlots.includes('intent');
+      const slotBits = [];
+      const slotArgs = [];
+      for (const col of EP_SLOT_COLUMNS) {
+        if (clearSlots.includes(col)) {
+          slotBits.push(`${col}=''`);
+        } else {
+          slotBits.push(`${col}=COALESCE(NULLIF(?, ''), ${col})`);
+          slotArgs.push(params[col] || '');
+        }
+      }
+      db.prepare(`UPDATE episodes SET
+        season_id=?, title=?, slug=COALESCE(NULLIF(?, ''), slug), status=?,
+        observation=COALESCE(NULLIF(?, ''), observation),
+        question=COALESCE(NULLIF(?, ''), question),
+        insight=COALESCE(NULLIF(?, ''), insight),
+        ${clearIntent ? "intent=''" : "intent=COALESCE(NULLIF(?, ''), intent)"},
+        ${slotBits.join(',\n        ')},
+        draft=?, publish_url=?, published_at=?,
+        order_in_season=?, profile_id=?, updated_at=?
+        WHERE id=?`).run(
+          ...[season_id || null, title || '', slug || '', status || 'observation',
+              observation || '', question || '', insight || '']
+             .concat(clearIntent ? [] : [intent || '']),
+          ...slotArgs,
+          draft || '', publish_url || '', published_at || null,
+          Number(order_in_season) || 0, profileId || '', now, id,
+        );
+      // 自愈：slug 被任何路径清空时按序号补；先查重，冲突则跳过（绝不因补名搞挂保存）
+      try {
+        const cur = db.prepare('SELECT order_in_season FROM episodes WHERE id=?').get(id);
+        const cand = `ep-${String(Math.max(1, Number(cur && cur.order_in_season) || id)).padStart(3, '0')}`;
+        const taken = db.prepare('SELECT 1 FROM episodes WHERE slug=? AND id!=?').get(cand, id);
+        if (!taken) db.prepare(`UPDATE episodes SET slug=? WHERE id=? AND (slug='' OR slug IS NULL)`).run(cand, id);
+      } catch (e) { console.warn('[episode:save] slug 自愈跳过:', e.message); }
+      return { ok: true, id, updated_at: now };
+    }
+    const r = db.prepare(`INSERT INTO episodes (
+      season_id, title, slug, status, intent,
+      observation, question, insight,
+      draft, publish_url, published_at,
+      order_in_season, profile_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      season_id || null, title || '', slug || '', status || 'observation', intent || '',
+      observation || '', question || '', insight || '',
+      draft || '', publish_url || '', published_at || null,
+      Number(order_in_season) || 0, profileId || '', now, now,
+    );
+    return { ok: true, id: r.lastInsertRowid, created_at: now };
+  });
+
+  ipcMain.handle('episode:delete', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    // 软引用没有外键约束（schema 有意为之），裸删会留下孤儿：观察卡显示「已长成」但 EP 不存在。
+    // 所以删之前先断链——卡是生活账，不该被出版账的一集带走：episode_id 置空、
+    // 状态从 episode_created 退回 insight_found（它仍然带着已确认的观点）。
+    let detachedCards = 0;
+    try {
+      detachedCards = db.prepare('SELECT COUNT(*) c FROM observations WHERE episode_id=?').get(id).c;
+      db.prepare("UPDATE observations SET status='insight_found', updated_at=? WHERE episode_id=? AND status='episode_created'").run(new Date().toISOString(), id);
+      db.prepare('UPDATE observations SET episode_id=NULL WHERE episode_id=?').run(id);
+    } catch (e) { console.warn('[episode:delete] 观察卡断链失败:', e.message); }
+    // 策划方案允许无 EP 存在（未成集也能先出方案），所以同样置空而非级联删
+    try {
+      db.prepare('UPDATE article_plans SET episode_id=NULL WHERE episode_id=?').run(id);
+    } catch (e) { /* 表可能未迁移，容错 */ }
+    db.prepare('DELETE FROM episodes WHERE id=?').run(id);
+    return { ok: true, detachedCards };
+  });
+
+  ipcMain.handle('episode:linkArticle', (_e, { episodeId, articleId }) => {
+    if (!episodeId || !articleId) throw new Error('缺少 episodeId/articleId');
+    db.prepare('UPDATE article_drafts SET episode_id=? WHERE id=?').run(episodeId, articleId);
+    db.prepare('UPDATE episodes SET publish_url=(SELECT publish_url FROM article_drafts WHERE id=?) WHERE id=?')
+      .run(articleId, episodeId);
+    return { ok: true };
+  });
+
+  // ===== 观察卡（生活账；2026-08-31 与 Episode 分离定稿）=====
+  ipcMain.handle('card:list', (_e, { status, episodeId, profileId, limit = 50 } = {}) => {
+    let sql = `SELECT o.*, e.title AS episode_title
+               FROM observations o
+               LEFT JOIN episodes e ON o.episode_id = e.id
+               WHERE 1=1`;
+    const params = [];
+    if (status && status !== 'all') { sql += ' AND o.status=?'; params.push(status); }
+    if (episodeId) { sql += ' AND o.episode_id=?'; params.push(episodeId); }
+    const pid = String(profileId || '');
+    if (pid) { sql += ' AND (o.profile_id = ? OR o.profile_id = \'\' OR o.profile_id IS NULL)'; params.push(pid); }
+    sql += ' ORDER BY o.created_at DESC LIMIT ?';
+    params.push(Math.max(1, Math.min(200, Number(limit) || 50)));
+    return db.prepare(sql).all(...params);
+  });
+
+  ipcMain.handle('card:save', (_e, params = {}) => {
+    const { id, observation, question, insight, season_id, profileId } = params;
+    const now = new Date().toISOString();
+    if (id) {
+      const cur = db.prepare('SELECT * FROM observations WHERE id=?').get(id);
+      if (!cur) throw new Error('卡片不存在');
+      db.prepare(`UPDATE observations SET observation=?, question=?, insight=?, season_id=?, updated_at=? WHERE id=?`)
+        .run(
+          observation !== undefined ? observation : cur.observation,
+          question !== undefined ? question : cur.question,
+          insight !== undefined ? insight : cur.insight, /*__V1MARK__*/
+          season_id !== undefined ? season_id : cur.season_id,
+          now, id,
+        );
+      return { ok: true, id };
+    }
+    const text = String(observation || '').trim();
+    if (!text) throw new Error('观察不能为空——这就是卡片的唯一必填');
+    const r = db.prepare(`INSERT INTO observations (observation, question, insight, status, season_id, profile_id, created_at, updated_at)
+      VALUES (?, ?, ?, 'new', ?, ?, ?, ?)`)
+      .run(text, question || '', insight || '', season_id || null, profileId || '', now, now);
+    return { ok: true, id: r.lastInsertRowid };
+  });
+
+  ipcMain.handle('card:delete', (_e, id) => {
+    if (!id) throw new Error('缺少 id');
+    db.prepare('DELETE FROM observations WHERE id=?').run(id);
+    return { ok: true };
+  });
+
+  // 长成 EP：建一集（标题取观点/观察句），卡片标 grown 并回链
+  ipcMain.handle('card:grow', (_e, id) => {
+    const card = db.prepare('SELECT * FROM observations WHERE id=?').get(id);
+    if (!card) throw new Error('卡片不存在');
+    if (card.episode_id) return { ok: true, episodeId: card.episode_id, already: true };
+    // 长成哪一季：优先卡自己的 season_id。这里以前只取“最新 active 季”，
+    // 多季并存后会把旧季的卡长到新季去（owner 开 Season 2 时由 e2e 抓出）。
+    const season = card.season_id
+      ? { id: card.season_id }
+      : db.prepare(`SELECT id FROM seasons WHERE status='active' ORDER BY created_at DESC LIMIT 1`).get();
+    const title = (String(card.insight || card.observation || '未命名').replace(/[*#>]/g, '').trim()).slice(0, 30);
+    const order = (db.prepare('SELECT COALESCE(MAX(order_in_season),0) m FROM episodes WHERE season_id=?').get(season ? season.id : null).m) + 1;
+    const now = new Date().toISOString();
+    // 卡上的原料/问题/判断必须随 EP 一起搬过来——空壳 EP 是没法扩写的。
+    // 之前这里三个字段都写 ''，导致 8 集全部 o=q=i=0（owner 实测发现）。
+    const ep = db.prepare(`INSERT INTO episodes (season_id, title, status, observation, question, insight, draft, order_in_season, profile_id, created_at, updated_at)
+      VALUES (?, ?, 'observation', ?, ?, ?, '', ?, ?, ?, ?)`)
+      .run(
+        season ? season.id : null,
+        title,
+        String(card.observation || ''),
+        String(card.question || ''),
+        String(card.insight || ''),
+        order,
+        card.profile_id || '',
+        now,
+        now,
+      );
+    db.prepare(`UPDATE observations SET status='episode_created', episode_id=?, updated_at=? WHERE id=?`).run(ep.lastInsertRowid, now, id);
+    return { ok: true, episodeId: ep.lastInsertRowid };
+  });
+
+  // ===== Idea Interview V1（2026-09-02）：采访留痕 → 证据 → 观点，观点可追溯 =====
+  // 留痕：interview_messages 持久化每一问一答（含 AI 的推力），关掉 app 也能续上
+  // 无门槛版：AI 随时可收尾提炼 INSIGHT，用户确认后才算数；只守"出处执法"（validatePatch）
+  // 每轮结束后异步抽一轮素材（不阻塞访谈响应；提取失败不影响对话）——
+  // ep-extract 模板（Task 4）：renderPrompt 抛错也兜住（console.warn 不崩）
+  const EP_SLOT_COLUMNS = ['event', 'reaction', 'development', 'shift', 'unknown', 'next'];
+  const extractRound = (observationId, cli, model, lastAnswer) => {
+    if (!observationId || !lastAnswer) return;
+    void (async () => {
+      try {
+        const obs = db.prepare('SELECT id, episode_id FROM observations WHERE id=?').get(observationId);
+        if (!obs) return;
+        // 槽位现状（accepted 直写、pending 带前缀，都在这同一批列里，不出第三态表）
+        const epRow = obs.episode_id
+          ? db.prepare(`SELECT ${EP_SLOT_COLUMNS.join(',')} FROM episodes WHERE id=?`).get(obs.episode_id)
+          : null;
+        const slotState = {};
+        if (epRow) {
+          for (const col of EP_SLOT_COLUMNS) {
+            const v = String(epRow[col] || '');
+            slotState[col] = v.startsWith('[待确认] ') ? v.slice('[待确认] '.length) : v;
+          }
+        }
+        const evidence = db.prepare('SELECT id, content, kind FROM evidence WHERE observation_id=? ORDER BY id').all(observationId);
+        const p = renderPrompt('ep-extract', {
+          slotState: JSON.stringify(slotState),
+          evidence: JSON.stringify(evidence.map((e) => e.content)),
+          answer: String(lastAnswer),
+        });
+        const { promise } = enqueueAgentRun('extract', `素材抽取: ${String(lastAnswer).slice(0, 20)}`, { cli, model: model || '' }, p);
+        const { content } = await promise;
+        const parsed = parseExtractOutput(content);
+        // —— 出处执法先行：在证据落库前定稿 verdict，accepted 的 src 要回填进 evidence ——
+        const slotKeys = parsed.slots ? Object.keys(parsed.slots) : [];
+        const msgs = (obs.episode_id && slotKeys.length)
+          ? db.prepare('SELECT id, role, content FROM interview_messages WHERE observation_id=? ORDER BY id').all(observationId)
+          : [];
+        const verdict = (obs.episode_id && slotKeys.length)
+          ? validatePatch(parsed, msgs)
+          : { accepted: [], pending: [], rejected: [] };
+        // accepted 的 src 数组：validatePatch 执法下缺 src / 任一 src 查无消息都会进 rejected，
+        // 所以 accepted 项必然带 src；若万一出现空 src（如无 episode 时无从验证、accepted 为空），
+        // 按 [] 落库（与旧行为一致，不因回填逻辑崩掉访谈）。
+        const srcIds = [...new Set(verdict.accepted.flatMap((a) => (a && Array.isArray(a.src) ? a.src : [])))].sort((x, y) => x - y);
+        // 1) 证据行（复用既有落库段：查重后插入）——source_message_ids 不再写死 []：
+        //    回填本轮 accepted 项的 src，守住契约“证据必须回指作者原话 message id”
+        if (parsed.evidence.length) {
+          const have = db.prepare('SELECT id, content FROM evidence WHERE observation_id=?').all(observationId);
+          const norm = (t) => String(t).replace(/\s+/g, '');
+          let inserted = 0;
+          for (const it of parsed.evidence) {
+            const text = String(it.content || '').trim();
+            if (!text) continue;
+            const dup = have.some((h) => norm(h.content).includes(norm(text)) || norm(text).includes(norm(h.content)));
+            if (dup) continue;
+            db.prepare('INSERT INTO evidence (observation_id, content, kind, source_message_ids) VALUES (?, ?, ?, ?)')
+              .run(observationId, text, it.kind || 'fact', JSON.stringify(srcIds));
+            inserted++;
+          }
+          if (inserted) console.log(`[extract] 卡 ${observationId} 新增 ${inserted} 条证据`);
+        }
+        // 2) 槽位补全：accepted 直写 / 零重叠挂"[待确认] "前缀 → 同列（无第三态表）
+        if (obs.episode_id && slotKeys.length) {
+          const assigns = {};
+          // 槽位键大小写归一（终审修复）：契约层 parseExtractOutput/validatePatch 保留原键大小写
+          // （文档与单测都允许大写 Event/Reaction…），而落库列白名单 EP_SLOT_COLUMNS 是小写六列；
+          // 不归一的话 `assigns['Event']` 匹配不到 `assigns['event']`，大写键槽位会被静默丢一条不写。
+          for (const a of verdict.accepted) assigns[String(a.slot).toLowerCase()] = String(a.text || '').trim();
+          for (const pd of verdict.pending) assigns[String(pd.slot).toLowerCase()] = '[待确认] ' + String(pd.text || '').trim();
+          // 同源风险：契约 SLOT_WHITELIST 还含 observation/question/judgment（prompt 目前不喂），
+          // EP_SLOT_COLUMNS 没有这三列 → 落库前显式过滤 + warn，至少可观测不静默。
+          const unhandled = Object.keys(assigns).filter((k) => !EP_SLOT_COLUMNS.includes(k));
+          if (unhandled.length) console.warn(`[extract] 卡 ${observationId} 槽位 ${unhandled.join(',')} 不在 EP_SLOT_COLUMNS，本轮不落库（契约层仍保留）`);
+          const cols = EP_SLOT_COLUMNS.filter((c) => assigns[c]);
+          if (cols.length) {
+            const setSql = cols.map((c) => `${c}=?`).join(', ');
+            db.prepare(`UPDATE episodes SET ${setSql}, updated_at=? WHERE id=?`)
+              .run(...cols.map((c) => assigns[c]), new Date().toISOString(), obs.episode_id);
+          }
+          console.log(`[extract] 卡 ${observationId} 轮抽落槽（accept ${verdict.accepted.length} / pending ${verdict.pending.length} / reject ${verdict.rejected.length}）`);
+        }
+      } catch (e) { console.warn('[extract] 提取失败（忽略，不伤访谈）:', e.message); }
+    })();
+  };
+
+  ipcMain.handle('interview:turn', async (_e, { cli, model, observation, msgs = [], answers = [], observationId } = {}) => {
+    if (!observation || !String(observation).trim()) return { ok: false, error: '缺少观察' };
+    if (!cli) return { ok: false, error: '未选择 Agent CLI' };
+    const obsId = Number(observationId) || 0;
+
+    // —— 留痕：本轮作者答（取 msgs 末尾的 me）先落库，状态转 interviewing ——
+    const now = () => new Date().toISOString();
+    let round = 0;
+    let userMsgId = 0;
+    if (obsId) {
+      try {
+        const lastMe = [...msgs].reverse().find((m) => m.who === 'me') || (answers.length ? { text: answers[answers.length - 1] } : null);
+        if (lastMe && String(lastMe.text).trim()) {
+          round = (db.prepare('SELECT COALESCE(MAX(round),0) r FROM interview_messages WHERE observation_id=?').get(obsId).r) + 1;
+          const r1 = db.prepare('INSERT INTO interview_messages (observation_id, role, content, round, created_at) VALUES (?, ?, ?, ?, ?)')
+            .run(obsId, 'user', String(lastMe.text), round, now());
+          userMsgId = Number(r1.lastInsertRowid);
+          db.prepare(`UPDATE observations SET status='interviewing', updated_at=? WHERE id=? AND status='new'`).run(now(), obsId);
+        }
+      } catch (e) { console.warn('[interview] 作者答落库失败:', e.message); }
+    }
+
+    // 证据清单（给 AI 看的上下文，无门槛）：已确认轮数按 user 行数计
+    let evRows = [];
+    let roundsDone = 0;
+    if (obsId) {
+      try {
+        evRows = db.prepare('SELECT id, content FROM evidence WHERE observation_id=? ORDER BY id').all(obsId);
+        roundsDone = db.prepare('SELECT COUNT(*) c FROM interview_messages WHERE observation_id=? AND role=?').get(obsId, 'user').c;
+      } catch (e) { /* 表可能还没迁移完，容错 */ }
+    } else {
+      roundsDone = answers.length;
+    }
+
+    let transcript;
+    if (Array.isArray(msgs) && msgs.length > 0) {
+      transcript = msgs.map((m, i) => `${i + 1}. ${m.who === 'ai' ? '访谈者' : '作者'}：${m.text}`).join('\n');
+    } else {
+      transcript = answers.map((a, i) => `${i + 1}. 作者：${a}`).join('\n') || '（还没有回答）';
+    }
+
+    // 槽位状态（给 agent 的眼睛：已有什么、缺什么 → 判断采访阶段倾向）。V1 只读六新槽列 + 证据条数
+    let slotStateTxt = '（该卡尚未关联 EP，槽位为空）';
+    if (obsId) {
+      try {
+        const obs = db.prepare('SELECT episode_id FROM observations WHERE id=?').get(obsId);
+        if (obs && obs.episode_id) {
+          const epRow = db.prepare(`SELECT ${EP_SLOT_COLUMNS.join(',')} FROM episodes WHERE id=?`).get(obs.episode_id);
+          const filled = [];
+          for (const col of EP_SLOT_COLUMNS) {
+            const v = String(epRow ? epRow[col] : '').trim();
+            if (v) filled.push(`${col}: ${v.startsWith('[待确认] ') ? v.slice('[待确认] '.length) + '（待确认）' : v}`);
+          }
+          const evCnt = db.prepare('SELECT COUNT(*) c FROM evidence WHERE observation_id=?').get(obsId).c;
+          slotStateTxt = (filled.length ? filled.join('\n') : '（六槽暂无已确认内容）') + `\n已提取证据 ${evCnt} 条`;
+        }
+      } catch (e) { /* 容错：拼不出就用默认文案 */ }
+    }
+    console.log(`[interview] calling ${cli} | obs=${String(observation).slice(0,30)}... | transcript=${transcript.length} chars | 轮=${roundsDone} 证据=${evRows.length}`);
+    let skillBody = '';
+    try { skillBody = loadInterviewSkill(); } catch (e) { /* skill 缺失则只跑模板 */ }
+    let prompt;
+    try {
+      prompt = renderPrompt('interview', { skillBody, observation: String(observation), transcript, slotState: slotStateTxt });
+    } catch (err) { return { ok: false, error: err.message }; }
+    let taskId = '';
+    try {
+      const enq = enqueueAgentRun('interview', `观点访谈: ${String(observation).slice(0, 24)}`, { cli, model: model || '' }, prompt);
+      taskId = enq.taskId;
+      const { content } = await enq.promise;
+      console.log(`[interview] ${cli} returned ${content.length} chars: ${content.slice(0,200).replace(/\n/g,' / ')}`);
+      const parsed = parseInterviewOutput(content);
+      // —— 留痕：AI 问/收尾也落库 ——
+      if (obsId && userMsgId) {
+        try {
+          db.prepare('INSERT INTO interview_messages (observation_id, role, content, reasoning, round, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(obsId, 'assistant', parsed.text, parsed.reasoning || '', round, now());
+        } catch (e) { console.warn('[interview] AI 问落库失败:', e.message); }
+      }
+      // —— 每轮结束：异步抽一轮素材（不 await，不等它）——
+      if (obsId) {
+        const lastMe = [...msgs].reverse().find((m) => m.who === 'me');
+        extractRound(obsId, cli, model, lastMe ? String(lastMe.text) : '');
+      }
+      return { ok: true, ...parsed, taskId, round: roundsDone };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err), taskId };
+    }
+  });
+
+  // 历史回放：重新打开访谈能续上（interviewing 状态存在的意义）
+  ipcMain.handle('interview:history', (_e, observationId) => {
+    const id = Number(observationId);
+    if (!id) return { ok: false, error: '缺少卡片 id' };
+    try {
+      const messages = db.prepare('SELECT id, role, content, reasoning, round, created_at FROM interview_messages WHERE observation_id=? ORDER BY round, id').all(id);
+      return { ok: true, messages };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ===== 证据（V1：访谈的中间产物，观点的地基）=====
+  ipcMain.handle('evidence:list', (_e, observationId) => {
+    const id = Number(observationId);
+    if (!id) return { ok: false, error: '缺少卡片 id' };
+    try { return { ok: true, evidence: db.prepare('SELECT * FROM evidence WHERE observation_id=? ORDER BY id').all(id) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('evidence:save', (_e, { observationId, content, sourceMessageIds } = {}) => {
+    const id = Number(observationId); const text = String(content || '').trim();
+    if (!id || !text) return { ok: false, error: '缺 observationId 或 content' };
+    try {
+      const r = db.prepare('INSERT INTO evidence (observation_id, content, source_message_ids) VALUES (?, ?, ?)')
+        .run(id, text, JSON.stringify(Array.isArray(sourceMessageIds) ? sourceMessageIds : []));
+      return { ok: true, id: Number(r.lastInsertRowid) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('evidence:delete', (_e, id) => {
+    try { db.prepare('DELETE FROM evidence WHERE id=?').run(Number(id)); return { ok: true }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ===== 观点确认（AI 只能提议，用户最终决定——确认后 status→insight_found）=====
+  ipcMain.handle('insight:confirm', (_e, { observationId, content, evidenceIds } = {}) => {
+    const id = Number(observationId); const text = String(content || '').trim();
+    if (!id || !text) return { ok: false, error: '缺 observationId 或观点内容' };
+    try {
+      const now = new Date().toISOString();
+      db.prepare('INSERT INTO insights (observation_id, content, evidence_ids, confirmed, created_at) VALUES (?, ?, ?, 1, ?)')
+        .run(id, text, JSON.stringify(Array.isArray(evidenceIds) ? evidenceIds : []), now);
+      // 冗余副本写回卡（card:grow 与 EP 长成都读这个字段），并升状态
+      db.prepare(`UPDATE observations SET insight=?, status='insight_found', updated_at=? WHERE id=? AND status!='episode_created'`).run(text, now, id);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ===== 策划通道（EP→Article V1）：材料组包 → 角度提议 → 用户确认落 article_plans =====
+  // 组 EP 材料：一集 + 挂靠的观察卡 + 每张卡的证据/观点 + 已确认过的方案
+  function buildEpisodeMaterial(episodeId) {
+    const ep = db.prepare('SELECT * FROM episodes WHERE id=?').get(episodeId);
+    if (!ep) return { ep: null, observations: [], evidence: [], insights: [], plans: [] };
+    const observations = db.prepare('SELECT * FROM observations WHERE episode_id=? ORDER BY created_at').all(episodeId);
+    const obsIds = observations.map((o) => o.id);
+    let evidence = [];
+    let insights = [];
+    if (obsIds.length) {
+      const marks = obsIds.map(() => '?').join(',');
+      evidence = db.prepare(`SELECT * FROM evidence WHERE observation_id IN (${marks}) ORDER BY id`).all(...obsIds);
+      insights = db.prepare(`SELECT * FROM insights WHERE observation_id IN (${marks}) ORDER BY id`).all(...obsIds);
+    }
+    const plans = db.prepare('SELECT * FROM article_plans WHERE episode_id=? ORDER BY id DESC').all(episodeId);
+    return { ep, observations, evidence, insights, plans };
+  }
+
+  // 把 CLI 输出解析成角度句列表（JSON 数组 | 逐行列表）：与 parseExtractOutput 同族容错
+  function parseAngleProposals(raw) {
+    const t = String(raw || '').trim();
+    if (!t) return [];
+    const parsed = parseAnalysisJson(t);
+    if (parsed.ok && Array.isArray(parsed.data)) {
+      return parsed.data
+        .map((x) => {
+          if (x == null) return '';
+          if (typeof x === 'string') return x.trim();
+          if (typeof x === 'object') return String(x.title || x.text || x.angle || '').trim();
+          return '';
+        })
+        .filter(Boolean);
+    }
+    return t.split('\n').map((l) => l.replace(/^[-*\d.\s]+/, '').trim()).filter(Boolean);
+  }
+
+  // 组材料喂 CLI 出 3~5 个选题角度 → 过拔高红线（validateAngles）→ 返回 proposals，不落库
+  ipcMain.handle('plan:propose', async (_e, arg = {}) => {
+    const episodeId = typeof arg === 'number' ? arg : Number((arg && arg.episodeId) || 0);
+    if (!episodeId) return { ok: false, error: '缺少 episodeId' };
+    const ep = db.prepare('SELECT id FROM episodes WHERE id=?').get(episodeId);
+    if (!ep) return { ok: false, error: 'Episode 不存在' };
+    const cli = (typeof arg === 'object' && arg && arg.cli) || '';
+    if (!cli) return { ok: false, error: '未选择 Agent CLI' };
+    const m = buildEpisodeMaterial(episodeId);
+    let prompt;
+    try {
+      prompt = renderPrompt('plan-propose', {
+        title: m.ep.title || '',
+        observation: m.ep.observation || '',
+        question: m.ep.question || '',
+        insight: m.ep.insight || '',
+        evidence: JSON.stringify(m.evidence.map((e) => e.content)),
+        insights: JSON.stringify(m.insights.map((i) => i.content)),
+        plans: JSON.stringify(m.plans.map((p) => p.chosen_angle || '')),
+      });
+    } catch (err) {
+      // 模板缺失时给结构化失败（Task 4 已建 plan-propose.md，正常不会走到）
+      return { ok: false, error: err.message };
+    }
+    try {
+      const { promise } = enqueueAgentRun('plan', `选题角度: ${String(m.ep.title || m.ep.observation || '').slice(0, 24)}`, { cli, model: arg.model || '' }, prompt);
+      const { content } = await promise;
+      const angles = parseAngleProposals(content);
+      const { ok: okAngles, rejectedHigh } = validateAngles(angles);
+      return { ok: true, proposals: okAngles, rejectedHigh };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // 用户确认方案 → 落 article_plans（confirmed=1；证据链打平存档）
+  ipcMain.handle('plan:confirm', (_e, { episodeId, plan } = {}) => {
+    const id = Number(episodeId) || 0;
+    if (!id) return { ok: false, error: '缺少 episodeId' };
+    const ep = db.prepare('SELECT id FROM episodes WHERE id=?').get(id);
+    if (!ep) return { ok: false, error: 'Episode 不存在' };
+    const p = plan && typeof plan === 'object' ? plan : {};
+    const angle = String(p.chosen_angle || p.angle || p.title || '').trim();
+    if (!angle) return { ok: false, error: '缺少 plan.chosen_angle' };
+    const now = new Date().toISOString();
+    const r = db.prepare(`INSERT INTO article_plans (
+      episode_id, proposals, chosen_angle, article_title, reader_question, core_conflict,
+      judgment_ref, evidence_ids, discussion_scope, confirmed, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`).run(
+      id,
+      JSON.stringify(Array.isArray(p.proposals) ? p.proposals : []),
+      angle,
+      String(p.article_title || '').trim(),
+      String(p.reader_question || '').trim(),
+      String(p.core_conflict || '').trim(),
+      String(p.judgment_ref || '').trim(),
+      JSON.stringify(Array.isArray(p.evidence_ids) ? p.evidence_ids : []),
+      String(p.discussion_scope || '').trim(),
+      now,
+    );
+    return { ok: true, id: Number(r.lastInsertRowid) };
+  });
+
+  ipcMain.handle('plan:list', (_e, episodeId) => {
+    const id = Number(episodeId) || 0;
+    if (!id) return { ok: false, error: '缺少 episodeId' };
+    try {
+      const plans = db.prepare('SELECT * FROM article_plans WHERE episode_id=? ORDER BY id DESC').all(id);
+      return { ok: true, plans };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // EP 材料整包（策划页/生成前置的单一取数口）
+  ipcMain.handle('episode:material', (_e, episodeId) => {
+    const id = Number(episodeId) || 0;
+    if (!id) return { ok: false, error: '缺少 episodeId' };
+    try {
+      const material = buildEpisodeMaterial(id);
+      if (!material.ep) return { ok: false, error: 'Episode 不存在' };
+      return { ok: true, ...material };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
   // 更新文章（用于保存润色结果）
   ipcMain.handle('article:update', (_e, { id, content }) => {
     if (!id) throw new Error('缺少 id');
@@ -548,29 +1175,65 @@ function registerIpc() {
   });
 
   // 从 URL 抓图（Pollinations / 公网）→ 存本地 → 返回 aw-img:// URL
-  ipcMain.handle('image:generate', async (_e, { prompt, filename, width, height, model }) => {
+  ipcMain.handle('image:generate', async (_e, { prompt, filename, width, height, providerId, modelId, model: legacyModel, tags }) => {
     const fs = require('node:fs');
     const path = require('node:path');
     const { app } = require('electron');
-    const w = width || 1200;
-    const h = height || 800;
-    const m = model || 'flux';
-    // Pollinations.ai 公共 API（无需 key）
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&model=${m}&nologo=true&seed=${Date.now() % 99999}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-    if (!res.ok) throw new Error(`Pollinations HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const dir = path.join(app.getPath('userData'), 'uploads');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const safeName = (filename || prompt).replace(/[^\w一-龥-]/g, '_').slice(0, 60);
-    const fileName = `${safeName}-${Date.now()}.jpg`;
-    const filePath = path.join(dir, fileName);
-    fs.writeFileSync(filePath, buf);
-    return { ok: true, url: 'aw-img://img/' + encodeURIComponent(fileName), path: filePath, prompt, fileName };
+    const { generateImage } = require('./image-providers.cjs');
+    const NO_PROVIDER = '未配置生图服务：请到 设置 → 生图 Provider 启用一个（Tensor.Art 需填 Access Token；以后有高质量免费源也可添加）';
+
+    // 解析 provider：显式指定 > 启用的按优先级第一个
+    let pid = providerId || '';
+    let mid = modelId || legacyModel || '';
+    if (!pid) {
+      const p = db.prepare(`SELECT * FROM image_providers WHERE enabled=1 ORDER BY priority ASC`).get();
+      if (!p) return { ok: false, error: NO_PROVIDER };
+      pid = p.provider_id;
+    }
+    const prow = db.prepare('SELECT * FROM image_providers WHERE provider_id=?').get(pid);
+    if (!prow || prow.enabled !== 1) return { ok: false, error: `Provider「${pid}」未启用或不存在` };
+    if (!mid) {
+      const dm = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(pid);
+      mid = dm ? dm.model_id : '';
+    }
+    // 预检 token：没 token 直接给结构化引导，不发无谓请求
+    if (pid === 'tensorart') {
+      let cfg = prow.extra_config;
+      if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg); } catch { cfg = {}; } }
+      cfg = cfg || {};
+      if (!cfg.accessToken && !prow.api_key_enc) {
+        return { ok: false, error: 'Tensor.Art 还没填 Access Token：设置 → 生图 Provider → Tensor.Art → 粘贴令牌' };
+      }
+    }
+
+    try {
+      // 生图进队列：与大纲/正文/润色同一闸门排队，防止连点刷屏 provider
+      const imgTask = agentQueue.enqueue(
+        'image',
+        `生图: ${String(prompt).slice(0, 24)}`,
+        ({ signal }) => {
+          if (signal.aborted) throw Object.assign(new Error('已取消'), { code: 'ABORTED' });
+          return generateImage(pid, prompt, { model: mid, width: width || 1200, height: height || 800 });
+        },
+        { meta: { provider: pid, model: mid } },
+      );
+      const buf = await imgTask.promise;
+      const dir = path.join(app.getPath('userData'), 'uploads');
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const safeName = (filename || prompt || 'img').replace(/[^\w一-龥-]/g, '_').slice(0, 60);
+      const fileName = `${safeName}-${Date.now()}.jpg`;
+      fs.writeFileSync(path.join(dir, fileName), buf);
+      const KB = Math.round(buf.length / 1024);
+      const url = 'aw-img://img/' + encodeURIComponent(fileName);
+      const r = db.prepare(`INSERT INTO images (file_name, file_path, prompt, source, tags, width, height, size_kb, original_prompt, provider, model)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(fileName, 'uploads/' + fileName, prompt, 'ai', tags || '', width || 1200, height || 800, KB, prompt, pid, mid);
+      return { ok: true, id: r.lastInsertRowid, url, path: path.join(dir, fileName), prompt, fileName, provider: pid, model: mid };
+    } catch (err) {
+      return { ok: false, error: `生图失败（${pid}${mid ? ' / ' + mid : ''}）：${err.message}` };
+    }
   });
 
-  // ===== 图片分离存储（正文存占位符，图片存 images 表 + article_images 关联）=====
-  // 按文章查图片（JOIN 出图片详情）
   ipcMain.handle('article:images', (_e, articleId) => {
     return db.prepare(`
       SELECT ai.id, ai.article_id, ai.placeholder_id, ai.image_id,
@@ -596,22 +1259,18 @@ function registerIpc() {
       ? fs.readFileSync(standardPath, 'utf-8')
       : fs.readFileSync(path.join(PROMPTS_IMAGE_DIR, 'craft.md'), 'utf-8');  // 兜底旧版
 
-    const standardResult = await runAgent(
-      { cli: cli || 'claude' },
-      `${standardPrompt}\n\n# 用户输入\n${bizPrompt}\n\n# 输出\n`,
-      () => {}  // 扩写不推日志
-    );
+    const { promise: p1 } = enqueueAgentRun('image', '生图提示词扩写·standard', { cli: cli || 'claude' },
+      `${standardPrompt}\n\n# 用户输入\n${bizPrompt}\n\n# 输出\n`);
+    const standardResult = await p1;
     const standardOutput = standardResult.content.trim();
 
     // 第二层：模型优化（如果有对应模板）
     const modelPath = path.join(PROMPTS_IMAGE_DIR, `craft-${model}.md`);
     if (fs.existsSync(modelPath)) {
       const modelPrompt = fs.readFileSync(modelPath, 'utf-8');
-      const modelResult = await runAgent(
-        { cli: cli || 'claude' },
-        `${modelPrompt}\n\n# Standard 扩写结果\n${standardOutput}\n\n# 输出（Flux 优化后的提示词）\n`,
-        () => {}
-      );
+      const { promise: p2 } = enqueueAgentRun('image', '生图提示词扩写·模型层', { cli: cli || 'claude' },
+        `${modelPrompt}\n\n# Standard 扩写结果\n${standardOutput}\n\n# 输出（Flux 优化后的提示词）\n`);
+      const modelResult = await p2;
       return modelResult.content.trim();
     }
 
@@ -659,12 +1318,13 @@ function registerIpc() {
         const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(p.provider_id);
         if (defaultModel) currentModel = defaultModel.model_id;
       } else {
-        currentProvider = 'pollinations';
+        // 免费兜底（Pollinations）已下线——没有可用 provider 就给明确引导，而不是产出烂图
+        return { ok: false, error: '未配置生图服务：请到 设置 → 生图 Provider 启用一个（Tensor.Art 需填 Access Token）' };
       }
     } else if (!currentModel) {
       // 指定了 provider 但没指定 model：取该 provider 自己的默认模型（不能硬套 'flux'）
       const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(currentProvider);
-      currentModel = defaultModel?.model_id || (currentProvider === 'pollinations' ? 'flux' : '');
+      currentModel = defaultModel?.model_id || '';
     }
 
 
@@ -672,7 +1332,7 @@ function registerIpc() {
     // 生成图片
     let buf;
     try {
-      buf = await generateImage(currentProvider, finalPrompt, { model: currentModel });
+      buf = await queuedGenerateImage(currentProvider, finalPrompt, { model: currentModel });
     } catch (err) {
       // 生成失败，尝试备用 Provider
       
@@ -682,7 +1342,7 @@ function registerIpc() {
         try {
 
           const defaultModel = db.prepare(`SELECT * FROM image_models WHERE provider_id=? AND enabled=1 AND is_default=1 LIMIT 1`).get(p.provider_id);
-          buf = await generateImage(p.provider_id, finalPrompt, { model: defaultModel?.model_id || currentModel });
+          buf = await queuedGenerateImage(p.provider_id, finalPrompt, { model: defaultModel?.model_id || currentModel });
           currentProvider = p.provider_id;
           currentModel = defaultModel?.model_id || currentModel;
           break;
@@ -1374,6 +2034,185 @@ function registerIpc() {
   ipcMain.handle('analysis:delete', (_e, id) => {
     const r = db.prepare(`DELETE FROM content_analysis WHERE id = ?`).run(Number(id));
     return { ok: true, changes: r.changes };
+  });
+
+  // ===== Content Observer V1（2026-09-09，Phase 1）=====
+  // 铁律（tech spec §10 单次调用模型）：一次输入 → 一次调用 → 一次判断 → 一次人类决策。
+  // 不做 scheduler / RSS / 自动抓取 / 多轮 loop；URL 只在点"分析"时抓，复用已有 fetchUrl。
+  // Observer 的产出是"值得思考的入口"，不是文章，也不是概率评分（§13 禁伪精确）。
+  const OBS_DECISION_STATUS = { ignore: 'ignored', observe: 'observed', think: 'thinking', create: 'creating' };
+
+  const obsProfile = (pid) => {
+    const p = String(pid || '');
+    return { p, like: p ? " AND (profile_id=? OR profile_id='' OR profile_id IS NULL)" : '', args: p ? [p] : [] };
+  };
+  const obsRowToOpp = (r) => ({
+    id: r.id, signalId: r.signal_id, verdict: r.verdict, title: r.title, summary: r.summary,
+    whyWorthAttention: r.why_worth_attention, relevance: r.relevance, timeliness: r.timeliness,
+    differentiation: r.differentiation, audienceValue: r.audience_value,
+    missingContext: (() => { try { return JSON.parse(r.missing_context || '[]'); } catch { return []; } })(),
+    risks: (() => { try { return JSON.parse(r.risks || '[]'); } catch { return []; } })(),
+    confidenceNote: r.confidence_note, status: r.status, createdAt: r.created_at,
+    signalContent: r.signal_content || '', signalSource: r.signal_source || '', signalType: r.signal_type || 'text',
+    decisions: Number(r.decision_count || 0),
+  });
+
+  // 最小上下文（§9）：只给判断这一个 Signal 所必需的东西，不灌整库
+  const obsBuildContext = (pid) => {
+    const { p, like, args } = obsProfile(pid);
+    const drafts = db.prepare(`SELECT title FROM article_drafts WHERE title != ''${like} ORDER BY updated_at DESC LIMIT 5`).all(...args);
+    const eps = db.prepare(`SELECT title, intent FROM episodes WHERE intent != ''${like} ORDER BY season_id, order_in_season LIMIT 12`).all(...args);
+    const cards = db.prepare(`SELECT observation, question FROM observations WHERE observation != ''${like} ORDER BY id DESC LIMIT 8`).all(...args);
+    // 带上 profile 条件：不带上会把别人身份的季名泄进这条 prompt
+    const season = db.prepare(`SELECT title FROM seasons WHERE status='active'${like} ORDER BY created_at DESC LIMIT 1`).get(...args);
+    return {
+      recentFocus: (season ? `当前主线：${season.title}` : '（暂无进行中的主线）')
+        + (eps.length ? `；计划中 ${eps.length} 集` : ''),
+      recentContent: drafts.length ? drafts.map((d) => `- ${d.title}`).join('\n') : '（还没有文章）',
+      relatedObservations: cards.length
+        ? cards.map((c) => `- ${String(c.observation).slice(0, 46)}${c.question ? ` ／ 疑问：${String(c.question).slice(0, 36)}` : ''}`).join('\n')
+        : '（还没有观察卡）',
+      planCount: eps.length,
+    };
+  };
+
+  ipcMain.handle('observer:analyze', async (_e, { cli, model, type = 'text', content, source = '', positioning = '', profileId } = {}) => {
+    const text = String(content || '').trim();
+    if (!text) return { ok: false, error: '先给我一个外部信号：一条链接，或一句话' };
+    const { p: pid } = obsProfile(profileId);
+    const nowS = new Date().toISOString();
+    const sigType = ['url', 'image'].includes(String(type)) ? String(type) : 'text';
+
+    // Signal 先落库再分析：AI 挂了也要留下"我看过什么"（这是 Decision Record 的地基）
+    let normalized = '';
+    let src = String(source || '').slice(0, 200);
+    if (sigType === 'url' && /^https?:\/\//i.test(text)) {
+      try {
+        const f = await fetchUrl(text);
+        if (f && f.ok && f.content) {
+          normalized = String(f.content).replace(/\s+/g, ' ').trim().slice(0, 6000);
+          if (!src && f.title) src = String(f.title).slice(0, 120);
+        } else {
+          src = src || '（抓取失败，只按链接原文判断）';
+        }
+      } catch (e) { src = src || '（抓取失败，只按链接原文判断）'; }
+    }
+    let signalId = 0;
+    try {
+      signalId = Number(db.prepare(`INSERT INTO signals (type, content, source, normalized, profile_id, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(sigType, text.slice(0, 8000), src, normalized, pid, nowS).lastInsertRowid);
+    } catch (e) { return { ok: false, error: 'Signal 落库失败：' + e.message }; }
+
+    const ctx = obsBuildContext(pid);
+    let skillBody = '';
+    try { skillBody = loadSkillBody('observer', 'content-observer'); } catch (e) { console.warn('[observer] skill 缺失:', e.message); }
+    const basePrompt = renderPrompt('observer', {
+      skillBody,
+      signalType: sigType,
+      signalSource: src || '（未给来源）',
+      signalContent: (normalized || text).slice(0, 6000),
+      positioning: String(positioning || '').trim() || '（未填赛道定位）',
+      recentFocus: ctx.recentFocus,
+      recentContent: ctx.recentContent,
+      relatedObservations: ctx.relatedObservations,
+    });
+
+    let taskId = '';
+    const callOnce = async (extra) => {
+      const prompt = extra
+        ? `${basePrompt}\n\n---\n上一次输出不符合契约：${extra}\n只重新输出符合契约的那一个 JSON 对象，不要任何解释。`
+        : basePrompt;
+      const enq = enqueueAgentRun('observer', `机会判断: ${text.slice(0, 22)}`, { cli, model: model || '' }, prompt);
+      taskId = enq.taskId;
+      const { content: raw } = await enq.promise;
+      return raw;
+    };
+
+    try {
+      let raw = await callOnce('');
+      let parsed = parseObserverOutput(raw);
+      let problems = parsed.ok ? validateOpportunity(parsed.data) : [parsed.error];
+      if (!parsed.ok || problems.length) {
+        // §22：最多一次自动修复——不无限重试，失败就说人话
+        raw = await callOnce(problems.join('；'));
+        parsed = parseObserverOutput(raw);
+        problems = parsed.ok ? validateOpportunity(parsed.data) : [parsed.error];
+      }
+      if (!parsed.ok || problems.length) {
+        return { ok: false, signalId, taskId, error: 'AI 没按机会判断契约输出：' + problems.join('；') };
+      }
+      const d = parsed.data;
+      const oppId = Number(db.prepare(`INSERT INTO opportunities
+        (signal_id, verdict, title, summary, why_worth_attention, relevance, timeliness, differentiation,
+         audience_value, missing_context, risks, confidence_note, status, profile_id, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(signalId, d.verdict, d.title, d.summary, d.whyWorthAttention, d.relevance, d.timeliness,
+             d.differentiation, d.audienceValue, JSON.stringify(d.missingContext), JSON.stringify(d.risks),
+             d.confidenceNote, 'presented', pid, nowS, nowS).lastInsertRowid);
+      const row = db.prepare(`SELECT o.*, s.content AS signal_content, s.source AS signal_source, s.type AS signal_type,
+                                     (SELECT COUNT(*) FROM decision_records d WHERE d.opportunity_id=o.id) AS decision_count
+                              FROM opportunities o LEFT JOIN signals s ON s.id=o.signal_id WHERE o.id=?`).get(oppId);
+      console.log(`[observer] signal=${signalId} opp=${oppId} verdict=${d.verdict} 缺背景=${d.missingContext.length}`);
+      return { ok: true, signalId, opportunityId: oppId, opportunity: obsRowToOpp(row), taskId };
+    } catch (err) {
+      return { ok: false, signalId, taskId, error: err?.message || String(err) };
+    }
+  });
+
+  // 人类决策：AI 到 Opportunity 为止，最后一步永远是人（§15）
+  ipcMain.handle('observer:decide', (_e, { opportunityId, decision, reasoning = '', seasonId = null, profileId } = {}) => {
+    const id = Number(opportunityId);
+    const d = String(decision || '').trim().toLowerCase();
+    if (!id || !OBS_DECISION_STATUS[d]) return { ok: false, error: '缺 opportunityId 或 decision 非法' };
+    const opp = db.prepare('SELECT * FROM opportunities WHERE id=?').get(id);
+    if (!opp) return { ok: false, error: 'Opportunity 不存在' };
+    const nowS = new Date().toISOString();
+    const { p: pid } = obsProfile(profileId);
+    let observationId = null;
+    try {
+      if (d === 'observe') {
+        // 采纳为观察 → 复用已有 observations 表，不另建第二套内容系统（§18）
+        const txt = [opp.title && `「${opp.title}」`, opp.why_worth_attention || opp.summary || '']
+          .filter(Boolean).join(' ').trim().slice(0, 1000);
+        observationId = Number(db.prepare(`INSERT INTO observations (observation, question, insight, status, season_id, profile_id, created_at, updated_at)
+                                           VALUES (?, '', '', 'new', ?, ?, ?, ?)`)
+          .run(txt || '（来自外部信号的机会）', seasonId ? Number(seasonId) : null, pid, nowS, nowS).lastInsertRowid);
+      }
+      db.prepare(`UPDATE opportunities SET status=?, updated_at=? WHERE id=?`).run(OBS_DECISION_STATUS[d], nowS, id);
+      const r = db.prepare(`INSERT INTO decision_records (opportunity_id, user_decision, reasoning, observation_id, profile_id, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(id, d, String(reasoning || '').slice(0, 600), observationId, pid, nowS);
+      return { ok: true, decisionId: Number(r.lastInsertRowid), observationId, status: OBS_DECISION_STATUS[d] };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // 机会流 + Adoption Rate 原料（V1 只记 presented/accepted，不做统计系统，§15）
+  ipcMain.handle('observer:list', (_e, { profileId, limit = 20 } = {}) => {
+    const { p: pid } = obsProfile(profileId);
+    // 必须写 o.profile_id：opportunities 和 join 进来的 signals 都有 profile_id，
+    // 裸列名会 "ambiguous column name" 直接抛错（渲染层曾经静默吞掉，表现为机会流永远空）
+    const like = pid ? " AND (o.profile_id=? OR o.profile_id='' OR o.profile_id IS NULL)" : '';
+    const args = pid ? [pid] : [];
+    try {
+      const rows = db.prepare(`SELECT o.*, s.content AS signal_content, s.source AS signal_source, s.type AS signal_type,
+                                      (SELECT COUNT(*) FROM decision_records d WHERE d.opportunity_id=o.id) AS decision_count
+                               FROM opportunities o LEFT JOIN signals s ON s.id=o.signal_id
+                               WHERE 1=1${like} ORDER BY o.id DESC LIMIT ?`).all(...args, Number(limit) || 20);
+      const presented = db.prepare(`SELECT COUNT(*) c FROM opportunities o WHERE 1=1${like}`).get(...args).c;
+      const accepted = db.prepare(`SELECT COUNT(*) c FROM opportunities o WHERE o.status IN ('observed','thinking','creating')${like}`).get(...args).c;
+      return { ok: true, opportunities: rows.map(obsRowToOpp), stats: { presented, accepted } };
+    } catch (e) { return { ok: false, error: e.message, opportunities: [], stats: { presented: 0, accepted: 0 } }; }
+  });
+
+  ipcMain.handle('observer:delete', (_e, id) => {
+    const num = Number(id);
+    if (!num) return { ok: false, error: '缺少 id' };
+    try {
+      db.prepare('DELETE FROM decision_records WHERE opportunity_id=?').run(num);
+      db.prepare('DELETE FROM opportunities WHERE id=?').run(num);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 }
 

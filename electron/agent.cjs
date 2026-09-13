@@ -40,27 +40,30 @@ function runAgent(cfg, prompt, onChunk, opts) {
     let promptViaStdin = false;
     switch (cfg.cli) {
       case 'pi':
-        cmd = 'pi';
-        args = ['-p', prompt, '--output', outFile];
+        // pi 没有 --output 参数（之前写 `--output file` 会被拒：Unknown option）——
+        // prompt 走 stdin（长 transcript 不撞 ARG_MAX），结果从 stdout 收（下面的 stdout 回退分支接住）
+        cmd = resolveCli('pi') || 'pi';
+        args = ['-p'];
         if (cfg.model) args.push('--model', cfg.model);
-        onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（带 --output 文件）...` });
+        promptViaStdin = true;
+        onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（prompt 走 stdin）...` });
         break;
       case 'claude':
         // claude -p 从 stdin 读 prompt：避免以 '-' 开头的 prompt 被当成选项，也避免超长 argv 撞 ARG_MAX
-        cmd = 'claude';
+        cmd = resolveCli('claude') || 'claude';
         args = ['-p', '--output-format', 'text'];
         if (cfg.model) args.push('--model', cfg.model);
         promptViaStdin = true;
         onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（prompt 走 stdin）...` });
         break;
       case 'opencode':
-        cmd = 'opencode';
+        cmd = resolveCli('opencode') || 'opencode';
         args = ['run', prompt];
         if (cfg.model) args.push('--model', cfg.model);
         onChunk?.({ type: 'info', text: `🚀 启动 ${cmd} run...` });
         break;
       case 'codex':
-        cmd = 'codex';
+        cmd = resolveCli('codex') || 'codex';
         args = ['exec', prompt];
         if (cfg.model) args.push('--model', cfg.model);
         onChunk?.({ type: 'info', text: `🚀 启动 ${cmd} exec...` });
@@ -73,6 +76,7 @@ function runAgent(cfg, prompt, onChunk, opts) {
     let stderr = '';
     let lastChunkAt = Date.now();
 
+    // resolveCli 已返回绝对路径，spawn 不需要 PATH；保留 process.env 让子进程能读 ANTHROPIC_API_KEY 之类
     const child = spawn(cmd, args, {
       env: { ...process.env, NO_COLOR: '1' },
       shell: process.platform === 'win32',
@@ -169,18 +173,40 @@ function cleanup(dir) {
 }
 
 /** 检测本机装了哪些 CLI */
+// 常见 CLI 查找位置——macOS GUI app 的子进程 PATH 没 ~/.local/bin，得手动补
+const CLI_SEARCH_DIRS = [
+  '/Users/xp630/.local/bin',
+  '/Users/xp630/.bun/bin',
+  '/Users/xp630/.pi/agent/bin',
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+];
+
+/** 把 cli 名字 → 绝对路径。找到返回 string；找不到返回 null。
+ *  优先查 PATH，再查 CLI_SEARCH_DIRS（macOS GUI app 的子进程 PATH 缺 ~/.local/bin）。*/
+function resolveCli(cliName) {
+  const exeNames = process.platform === 'win32' ? [cliName, cliName + '.exe'] : [cliName];
+  const pathSep = process.platform === 'win32' ? ';' : ':';
+  const pathDirs = (process.env.PATH || '').split(pathSep);
+  for (const dir of [...pathDirs, ...CLI_SEARCH_DIRS]) {
+    if (!dir) continue;
+    for (const exe of exeNames) {
+      try {
+        if (fs.existsSync(path.join(dir, exe))) return path.join(dir, exe);
+      } catch {}
+    }
+  }
+  return null;
+}
+
+/** 检测哪些 CLI 可用——查 PATH + CLI_SEARCH_DIRS */
 function detectAvailableClis() {
   const clis = ['pi', 'claude', 'opencode', 'codex'];
   const result = {};
-  const pathSep = process.platform === 'win32' ? ';' : ':';
-  const pathDirs = (process.env.PATH || '').split(pathSep);
-  for (const cli of clis) {
-    result[cli] = pathDirs.some(dir => {
-      try {
-        return fs.existsSync(path.join(dir, cli)) || fs.existsSync(path.join(dir, cli + '.exe'));
-      } catch { return false; }
-    });
-  }
+  for (const cli of clis) result[cli] = !!resolveCli(cli);
   return result;
 }
 
@@ -210,4 +236,4 @@ function listModels(cli) {
   });
 }
 
-module.exports = { runAgent, detectAvailableClis, listModels };
+module.exports = { runAgent, detectAvailableClis, resolveCli, listModels };

@@ -8,14 +8,11 @@
   "files": [
     "dist/**",
     "electron/**",
+    "src/prompts/**",
+    "src/skills/**",
     "package.json"
   ],
-  "extraResources": [
-    {
-      "from": "src/skills",
-      "to": "skills"
-    }
-  ],
+  // src/skills 已在 files 里包含；extraResources 不再重复
   "asarUnpack": [
     "node_modules/better-sqlite3/**"
   ],

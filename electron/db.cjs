@@ -101,6 +101,15 @@ function getDb(opts = {}) {
       if (ensureCols('article_drafts', [['profile_id', "TEXT DEFAULT ''"]])) {
         ensureIdx(`CREATE INDEX IF NOT EXISTS idx_article_profile ON article_drafts(profile_id, updated_at DESC)`);
       }
+      // ===== P0 Week 1：Season + Episode 关联（不锁死原则）=====
+      // article_drafts 是 Episode 的"已发布快照"，EP 不必建 Article，Article 也不必挂 EP。
+      if (ensureCols('article_drafts', [
+        ['season_id', 'INTEGER'],
+        ['episode_id', 'INTEGER'],
+      ])) {
+        ensureIdx('CREATE INDEX IF NOT EXISTS idx_article_season ON article_drafts(season_id)');
+        ensureIdx('CREATE INDEX IF NOT EXISTS idx_article_episode ON article_drafts(episode_id)');
+      }
 
       // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
       // 兼容两代旧结构：
@@ -237,6 +246,16 @@ function getDb(opts = {}) {
       if (tableExists(LEGACY_ADOPT)) db.exec(`DROP TABLE ${LEGACY_ADOPT}`);
 
       // ===== V4：生成守卫三问字段 + 回填只加一个指标（转发）=====
+      // P1 v4.1：下线 Pollinations 免费通道（质量不可接受；保留表结构，以后好免费源可复用）
+      try {
+        const pol = db.prepare(`SELECT COUNT(*) n FROM image_providers WHERE provider_id='pollinations' AND enabled=1`).get();
+        if (pol && pol.n > 0) {
+          db.exec(`UPDATE image_providers SET enabled=0 WHERE provider_id='pollinations'`);
+          db.exec(`UPDATE image_models SET enabled=0 WHERE provider_id='pollinations'`);
+          console.log('[db] Pollinations 免费通道已下线（质量原因，2026-08-31 owner 决定）');
+        }
+      } catch (e) { console.warn('[db] pollinations 下线迁移:', e.message); }
+
       ensureCols('content_strategies', [
         ['belief_before', "TEXT DEFAULT ''"], ['belief_after', "TEXT DEFAULT ''"], ['belief_source', "TEXT DEFAULT ''"],
       ]);
@@ -290,6 +309,51 @@ function getDb(opts = {}) {
         if (n3) console.log(`[db] V3 升级：${n3} 条策略已补 insight/narrative 或升级证据形状`);
       }
     }
+  // 2026-08-31 观察卡/EP 分离迁移（一次性，PRAGMA user_version 当水位）
+  // ⚠ 这段必须只跑一次：card:grow 现在也会写这三列（64b41dd 修"EP 出生即空壳"），
+  //   没闸门时每次启动都会把 EP 原料复制成一张假观察卡、再把 EP 字段清空——
+  //   实测已产生 13 张污染卡，并把 Season 2 的 11 条计划位命题洗成空。
+  // 位置：从 images 补列分支里搬出来了——那个 if (cols.length>0) 罩住了 63~332 行的
+  //   所有迁移，一旦哪天 images 表探测失败，这段会被静默跳过且永不补跑。
+  // 事务：INSERT 卡 + 清空 EP + 设水位必须同生同死，否则中途崩会留下重复卡。
+  const MIG_EPISODE_TO_CARD = 1;
+  try {
+    const migVer = Number(db.prepare('PRAGMA user_version').get().user_version) || 0;
+    if (migVer < MIG_EPISODE_TO_CARD) {
+      const runSeparate = db.transaction(() => {
+        const legacy = db.prepare(`SELECT id, observation, question, insight, season_id, profile_id, created_at
+                                   FROM episodes WHERE observation != '' OR question != '' OR insight != ''`).all();
+        for (const ep of legacy) {
+          db.prepare(`INSERT INTO observations (observation, question, insight, status, episode_id, season_id, profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, 'grown', ?, ?, ?, ?, ?)`)
+            .run(ep.observation || '', ep.question || '', ep.insight || '', ep.id, ep.season_id || null, ep.profile_id || '', ep.created_at, new Date().toISOString());
+          db.prepare(`UPDATE episodes SET observation = '', question = '', insight = '' WHERE id = ?`).run(ep.id);
+        }
+        db.pragma(`user_version = ${MIG_EPISODE_TO_CARD}`);
+        return legacy.length;
+      });
+      const n = runSeparate();
+      if (n) console.log(`[db] 已把 ${n} 条 Episode 旧观察字段迁为观察卡（分离定稿，往后不再执行）`);
+    }
+  } catch (e) { console.warn('[db] 观察卡迁移失败:', e.message); }
+
+  // ===== Idea Interview V1：EP→Article 转化层（2026-09-02）=====
+  // 旧库补列（新库由 schema 自带）：ADD COLUMN 存在即跳过
+  for (const col of ['event','reaction','development','shift','unknown','next']) {
+    try { db.prepare(`ALTER TABLE episodes ADD COLUMN ${col} TEXT DEFAULT ''`).run(); }
+    catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
+  }
+  // 本集命题（计划位用）：旧库补列。故意不复用 question——question 是上面那段
+  // 观察卡分离迁移的作用域，存在那里会被剥成假观察卡（owner 实抓的现行 bug）。
+  try { db.prepare(`ALTER TABLE episodes ADD COLUMN intent TEXT DEFAULT ''`).run(); }
+  catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
+  try { db.prepare(`ALTER TABLE evidence ADD COLUMN kind TEXT DEFAULT 'fact'`).run(); } catch (e) {}
+  // 观察卡状态四段化：raw→new、grown→episode_created；幂等，老库自动升级
+  try {
+    db.prepare(`UPDATE observations SET status='new' WHERE status='raw'`).run();
+    db.prepare(`UPDATE observations SET status='episode_created' WHERE status='grown'`).run();
+  } catch (e) { console.warn('[db] obs status 迁移跳过:', e.message); }
+
   } catch (e) { console.warn('[db] migration skipped:', e.message); }
 
   // 初始化图片 Provider（延迟加载避免循环依赖）

@@ -43,18 +43,12 @@ function parseAnalysisJson(text) {
 
 /** 读取 angle-generation skill（A 借势拆解，不依赖 skills.cjs 体系） */
 function loadAngleSkill() {
-  const p = path.resolve(__dirname, "..", "src", "skills", "strategy", "angle-generation", "SKILL.md");
-  if (!fs.existsSync(p)) throw new Error(`Angle skill not found: ${p}`);
-  return fs.readFileSync(p, "utf-8")
-    .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+  return require("./skills.cjs").loadSkillBody("strategy", "angle-generation");
 }
 
 /** 读取 topic-planning skill（B 命题策划） */
 function loadTopicSkill() {
-  const p = path.resolve(__dirname, "..", "src", "skills", "strategy", "topic-planning", "SKILL.md");
-  if (!fs.existsSync(p)) throw new Error(`Topic strategy skill not found: ${p}`);
-  return fs.readFileSync(p, "utf-8")
-    .replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+  return require("./skills.cjs").loadSkillBody("strategy", "topic-planning");
 }
 
 /** 角度生成结果：必须含 angles[]（≥5）与 track_fit{block}；其他字段容错 */
@@ -459,13 +453,7 @@ function buildStrategyBlock(strategy) {
 
 /** 读取 content-analysis skill（不依赖 skills.cjs 的 channels/personas 体系） */
 function loadAnalysisSkill() {
-  const skillPath = path.resolve(__dirname, '..', 'src', 'skills', 'analysis', 'content-analysis', 'SKILL.md');
-  if (!fs.existsSync(skillPath)) {
-    throw new Error(`Analysis skill not found: ${skillPath}`);
-  }
-  const raw = fs.readFileSync(skillPath, 'utf-8');
-  // 剥掉 YAML frontmatter（---\n...\n---）：它不是给模型的指令，且以 --- 开头会干扰部分 CLI
-  return raw.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+  return require("./skills.cjs").loadSkillBody("analysis", "content-analysis");
 }
 
 /**
@@ -660,7 +648,303 @@ const GOAL_IMAGE_USE = {
   '商业转化': '需求场景 + 解决后的对比，不要产品硬图',
 };
 
+
+/**
+ * 加载 Idea Interview 的 skill：src/skills/interview/idea-interview/SKILL.md
+ * skill 文件读 body（去掉 frontmatter）后返回。读不到返回空串。
+ */
+function loadInterviewSkill() {
+  return require("./skills.cjs").loadSkillBody("interview", "idea-interview");
+}
+
+/**
+ * 解析访谈输出：两行契约（FOLLOWUP/INSIGHT + 文本）。
+ * 容错：拿不准时按"含问号=追问"降级，绝不让访谈流因格式崩掉。
+ * @returns {{type:'question'|'insight', text:string}}
+ */
+function parseInterviewOutput(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return { type: 'question', text: '那——你最想说的一句话是什么？', reasoning: '' };
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  let head = lines[0] || '';
+  // 抽出方括号「我的推力」——可能在第 2 行或第 3 行
+  let reasoning = '';
+  const brkt = (s) => /^\[([\s\S]+?)\]\s*$/.exec(s);
+  let bodyIdx = 1;
+  if (lines[1] && brkt(lines[1])) { reasoning = brkt(lines[1])[1].trim(); bodyIdx = 2; }
+  let body = (lines[bodyIdx] || '').replace(/^[-—:：]\s*/, '');
+  if (!body) {
+    // 兜底：旧格式（2 行 / 1 行）——退回去
+    body = head.replace(/^FOLLOWUP/i, '').replace(/^INSIGHT/i, '').replace(/^[:：]/, '').trim();
+    if (!body) body = lines.slice(1).join(' ');
+  }
+  let type = null;
+  if (/^FOLLOWUP/i.test(head)) type = 'question';
+  else if (/^INSIGHT/i.test(head)) type = 'insight';
+  if (!type) type = /[?？]\s*$/.test(body) ? 'question' : 'insight';
+  if (type === 'insight') body = body.replace(/[?？]\s*$/, '');
+  return { type, text: body.slice(0, 200), reasoning: reasoning.slice(0, 200) };
+}
+
+// ===== Content Observer（2026-09-09 Phase 1）：Signal → Opportunity 纯函数契约 =====
+// 定位：Observer 只交回“值不值得看”的判断与依据，不替作者定观点、不做概率评分。
+// 两道约束分开：prompt 层写在 SKILL.md，程序层在这里执法（只靠 prompt 的“不要”会漂）。
+const OBSERVER_VERDICTS = ['opportunity', 'not_opportunity', 'insufficient'];
+const OBS_STR_FIELDS = ['title', 'summary', 'whyWorthAttention', 'relevance', 'timeliness', 'differentiation', 'audienceValue', 'confidenceNote'];
+const OBS_ARR_FIELDS = ['missingContext', 'risks'];
+
+/** 从模型输出里安全取第一个 JSON 对象（容忍 ```json 围栏与前后废话） */
+function extractJsonObject(raw) {
+  const t = String(raw || '').trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  const start = t.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(t.slice(start, i + 1)); }
+        catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/** 解析 + 归一化模型输出。不合法不“兑个包”——返回 ok:false 让上层走一次修复或报给用户。 */
+function parseObserverOutput(raw) {
+  const obj = extractJsonObject(raw);
+  if (!obj || typeof obj !== 'object') {
+    return { ok: false, error: '输出不是合法 JSON 对象' };
+  }
+  const verdict = String(obj.verdict || '').trim().toLowerCase();
+  if (!OBSERVER_VERDICTS.includes(verdict)) {
+    return { ok: false, error: `verdict 非法（只能是 ${OBSERVER_VERDICTS.join(' / ')}）：${obj.verdict || '缺失'}` };
+  }
+  const out = { verdict };
+  for (const f of OBS_STR_FIELDS) out[f] = String(obj[f] || '').replace(/\s+/g, ' ').trim().slice(0, f === 'title' ? 40 : 600);
+  for (const f of OBS_ARR_FIELDS) {
+    const v = Array.isArray(obj[f]) ? obj[f] : (obj[f] ? String(obj[f]).split(/\n+/) : []);
+    out[f] = v.map((s) => String(s).replace(/^[-\d.、)\s]+/, '').trim().slice(0, 200)).filter(Boolean).slice(0, 8);
+  }
+  return { ok: true, data: out };
+}
+
+/**
+ * 边界执法（程序层，不依赖模型自觉）：
+ * 1) 判成机会时必须说清“是什么 / 为什么值得看”——不允许空壳机会
+ * 2) 禁无依据的精确概率与评分（§13）——出现百分比/score/概率数字直接拒
+ * 3) 禁代作者确认观点（§6/§12）——“你的观点是 / 你应该写”这类句式直接拒
+ */
+function validateOpportunity(data) {
+  const problems = [];
+  if (!data || typeof data !== 'object') return ['输出为空'];
+  if (data.verdict === 'opportunity') {
+    if (!data.title) problems.push('缺 title');
+    if (!data.summary) problems.push('缺 summary（这件事是什么）');
+    if (!data.whyWorthAttention) problems.push('缺 whyWorthAttention（为什么值得看）');
+  }
+  const hay = OBS_STR_FIELDS.map((f) => data[f] || '')
+    .concat((data.missingContext || []).concat(data.risks || []))
+    .join(' \n ');
+  // 假精确执法。**故意做窄**：只拦"对我们自己账号结果的数字包装"，
+  // 不拦引用外部信号里的真实数字（"该帖完播率 12%" 是证据，不是伪确定感）。
+  // 宁可放过几种写法，也不要因为误伤把一条正常分析烧掉两次调用后整链报错。
+  const FAKE_PRECISION = [
+    /(?:阅读|涨粉|分享|关注|点赞|完读|转化|爆款)[^。\n]{0,8}?\d{1,3}(?:\.\d+)?\s*%/,
+    /\d{1,3}(?:\.\d+)?\s*%\s*(?:把握|概率|胜算|可能)/,
+    /(?:概率|可能性|胜率|把握)[^。\n]{0,4}?\d{1,3}(?:\.\d+)?\s*%?/,
+    /(?:opportunity\s*)?score\s*[:=]?\s*\d{1,3}(?:\.\d+)?/i,
+    /评分\s*[:=]?\s*\d{1,2}(?:\.\d+)?\s*(?:\/\s*10|分)/,
+    /\b\d{1,2}(?:\.\d+)?\s*\/\s*10\b/,
+    /百分之[一二三四五六七八九十百]|\d{1,3}\s*个百分点/,
+    /[一二三四五六七八九]成(?:把握|胜算|概率|可能)/,
+  ];
+  if (FAKE_PRECISION.some((re) => re.test(hay))) {
+    problems.push('输出了无依据的精确概率/评分（当前样本不支持，改用自然语言写 confidenceNote）');
+  }
+  // 越界：替作者把观点定下来
+  if (/(你的观点是|你应该写|这说明你认为|你的结论是)/.test(hay)) {
+    problems.push('替作者确认了观点（观点归人，只能提“可能存在”的入口）');
+  }
+  return problems;
+}
+
+// ===== EP→Article 纯函数契约（2026-09-02 Task 2）=====
+// 九槽位白名单：只有这些名字允许进入 EP 活档案（大小写不敏感，保留原键名）
+const SLOT_WHITELIST = ['event', 'reaction', 'development', 'shift', 'unknown', 'next', 'observation', 'question', 'judgment'];
+// 证据 kind 白名单：来自 schema 注释 fact|experience|judgment|speculation|unknown
+const EVIDENCE_KINDS = ['fact', 'experience', 'judgment', 'speculation', 'unknown'];
+
+const toNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+/** 字符 2-gram 集合（空串 → 空集） */
+function charBigrams(s) {
+  const set = new Set();
+  for (let i = 0; i + 1 < s.length; i++) set.add(s.slice(i, i + 2));
+  return set;
+}
+
+/**
+ * 字符 2-gram 重叠比例：交集大小 ÷ min(双方 unique bigram 集合大小)。
+ * 空字符串防护：任一侧为空 → 0（拿不准不背书，也不抛）。
+ */
+function bigramOverlap(text, quote) {
+  const a = str(text);
+  const b = str(quote);
+  if (!a || !b) return 0;
+  const ga = charBigrams(a);
+  const gb = charBigrams(b);
+  if (!ga.size || !gb.size) return 0;
+  let inter = 0;
+  for (const g of ga) inter += gb.has(g) ? 1 : 0;
+  return inter / Math.min(ga.size, gb.size);
+}
+
+/** parseEvidenceOutput — JSON 数组或逐行文本 → string[]（拿不准返回保守默认 []） */
+function parseEvidenceOutput(raw) {
+  const t = typeof raw === 'string' ? raw : '';
+  if (!t.trim()) return [];
+  const parsed = parseAnalysisJson(t);
+  if (parsed.ok && Array.isArray(parsed.data)) {
+    const out = [];
+    for (const item of parsed.data) {
+      const s = typeof item === 'string'
+        ? str(item)
+        : (item && typeof item === 'object' ? str(item.content || item.text || item.item) : '');
+      if (s) out.push(s);
+    }
+    return out;
+  }
+  return t.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+/** 规格化证据条目：非法 kind 归 'fact' */
+function normalizeExtractEvidence(e) {
+  if (!e) return null;
+  let content = '';
+  let kind = 'fact';
+  if (typeof e === 'string') content = str(e);
+  else if (typeof e === 'object') {
+    content = str(e.content || e.text || e.item);
+    const k = str(e.kind);
+    if (EVIDENCE_KINDS.includes(k)) kind = k;
+  }
+  return content ? { content, kind } : null;
+}
+
+/** 规格化槽位：仅白名单保留；text 为空丢弃；src 只收数字（缺 src 留空数组，由 validatePatch 执法拒收） */
+function normalizeExtractSlot(key, v) {
+  if (!SLOT_WHITELIST.includes(String(key).toLowerCase())) return null;
+  if (!v || typeof v !== 'object') return null;
+  const text = str(v.text);
+  if (!text) return null;
+  const src = (Array.isArray(v.src) ? v.src : [])
+    .map(toNum)
+    .filter((n) => n !== null);
+  return { text, src };
+}
+
+/** parseExtractOutput — 轮抽/终抽产物：{evidence:[{content,kind}], slots:{slot:{text,src}}} */
+function parseExtractOutput(raw) {
+  const empty = { evidence: [], slots: {} };
+  const t = typeof raw === 'string' ? raw : '';
+  if (!t.trim()) return empty;
+  const parsed = parseAnalysisJson(t);
+  if (parsed.ok && parsed.data && typeof parsed.data === 'object') {
+    const data = parsed.data;
+    const evidence = (Array.isArray(data.evidence) ? data.evidence : [])
+      .map(normalizeExtractEvidence)
+      .filter(Boolean);
+    const slots = {};
+    const slotObj = data.slots && typeof data.slots === 'object' ? data.slots : {};
+    for (const [k, v] of Object.entries(slotObj)) {
+      const norm = normalizeExtractSlot(k, v);
+      if (norm) slots[k] = norm;
+    }
+    return { evidence, slots };
+  }
+  // 兜底：JSON 提取失败时逐行 `内容|kind` 文本
+  const evidence = [];
+  for (const line of t.split('\n')) {
+    const l = line.trim();
+    if (!l) continue;
+    const parts = l.split('|');
+    const content = str(parts[0]);
+    if (!content) continue;
+    const kind = parts.length > 1 && EVIDENCE_KINDS.includes(str(parts[1])) ? str(parts[1]) : 'fact';
+    evidence.push({ content, kind });
+  }
+  return { evidence, slots: {} };
+}
+
+/** validatePatch — 出处执法：无出处（缺 src / 任一 src 查无消息）拒收；与原话 zero 重叠 pending；否则 accepted */
+function validatePatch(parsed, messages) {
+  const slotObj = parsed && typeof parsed === 'object' && parsed.slots && typeof parsed.slots === 'object'
+    ? parsed.slots
+    : {};
+  const msgMap = new Map();
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (m && m.id != null) msgMap.set(String(m.id), m);
+  }
+  const accepted = [], pending = [], rejected = [];
+  for (const [slot, v] of Object.entries(slotObj)) {
+    const text = v && typeof v === 'object' ? str(v.text) : '';
+    const src = v && Array.isArray(v.src)
+      ? v.src.map(toNum).filter((n) => n !== null)
+      : [];
+    const base = { slot, text, src };
+    // 出处缺失 → 拒收（含空文本：无出处可言）
+    if (!src.length || src.some((id) => !msgMap.has(String(id)))) {
+      rejected.push(base);
+      continue;
+    }
+    const quotes = src.map((id) => str(msgMap.get(String(id)).content)).filter(Boolean);
+    // 引用原话为空 → 无法背书 → pending（保守默认，绝不静默放行）
+    if (!quotes.length) { pending.push(base); continue; }
+    const overlap = Math.max(...quotes.map((q) => bigramOverlap(text, q)));
+    if (overlap < 0.15) pending.push(base);
+    else accepted.push(base);
+  }
+  return { accepted, pending, rejected };
+}
+
+/**
+ * 拔高红线：命中泛化句式（“每个人都会 / 所有人都 / 我们总是 / 人人都 / 皆如”）→ rejectedHigh。
+ * 收紧说明（owner 裁定）：拦截无证据的普适断言，不是机械拦字面模式。brief 原式 `我们总是`
+ * 与 brief 测试句“我们总想…”互斥；此前放宽为 `我们总` 被实测误伤“我们总得想办法解决 /
+ * 我们总算赶上了 / 我们总能找到办法”（义务/祈愿语气，非无据普适断言）。故收紧为
+ * `我们总(是|想|觉得|以为)`：仍命中规范信号“我们总是”，也命中测试句“我们总想”，
+ * 同时放过“总得 / 总算 / 总能”等非拔高用法。
+ */
+const HIGH_PHRASE_REGEX = /每个(人|普通人都)|所有人都|我们总(是|想|觉得|以为)|人人都|皆如/;
+
+/** validateAngles — Plan 提议过拔高红线 */
+function validateAngles(list) {
+  const ok = [];
+  const rejectedHigh = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const s = String(item == null ? '' : item).trim();
+    if (HIGH_PHRASE_REGEX.test(s)) rejectedHigh.push(s);
+    else ok.push(s);
+  }
+  return { ok, rejectedHigh };
+}
+
 module.exports = {
+  parseEvidenceOutput, parseExtractOutput, validatePatch, validateAngles,
   parseAnalysisJson, parseAngleResult, parseStrategyResult,
   normalizeStrategy, normalizeAngle, normalizeStrategyValue,
   normalizeDifferentiator, normalizeTrackFit, normalizeFeasibility,
@@ -668,5 +952,8 @@ module.exports = {
   DIFF_TYPES, DIFF_LABEL, DIFFICULTIES, FACT_RISKS,
   loadAnalysisSkill, loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
+  loadInterviewSkill,
+  parseInterviewOutput,
+  parseObserverOutput, validateOpportunity,
   buildImageRoleHint, inferImageRole, saveAnalysis,
 };

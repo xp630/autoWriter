@@ -4,11 +4,13 @@
 // - 最近生成的文章
 // - 队列实时状态（嵌入 QueueBadge 数据）
 // - 快速操作
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { getAgentSettings } from '../utils/storage';
+import { showToast } from '../toast';
 import { useActiveProfile } from '../hooks/useActiveProfile';
 import {
   ArrowRight,
+  Feather,
   Bot,
   Calendar,
   CheckCircle2,
@@ -16,6 +18,7 @@ import {
   FileText,
   Image as ImageIcon,
   Layers,
+  Radar,
   PenLine,
   Plus,
   Sparkles,
@@ -26,7 +29,7 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
-import type { Article, QueueSnapshot } from '../types';
+import type { Article, ArticlePlan, Episode, EvidenceItem, InsightItem, ObservationCard, Opportunity, QueueSnapshot, Season } from '../types';
 
 interface Props {
   onNavigate: (page: string) => void;
@@ -43,6 +46,28 @@ const AGENT_LABEL: Record<string, string> = {
   pi: 'pi', claude: 'Claude Code', opencode: 'opencode', codex: 'Codex CLI',
 };
 
+// ===== Content Observer V1（2026-09-09）：Signal → Opportunity → Human Decision =====
+// verdict 是"AI 的判断结论"三档，不是评分；status 是"人的处置"，采纳三态才算进采纳率
+const OPP_VERDICT_LABEL: Record<string, string> = {
+  opportunity: '值得看', not_opportunity: '不值得', insufficient: '信息不够',
+};
+const OPP_STATUS_LABEL: Record<string, string> = {
+  candidate: '待看', presented: '已判断', ignored: '忽略', observed: '记了观察', thinking: '进入思考', creating: '去创作',
+};
+
+// ===== Task 6：EP 槽位生长预览（六列的展示顺序与中文标签） =====
+const EP_SLOTS = ['event', 'reaction', 'development', 'shift', 'unknown', 'next'] as const;
+const SLOT_LABELS: Record<string, string> = {
+  event: '事件 Event',
+  reaction: '反应 Reaction',
+  development: '发展 Development',
+  shift: '转折 Shift',
+  unknown: '未知 Unknown',
+  next: '下一步 Next',
+};
+/** pending 槽位标记：T3 契约——带此前缀就是“AI 提议、等人裁决”，裁决=去前缀调 saveEpisode */
+const PENDING_PREFIX = '[待确认] ';
+
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
   const diff = Date.now() - t;
@@ -53,6 +78,35 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString('zh-CN');
 }
 
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'planned':     return '计划';
+    case 'observation': return '观察';
+    case 'questioning': return '疑问';
+    case 'thinking':    return '思考';
+    case 'drafting':    return '草稿';
+    case 'published':   return '已发';
+    case 'archived':    return '归档';
+    default:             return status;
+  }
+}
+
+
+// ===== 思考/调用计时器（独立组件，让 busy 状态自带"已等 X 秒"反馈） =====
+function ElapsedTimer({ active, cli }: { active: boolean; cli: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number>(0);
+  useEffect(() => {
+    if (active) {
+      startRef.current = Date.now();
+      setElapsed(0);
+      const t = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 500);
+      return () => clearInterval(t);
+    }
+  }, [active]);
+  return <div className="iv-msg ai iv-thinking">调用 {cli} 中…（已等 {elapsed}s）</div>;
+}
+
 export function DashboardPage({ onNavigate }: Props) {
   const profile = useActiveProfile();
   const [articles, setArticles] = useState<Article[]>([]);
@@ -61,6 +115,51 @@ export function DashboardPage({ onNavigate }: Props) {
   const [agentStatus, setAgentStatus] = useState<Record<string, boolean> | null>(null);
   const [imageCount, setImageCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  // P0 Week 1：Season + Episode（创作主线）
+  const [season, setSeason] = useState<Season | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
+  // 季度切换：拿全季（含归档）。没这个切换器时，新一季一建，旧季连同它的 EP 在界面上彻底消失
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasonPick, setSeasonPick] = useState<number | null>(null);
+  // Season 生命周期：开新季要自己填主线名（旧版写死 "Season 1"，开第二季会建出重名季）
+  // Electron 不支持 window.prompt，所以用内联表单
+  const [seasonForm, setSeasonForm] = useState<{ open: boolean; title: string; subtitle: string }>({ open: false, title: '', subtitle: '' });
+  // Observer：手工输入外部信号 → 一次判断 → 四选一决策（无 scheduler、无 RSS）
+  const [obsInput, setObsInput] = useState('');
+  const [obsBusy, setObsBusy] = useState(false);
+  const [obsOpp, setObsOpp] = useState<Opportunity | null>(null);
+  const [obsError, setObsError] = useState('');
+  const [obsReason, setObsReason] = useState('');
+  const [opps, setOpps] = useState<Opportunity[]>([]);
+  const [obsStats, setObsStats] = useState<{ presented: number; accepted: number }>({ presented: 0, accepted: 0 });
+  // 观察卡（生活账）
+  const [cards, setCards] = useState<ObservationCard[]>([]);
+  const [capture, setCapture] = useState('');
+  // Idea Interview v2：对话流（AI 追问 ≤3 轮；AI 不可用降级固定两问）
+  const [iv, setIv] = useState<{
+    card: ObservationCard;
+    msgs: Array<{ who: 'ai' | 'me'; text: string; reasoning?: string }>;
+    answers: string[];
+    stage: 'ask' | 'confirm' | 'manual';
+    value: string;
+    busy: boolean;
+    candidate: string;
+  } | null>(null);
+  // 流式累积：AI 当前正在输出的原始文本（常驻订阅 + streamingActiveRef 标志，见 ivSend）
+  const [ivStreamText, setIvStreamText] = useState('');
+  // D-2（owner 拍板）：「说错在哪」预填后 textarea 自动获得焦点（ask 态已挂载时 autoFocus 不重新触发，需 ref 主动 focus）
+  const ivInputRef = useRef<HTMLTextAreaElement | null>(null);
+  // Task 6：EP 槽位生长预览（有 EP 时轮询 episode:material；previewTick 用于采纳/丢弃后立即刷新）
+  const [preview, setPreview] = useState<{
+    ep?: Episode | null;
+    observations?: ObservationCard[];
+    evidence?: EvidenceItem[];
+    insights?: InsightItem[];
+    plans?: ArticlePlan[];
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTick, setPreviewTick] = useState(0);
 
   // 拉一次所有需要的数据
   useEffect(() => {
@@ -84,12 +183,32 @@ export function DashboardPage({ onNavigate }: Props) {
         }
         // 设置（从 localStorage 读）
         if (!cancelled) setSettings(getAgentSettings());
+        // 观察卡：最近 20 张
+        if (window.electronAPI?.listCards) {
+          const cs = await window.electronAPI.listCards({ profileId: profile.id, limit: 20 });
+          if (!cancelled) setCards(Array.isArray(cs) ? cs : []);
+        }
+        // P0 Season + Episode：创作主线
+        if (window.electronAPI?.listSeasons) {
+          const listRaw = await window.electronAPI.listSeasons({ profileId: profile.id, status: 'all' });
+          const list = Array.isArray(listRaw) ? listRaw : [];
+          if (!cancelled) setSeasons(list);
+          // 选过的季仍在就用它；否则取最新一季（season:list 按 created_at DESC）
+          const chosen = (seasonPick != null ? list.find((s) => s.id === seasonPick) : undefined) || list[0] || null;
+          if (!cancelled) setSeason(chosen);
+          if (chosen && window.electronAPI?.listEpisodes) {
+            const eps = await window.electronAPI.listEpisodes({ seasonId: chosen.id, profileId: profile.id });
+            if (!cancelled) setEpisodes(Array.isArray(eps) ? eps : []);
+          } else if (!cancelled) {
+            setEpisodes([]);
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [profile.id]);   // 切身份后 KPI / 最近编辑 要重拉
+  }, [profile.id, reloadTick, seasonPick]);   // 切身份/切季/创建 Season、EP 后重拉
 
   // 订阅队列状态
   useEffect(() => {
@@ -108,6 +227,300 @@ export function DashboardPage({ onNavigate }: Props) {
   const recentArticles = [...articles]
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     .slice(0, 5);
+
+  // P0：真正能"建"的入口（之前按钮只跳转不创建，是断的）
+  // 标题不写死：每一季的主线由作者自己命名；新季建后 dashboard 自动显示最新一季（season:list 按 created_at DESC）
+  const createSeason = async () => {
+    if (!window.electronAPI?.saveSeason) { showToast('❌ IPC 未就绪'); return; }
+    const t = seasonForm.title.trim();
+    if (!t) { showToast('❌ 给这一季起个主线名（一个问题也行）'); return; }
+    try {
+      const r = await window.electronAPI.saveSeason({
+        title: t,
+        subtitle: seasonForm.subtitle.trim(),
+        profileId: profile.id,
+      });
+      if (r?.ok) {
+        showToast(`✅ 新季已开启：${t}`);
+        setSeasonForm({ open: false, title: '', subtitle: '' });
+        setReloadTick((tk) => tk + 1);
+      }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  /** 归档当前季：数据不删（status=archived），主页收起；靠头部季度切换器可回看 */
+  const archiveCurrentSeason = async () => {
+    if (!season || !window.electronAPI?.archiveSeason) { showToast('❌ IPC 未就绪'); return; }
+    if (!window.confirm(`归档《${season.title}》？\n\n这一季会从主页收起（数据不删、EP 不删）。要删做不下去的 EP，点进那一集用「删除这集」。`)) return;
+    try {
+      await window.electronAPI.archiveSeason(season.id);
+      showToast('📦 已归档');
+      setReloadTick((tk) => tk + 1);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  /** 取消归档：把一季恢复成 active（不改标题/开始时间） */
+  const unarchiveCurrentSeason = async () => {
+    if (!season || !window.electronAPI?.unarchiveSeason) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      await window.electronAPI.unarchiveSeason(season.id);
+      showToast('↩ 已恢复为当前季');
+      setReloadTick((tk) => tk + 1);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  const loadOpps = async () => {
+    if (!window.electronAPI?.observerList) return;
+    try {
+      const r = await window.electronAPI.observerList({ profileId: profile.id, limit: 20 });
+      if (r?.ok) { setOpps(r.opportunities || []); setObsStats(r.stats || { presented: 0, accepted: 0 }); }
+      // 失败要出声：曾经这里静默吞掉一个 SQL 报错，表现为"机会流永远是空的"却没有任何线索
+      else if (r?.error) console.warn('[observer] 机会流加载失败:', r.error);
+    } catch (e: any) { console.warn('[observer] 机会流加载异常:', e?.message || e); }
+  };
+  useEffect(() => { void loadOpps(); }, [profile.id, reloadTick]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const analyzeSignal = async () => {
+    const text = obsInput.trim();
+    if (!text) { showToast('❌ 先给我一条外部信号：链接或一句话'); return; }
+    if (!window.electronAPI?.observerAnalyze) { showToast('❌ IPC 未就绪'); return; }
+    setObsBusy(true); setObsError(''); setObsOpp(null); setObsReason('');
+    try {
+      const r = await window.electronAPI.observerAnalyze({
+        cli: settings.cli, model: settings.model || '',
+        type: /^https?:\/\//i.test(text) ? 'url' : 'text',
+        content: text, positioning: profile.track || '', profileId: profile.id,
+      });
+      if (!r?.ok) { setObsError(r?.error || 'AI 没返回可用结果'); return; }
+      setObsOpp(r.opportunity || null);
+      void loadOpps();
+    } catch (err: any) {
+      setObsError(err?.message || String(err));
+    } finally {
+      setObsBusy(false);
+    }
+  };
+
+  /** 最后一步永远是人：AI 只交回入口，处置记进 decision_records（Decision Record） */
+  const decideOpp = async (d: 'ignore' | 'observe' | 'think' | 'create') => {
+    if (!obsOpp || !window.electronAPI?.observerDecide) return;
+    const r = await window.electronAPI.observerDecide({
+      opportunityId: obsOpp.id, decision: d, reasoning: obsReason.trim(),
+      seasonId: season?.id ?? null, profileId: profile.id,
+    });
+    if (!r?.ok) { showToast('❌ ' + (r?.error || '记录失败')); return; }
+    showToast({ ignore: '🙅 已忽略', observe: '✅ 已记为观察卡', think: '🧠 已进入思考', create: '✍️ 送去创作' }[d]);
+    setObsOpp(null); setObsInput(''); setObsReason('');
+    setReloadTick((tk) => tk + 1);
+    void loadOpps();
+    if (d === 'create') onNavigate('write');
+  };
+
+  /** 删一条机会判断（原始 Signal 保留——"我看过什么"本身就是资产） */
+  const dropOpp = async (id: number) => {
+    if (!window.confirm('删掉这条机会判断？原始信号会保留。')) return;
+    if (!window.electronAPI?.observerDelete) { showToast('❌ IPC 未就绪'); return; }
+    const r = await window.electronAPI.observerDelete(id);
+    if (r?.ok) { showToast('🗑 已删除'); void loadOpps(); } else showToast('❌ ' + (r?.error || '删除失败'));
+  };
+
+  const saveCapture = async () => {
+    const text = capture.trim();
+    if (!text) { showToast('❌ 写点什么再存——观察卡唯一必填就是这句话'); return; }
+    if (!window.electronAPI?.saveCard) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      const r = await window.electronAPI.saveCard({ observation: text, profileId: profile.id, season_id: season?.id ?? null });
+      if (r?.ok) { setCapture(''); showToast('🌱 已记下这张卡'); setReloadTick((t) => t + 1); }
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  // 拷问式降级链：每一问都从**用户上一答**里抽词当抓手，不许脱离上下文发问
+  // 必须让用户觉得："它确实读了我说的话"
+  // 无拷问池、无预设开场（owner 定 2026-09-01）：
+  // modal 起来时 textarea 为空，作者先说一句，AI 自己从 observation + 第一答生成追问
+  const startIv = (c: ObservationCard) => {
+    setIv({ card: c, msgs: [], answers: [], stage: 'ask', value: '', busy: false, candidate: '' });
+    // Task 6：重开访谈先回放留痕（interview_messages 全量）——真答案续上，不重新开始
+    void (async () => {
+      try {
+        if (!window.electronAPI?.interviewHistory) return;
+        const h = await window.electronAPI.interviewHistory(c.id);
+        if (!h?.ok || !Array.isArray(h.messages)) return;
+        const msgs = h.messages.map((m) => ({
+          who: (m.role === 'user' ? 'me' : 'ai') as 'me' | 'ai',
+          text: m.content,
+          reasoning: m.reasoning || undefined,
+        }));
+        setIv((prev) => (prev && prev.card.id === c.id && prev.msgs.length === 0 ? { ...prev, msgs } : prev));
+      } catch (err) { console.warn('[interview] 历史恢复失败:', err); }
+    })();
+  };
+
+  /** 存访谈成果：question=第一答（停顿），insight=确认过的观点句 */
+  const persistIv = async (question: string, insight: string) => {
+    if (!iv || !window.electronAPI?.saveCard) return;
+    try {
+      await window.electronAPI.saveCard({ id: iv.card.id, question: question || undefined, insight });
+      showToast(insight ? '🌱 这张卡有观点了' : '已记下——没观点也合法，继续养');
+      setIv(null); setReloadTick((t) => t + 1);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+
+  // 常驻订阅 agent 流式 chunk：访谈期间（streamingActiveRef=true）的 stdout 直接实时累积
+  // 之前等 await 返回 taskId 才订阅 —— chunk 早已发完，流式是死代码（owner 实测发现的 bug）
+  const streamingActiveRef = useRef(false);
+  useEffect(() => {
+    if (!window.electronAPI?.onAgentChunk) return;
+    const unsub = window.electronAPI.onAgentChunk((chunk: any) => {
+      if (!streamingActiveRef.current) return;
+      if (chunk.type === 'stdout') setIvStreamText((t) => t + chunk.text);
+    });
+    return unsub;
+  }, []);
+
+  // Task 6：EP 槽位生长预览——卡有 EP 时轮询 episode:material，EP 长出来后也自动跟上
+  useEffect(() => {
+    if (!iv || !iv.card.episode_id) { setPreview(null); setPreviewLoading(false); return; }
+    let cancelled = false;
+    const load = async () => {
+      if (!window.electronAPI?.episodeMaterial) return;
+      setPreviewLoading(true);
+      try {
+        const m = await window.electronAPI.episodeMaterial(iv.card.episode_id!);
+        if (!cancelled && m?.ok) setPreview(m);
+      } catch (err) { console.warn('[interview] 槽位预览刷新失败:', err); }
+      finally { if (!cancelled) setPreviewLoading(false); }
+    };
+    void load();
+    const t = setInterval(load, 2000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [iv?.card?.id, iv?.card?.episode_id, previewTick]);
+
+  /** 组装 saveEpisode 载荷：槽位更新必须带全渲染层已知字段，避免 T5 不对称保护把 title/season/status/draft 冲空 */
+  const slotPayload = (slot: string, value: string, clear = false) => {
+    const ep = preview?.ep;
+    if (!ep) return null;
+    const p: Record<string, unknown> = {
+      id: ep.id,
+      season_id: ep.season_id,
+      title: ep.title || '',
+      slug: ep.slug,
+      status: ep.status,
+      observation: ep.observation || '',
+      question: ep.question || '',
+      insight: ep.insight || '',
+      draft: ep.draft || '',
+      publish_url: ep.publish_url || '',
+      published_at: ep.published_at ?? null,
+      order_in_season: ep.order_in_season ?? 0,
+      profileId: ep.profile_id || '',
+    };
+    if (clear) p.clearSlots = [slot];
+    else p[slot] = value;
+    return p;
+  };
+
+  /** 采纳 pending：裁决=去掉前缀调 saveEpisode */
+  const adoptSlot = async (slot: string, raw: string) => {
+    const payload = slotPayload(slot, raw.replace(/^\[待确认\]\s*/, ''));
+    if (!payload) return;
+    try {
+      const r = await window.electronAPI?.saveEpisode?.(payload as any);
+      if (r?.ok) { showToast('✅ 已采纳——槽位落定'); setPreviewTick((t) => t + 1); }
+      else showToast('❌ 采纳失败');
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+
+  /** 丢弃 pending：显式清空该槽位（clearSlots → 只对请求的列写 ''，不再写 ' ' 占位） */
+  const discardSlot = async (slot: string) => {
+    const payload = slotPayload(slot, '', true);
+    if (!payload) return;
+    try {
+      const r = await window.electronAPI?.saveEpisode?.(payload as any);
+      if (r?.ok) { showToast('🗑 已丢弃——该槽位恢复空缺'); setPreviewTick((t) => t + 1); }
+      else showToast('❌ 丢弃失败');
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+
+  /** 说错在哪：把话头交回聊天框——正路是告诉 AI 错在哪，它重抽；预填后主动 focus textarea */
+  const sayWrong = (slot: string) => {
+    if (!iv) return;
+    setIv({ ...iv, stage: 'ask', value: `「${SLOT_LABELS[slot] || slot}」这里说得不对：` });
+    // 双保险聚焦：rAF 先试一次，setTimeout 兜底（覆盖 ask→ask 已挂载 / confirm→ask 刚重挂载 两种情况）
+    const focus = () => ivInputRef.current?.focus();
+    requestAnimationFrame(() => { focus(); setTimeout(focus, 0); });
+  };
+
+  const ivSend = async () => {
+    if (!iv || iv.busy) return;
+    const v = iv.value.trim();
+    if (!v) return;
+    const answers = [...iv.answers, v];
+    const msgs = [...iv.msgs, { who: 'me' as const, text: v }];
+    setIv({ ...iv, answers, msgs, value: '', busy: true });
+    const settings = getAgentSettings();
+    const ivCli = (window as any).__IV_CLI__ || settings.cli;
+    setIvStreamText('');
+    streamingActiveRef.current = true;   // 常驻订阅从这里开始收流
+    let r;
+    try {
+      r = await window.electronAPI?.interviewTurn?.({
+        cli: ivCli, model: settings.model,
+        observation: iv.card.observation, observationId: iv.card.id, msgs, answers,
+      });
+    } catch (err: any) {
+      streamingActiveRef.current = false;
+      console.error('[interview] IPC 调用失败:', err);
+      showToast('⚠️ 访谈出错：' + (err?.message || String(err)));
+      setIv(null);
+      setReloadTick((t) => t + 1);
+      return;
+    }
+    if (!r?.ok) {
+      streamingActiveRef.current = false;
+      // 把后端的 error 带出来——这样能看见到底是 spawn 失败还是 CLI 报 401 之类
+      const why = (r as any)?.error ? `：${(r as any).error}` : '';
+      console.warn('[interview] AI 不可用:', r);
+      showToast(`⚠️ AI 不可用${why}——访谈关闭`);
+      setIv(null);
+      setReloadTick((t) => t + 1);
+      return;
+    }
+    streamingActiveRef.current = false;   // 本次 turn 结束，停止收流
+    if (r.type === 'insight') {
+      setIv({ ...iv, answers, msgs, value: '', busy: false, stage: 'confirm', candidate: r.text || '' });
+      return;
+    }
+    if (!r.text || !r.text.trim()) {
+      showToast('⚠️ AI 没回应——访谈关闭');
+      setIv(null);
+      setReloadTick((t) => t + 1);
+      return;
+    }
+    setIv({ ...iv, answers, msgs: [...msgs, { who: 'ai', text: r.text, reasoning: (r as any).reasoning || '' }], value: '', busy: false, stage: 'ask' });
+    setIvStreamText('');
+  };
+
+  const growCard = async (id: number) => {
+    if (!window.electronAPI?.growCard) return;
+    try {
+      const r = await window.electronAPI.growCard(id);
+      if (r?.ok && r.episodeId) { showToast(r.already ? '这张卡已经长成 EP 了' : '✅ 已长成新的 Episode'); setReloadTick((t) => t + 1); }
+      else if (r?.error) showToast('❌ ' + r.error);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
+  const deleteCard = async (id: number) => {
+    if (!window.confirm('删掉这张观察卡？')) return;
+    if (!window.electronAPI?.deleteCard) return;
+    await window.electronAPI.deleteCard(id);
+    showToast('🗑 已删除'); setReloadTick((t) => t + 1);
+  };
+  const createEpisode = async () => {
+    if (!season || !window.electronAPI?.saveEpisode) { showToast('❌ IPC 未就绪'); return; }
+    try {
+      const r = await window.electronAPI.saveEpisode({
+        season_id: season.id, title: '', status: 'observation',
+        order_in_season: episodes.length + 1, profileId: profile.id,
+      });
+      if (r?.ok) onNavigate(`episode:${r.id}`);
+    } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
+  };
 
   const currentAgentName = AGENT_LABEL[settings.cli] || settings.cli;
   const isAgentReady = agentStatus?.[settings.cli] ?? null;
@@ -141,6 +554,249 @@ export function DashboardPage({ onNavigate }: Props) {
           </button>
         </div>
       )}
+
+      {/* ===== 观察卡（生活账）：一秒捕获，先有卡再谈 EP ===== */}
+      <Card title="今日观察" icon={Feather} accent="insight">
+        <div className="obs-capture">
+          <textarea
+            className="textarea"
+            rows={2}
+            placeholder="今天你观察到了什么？一句话就够——回车保存（⇧⏎换行）"
+            value={capture}
+            onChange={(e) => setCapture(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveCapture(); } }}
+          />
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCapture()} disabled={!capture.trim()}>
+            <Feather size={13} /> 存这张卡
+          </button>
+        </div>
+        {cards.length > 0 && (
+          <div className="obs-feed">
+            {cards.slice(0, 6).map((c) => (
+              <div key={c.id} className="obs-row">
+                <span className={`obs-dot ${c.status === 'episode_created' ? 'grown' : 'raw'}`} />
+                <div className="obs-main">
+                  <div className="obs-text">{c.observation}</div>
+                  {c.insight && <div className="obs-insight">→ {c.insight}</div>}
+                </div>
+                <div className="obs-side">
+                  <span className="obs-date">{new Date(c.created_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
+                  <button type="button" className="btn btn-ghost btn-sm iv-open" onClick={() => startIv(c)} title="对着这张卡做两问访谈：什么让你停顿？最想说什么？">Idea Interview</button>
+                  {c.status === 'episode_created'
+                    ? <span className="obs-grown-tag">🌳 {c.episode_title || '已长成 EP'}</span>
+                    : <button type="button" className="btn btn-ghost btn-sm" onClick={() => void growCard(c.id)} title="用这张卡开一个新的 Episode">长成 EP</button>}
+                  <button type="button" className="obs-del" title="删除" onClick={() => void deleteCard(c.id)}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* ===== Content Observer V1：外部信号 → 机会入口 → 人决策 =====
+          边界（owner 定）：AI 只回答"这件事值不值得你看"，不代定观点、不给概率数字、不自动抓源 */}
+      <Card title="外部信号 · Observer" icon={Radar} accent="configure">
+        {/* 类名独立于 obs-capture：那是观察卡的选择器，e2e 按它定位，共用会把两条流混成一个节点 */}
+        <div className="opp-capture">
+          <textarea
+            className="textarea"
+            rows={2}
+            placeholder="粘一条外部信号：链接 / 一段新闻 / 一个现象——Observer 只判断它值不值得你花注意力"
+            value={obsInput}
+            onChange={(e) => setObsInput(e.target.value)}
+          />
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void analyzeSignal()} disabled={obsBusy || !obsInput.trim()}>
+            <Radar size={13} /> {obsBusy ? '判断中…' : '判断机会'}
+          </button>
+        </div>
+        {obsError && <div className="opp-error">{obsError}</div>}
+
+        {obsOpp && (
+          <div className="opp-result">
+            <div className="row opp-head">
+              <span className={`opp-verdict opp-verdict-${obsOpp.verdict}`}>{OPP_VERDICT_LABEL[obsOpp.verdict] || obsOpp.verdict}</span>
+              <strong className="opp-title">{obsOpp.title || '（没给入口名）'}</strong>
+            </div>
+            {obsOpp.summary && <p className="opp-summary">{obsOpp.summary}</p>}
+            {obsOpp.whyWorthAttention && <p className="opp-why">{obsOpp.whyWorthAttention}</p>}
+            <div className="row opp-tags">
+              {obsOpp.relevance && <span className="opp-tag">相关性：{obsOpp.relevance}</span>}
+              {obsOpp.timeliness && <span className="opp-tag">时效：{obsOpp.timeliness}</span>}
+              {obsOpp.differentiation && <span className="opp-tag">差异化：{obsOpp.differentiation}</span>}
+              {obsOpp.audienceValue && <span className="opp-tag">读者价值：{obsOpp.audienceValue}</span>}
+            </div>
+            {obsOpp.missingContext.length > 0 && (
+              <div className="opp-block">
+                <div className="opp-block-title">还缺哪些背景</div>
+                <ul>{obsOpp.missingContext.map((m, i) => <li key={i}>{m}</li>)}</ul>
+              </div>
+            )}
+            {obsOpp.risks.length > 0 && (
+              <div className="opp-block">
+                <div className="opp-block-title">可能不值得的理由</div>
+                <ul>{obsOpp.risks.map((m, i) => <li key={i}>{m}</li>)}</ul>
+              </div>
+            )}
+            {obsOpp.confidenceNote && <div className="opp-conf">不确定性：{obsOpp.confidenceNote}</div>}
+            <input
+              className="input opp-reason"
+              placeholder="留一句你的理由：为什么值得（或不值得）继续——不填概率数字"
+              value={obsReason}
+              onChange={(e) => setObsReason(e.target.value)}
+            />
+            <div className="row opp-decisions">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void decideOpp('ignore')}>忽略</button>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void decideOpp('observe')}>记观察</button>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void decideOpp('think')}>进入思考</button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => void decideOpp('create')}>决定创作</button>
+            </div>
+          </div>
+        )}
+
+        {opps.length > 0 && (
+          <div className="opp-feed">
+            <div className="muted opp-adoption">
+              已判断 {obsStats.presented} 条 · 采纳 {obsStats.accepted} 条
+              {obsStats.presented > 0 && <> · 采纳率 {Math.round((obsStats.accepted / obsStats.presented) * 100)}%</>}
+            </div>
+            {opps.slice(0, 6).map((o) => (
+              <div key={o.id} className="opp-row">
+                <span className={`opp-verdict opp-verdict-${o.verdict}`}>{OPP_VERDICT_LABEL[o.verdict] || o.verdict}</span>
+                <div className="opp-row-main">
+                  <div className="opp-row-title">{o.title || (o.signalContent || '').slice(0, 28)}</div>
+                  <div className="muted opp-row-sub">{o.signalSource || (o.signalContent || '').slice(0, 44)}</div>
+                </div>
+                <span className={`opp-status opp-status-${o.status}`}>{OPP_STATUS_LABEL[o.status] || o.status}</span>
+                <button type="button" className="opp-del" title="删掉这条机会判断" onClick={() => void dropOpp(o.id)}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* ===== P0 Week 1：创作主线（Season + Episode）=====
+          第一层卡片：用户打开 app 第一眼看到的不再是"新建文章"，而是他的创作主线。 */}
+      <Card
+        title="创作主线"
+        icon={Layers}
+        accent="insight"
+        actions={season ? (
+          <div className="row" style={{ gap: 6 }}>
+            {season.status === 'archived' ? (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={unarchiveCurrentSeason} title="把这一季恢复为当前季">
+                取消归档
+              </button>
+            ) : (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={archiveCurrentSeason} title="数据不删，只在标签上标成已归档">
+                归档本季
+              </button>
+            )}
+          </div>
+        ) : undefined}
+      >
+        {/* 季度 tab：点标签切季（归档季也能回看），末尾 + 开新季 */}
+        {seasons.length > 0 && (
+          <div className="season-tabs">
+            {seasons.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`season-tab ${season?.id === s.id ? 'active' : ''} ${s.status === 'archived' ? 'archived' : ''}`}
+                onClick={() => setSeasonPick(s.id)}
+                title={s.title}
+              >
+                <span className="season-tab-name">{s.title}</span>
+                {s.status === 'archived' && <span className="season-tab-flag">档</span>}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="season-tab season-tab-add"
+              onClick={() => setSeasonForm((f) => ({ ...f, open: !f.open }))}
+              title="开一季新主线"
+            >
+              <Plus size={13} /> 新主线
+            </button>
+          </div>
+        )}
+        {season?.subtitle && <div className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>{season.subtitle}</div>}
+        {seasonForm.open && (
+          <div className="season-create-form">
+            <input
+              className="input"
+              placeholder="这一季的主线（一个问题也行：AI 时代，我们为什么还需要 DSL？）"
+              value={seasonForm.title}
+              onChange={(e) => setSeasonForm((f) => ({ ...f, title: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="副标题：一句话说明这条线怎么走（可留空）"
+              value={seasonForm.subtitle}
+              onChange={(e) => setSeasonForm((f) => ({ ...f, subtitle: e.target.value }))}
+            />
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSeasonForm({ open: false, title: '', subtitle: '' })}>取消</button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => void createSeason()}>开启新一季</button>
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>新季会出现在上方标签里并自动选中；旧季点标签就能回去继续看/继续删。</div>
+          </div>
+        )}
+        {!season && !loading && (
+          <Empty
+            icon={Layers}
+            title="还没有 Season"
+            description="Season 是你一段时间的创作主线。下面填主线名开一季——不用一次想完整季，先有第一段。"
+            action={
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => setSeasonForm({ open: true, title: '', subtitle: '' })}>
+                <Plus size={14} /> 开一季
+              </button>
+            }
+          />
+        )}
+        {season && episodes.length === 0 && !loading && (
+          <Empty
+            icon={PenLine}
+            title="Season 已开，还没有 Episode"
+            description="Episode 是主线上的每一段。从一个观察开始——记下今天让你停顿了三秒的事。"
+            action={
+              <button type="button" className="btn btn-primary btn-sm" onClick={createEpisode}>
+                <Plus size={14} /> 记第一个观察
+              </button>
+            }
+          />
+        )}
+        {season && (
+          <div className="row" style={{ justifyContent: 'flex-end', margin: '2px 0 6px' }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={createEpisode} title="新建一个 Episode，从记录观察开始">
+              <Plus size={13} /> 新 Episode
+            </button>
+          </div>
+        )}
+        {season && episodes.length > 0 && (
+          <div className="season-episode-list">
+            {episodes.map((ep) => (
+              <div key={ep.id} className="season-episode-row" onClick={() => onNavigate(`episode:${ep.id}`)} role="button" tabIndex={0}
+                   onKeyDown={(e) => { if (e.key === 'Enter') onNavigate(`episode:${ep.id}`); }}>
+                <div className="season-ep-side">
+                  <span className="season-ep-index">{ep.order_in_season ?? '·'}</span>
+                </div>
+                <div className="season-ep-main">
+                  <div className="season-ep-edit-hint">点击编辑 · 改标题与状态</div>
+                  <div className="season-ep-title">
+                    {ep.title || (ep.observation ? ep.observation.slice(0, 22) + '…' : '（未命名 Episode）')}
+                  </div>
+                  {/* 本集命题：intent（计划位）优先，兼容旧数据里长出来的 question */}
+                  {(ep.intent || ep.question) && <div className="season-ep-question">{ep.intent || ep.question}</div>}
+                  <div className="season-ep-meta">
+                    <span className={`ep-status-pill ep-status-${ep.status}`}>{statusLabel(ep.status)}</span>
+                    {ep.insight && <span className="season-ep-insight">“{ep.insight.slice(0, 36)}{ep.insight.length > 36 ? '…' : ''}”</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* ===== KPI 卡片（4 列） ===== */}
       <div className="kpi-grid">
@@ -311,6 +967,138 @@ export function DashboardPage({ onNavigate }: Props) {
             ))}
           </div>
         </Card>
+      )}
+
+      {iv && (
+        <div className="iv-mask" onClick={() => setIv(null)}>
+          <div className="iv-card" onClick={(e) => e.stopPropagation()}>
+            <div className="iv-brand">
+              <span>IDEA INTERVIEW · 只对着这张卡</span>
+              {iv.busy && (
+                <button type="button" className="btn btn-ghost btn-sm" style={{marginLeft:'auto'}}
+                  onClick={() => { setIv(null); setReloadTick(t=>t+1); showToast('已取消访谈'); }}>
+                  取消
+                </button>
+              )}
+            </div>
+
+            <div className="iv-obs">「{iv.card.observation}」</div>
+            <div className="iv-msgs">
+              {iv.msgs.map((m, i) => (
+                <div key={i} className={`iv-msg ${m.who}`}>
+                  {m.reasoning && <div className="iv-reasoning">💭 {m.reasoning}</div>}
+                  <div>{m.text}</div>
+                </div>
+              ))}
+              {iv.busy && <ElapsedTimer active={iv.busy} cli={((window as any).__IV_CLI__ || settings.cli)} />}
+              {iv.busy && ivStreamText && (
+                <div className="iv-msg ai iv-streaming">
+                  {ivStreamText.split('\n').map((line, idx) => (
+                    <div key={idx} className={line.startsWith('[') ? 'iv-stream-reasoning' : 'iv-stream-body'}>
+                      {line}
+                    </div>
+                  ))}
+                  <span className="iv-cursor">▍</span>
+                </div>
+              )}
+            </div>
+            {/* Task 6：EP 槽位生长预览——聊天旁边不断长出来的档案（AI 提议、人来裁） */}
+            <div className="iv-preview">
+              <div className="iv-preview-title">EP 槽位生长 <span className="iv-preview-hint">AI 逐轮抽取 · 人来裁</span></div>
+              {previewLoading && !preview ? (
+                <div className="iv-preview-empty">读取中…</div>
+              ) : !iv.card.episode_id ? (
+                <div className="iv-preview-empty">这张卡还没长成 EP——点卡片上的「长成 EP」之后，这里会实时长出槽位与证据。</div>
+              ) : !preview || !preview.ep ? (
+                <div className="iv-preview-empty">Episode 找不到了，预览暂缺。</div>
+              ) : (
+                <>
+                  {EP_SLOTS.map((slot) => {
+                    const raw = String((preview.ep as any)?.[slot] || '').trim();
+                    if (!raw) return null;
+                    const pending = raw.startsWith(PENDING_PREFIX);
+                    const text = pending ? raw.slice(PENDING_PREFIX.length) : raw;
+                    return (
+                      <div key={slot} className={`iv-slot ${pending ? 'iv-slot-pending' : 'iv-slot-ok'}`}>
+                        <div className="iv-slot-head">
+                          <span className="iv-slot-label">{SLOT_LABELS[slot] || slot}</span>
+                          {pending && <span className="iv-slot-flag">待确认</span>}
+                        </div>
+                        <div className="iv-slot-text">{text}</div>
+                        {pending && (
+                          <div className="iv-slot-actions">
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void adoptSlot(slot, raw)}>采纳</button>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void discardSlot(slot)}>丢弃</button>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => sayWrong(slot)}>说错在哪</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {preview.evidence && preview.evidence.length > 0 && (
+                    <div className="iv-evidence">
+                      <div className="iv-preview-sub">证据（AI 从对话里抽出）</div>
+                      {preview.evidence.map((ev) => (
+                        <div key={ev.id} className="iv-evidence-item">{ev.content}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {iv.stage === 'ask' && (
+              <>
+                <textarea className="textarea" rows={2} autoFocus ref={ivInputRef} value={iv.value}
+                  onChange={(e) => setIv({ ...iv, value: e.target.value })}
+                  placeholder="一句话回答，说'不知道'也是合法回答（Shift+回车换行）" />
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => { void persistIv(iv.answers[0] || '', ''); }}>先不聊</button>
+                  <button type="button" className="btn btn-outline btn-sm"
+                    onClick={() => setIv({ ...iv, stage: 'confirm', candidate: iv.answers[iv.answers.length - 1] || iv.value.trim() })}
+                    disabled={iv.answers.length === 0 && !iv.value.trim()}>
+                    我定稿了
+                  </button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void ivSend()} disabled={!iv.value.trim() || iv.busy}>
+                    下一步 <ArrowRight size={13} />
+                  </button>
+                </div>
+              </>
+            )}
+            {iv.stage === 'confirm' && (
+              <>
+                <div className="iv-q">这就是你要说的那句话吗？</div>
+                {iv.candidate && <div className="iv-candidate">「{iv.candidate}」</div>}
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10, flexWrap: 'wrap' }}>
+                  {/* 继续问：拒绝这个候选，让 AI 再追问——回到 ask 阶段并把"拒绝了"作为上下文传给 AI */}
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => setIv({
+                      ...iv,
+                      msgs: [...iv.msgs, { who: 'me' as const, text: '还不够，继续问。' }],
+                      stage: 'ask',
+                      candidate: '',
+                      value: '',
+                    })}>
+                    继续问
+                  </button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setIv({ ...iv, stage: 'manual', value: iv.candidate })}>我自己改</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void persistIv(iv.answers[0] || '', iv.candidate)}>存入这张卡</button>
+                </div>
+              </>
+            )}
+            {iv.stage === 'manual' && (
+              <>
+                <textarea className="textarea" rows={2} autoFocus value={iv.value}
+                  onChange={(e) => setIv({ ...iv, value: e.target.value })}
+                  placeholder="用你自己的话，一句就够" />
+                <div className="row" style={{ gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setIv({ ...iv, stage: 'confirm' })}>返回</button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void persistIv(iv.answers[0] || '', iv.value.trim())}>存入这张卡</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </>
   );
