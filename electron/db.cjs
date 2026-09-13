@@ -112,7 +112,14 @@ function getDb(opts = {}) {
       }
 
       // 2026-08-31 观察卡/EP 分离迁移：episodes 上的旧三字段搬进 observations 并清空
-      try {
+      // ⚠ 这段必须只跑一次。card:grow 现在也会写这三列（64b41dd 修“EP 出生即空壳”），
+      //   没闸门时每次启动都会把 EP 原料复制成一张假观察卡、再把 EP 字段清空——
+      //   实测已产生 13 张污染卡，并把 Season 2 的 11 条计划位命题洗成空。
+      //   用 PRAGMA user_version 当水位：>=1 表示这次分离迁移已完成，永不再跑。
+      const MIG_EPISODE_TO_CARD = 1;
+      let migVer = 0;
+      try { migVer = Number(db.prepare('PRAGMA user_version').get().user_version) || 0; } catch { migVer = 0; }
+      if (migVer < MIG_EPISODE_TO_CARD) try {
         const legacy = db.prepare(`SELECT id, observation, question, insight, season_id, profile_id, created_at
                                    FROM episodes WHERE observation != '' OR question != '' OR insight != ''`).all();
         for (const ep of legacy) {
@@ -121,7 +128,8 @@ function getDb(opts = {}) {
             .run(ep.observation || '', ep.question || '', ep.insight || '', ep.id, ep.season_id || null, ep.profile_id || '', ep.created_at, new Date().toISOString());
           db.prepare(`UPDATE episodes SET observation = '', question = '', insight = '' WHERE id = ?`).run(ep.id);
         }
-        if (legacy.length > 0) console.log(`[db] 已把 ${legacy.length} 条 Episode 旧观察字段迁为观察卡（分离定稿）`);
+        if (legacy.length > 0) console.log(`[db] 已把 ${legacy.length} 条 Episode 旧观察字段迁为观察卡（分离定稿，往后不再执行）`);
+        db.pragma(`user_version = ${MIG_EPISODE_TO_CARD}`);
       } catch (e) { console.warn('[db] 观察卡迁移失败:', e.message); }
 
       // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
@@ -328,6 +336,10 @@ function getDb(opts = {}) {
     try { db.prepare(`ALTER TABLE episodes ADD COLUMN ${col} TEXT DEFAULT ''`).run(); }
     catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
   }
+  // 本集命题（计划位用）：旧库补列。故意不复用 question——question 是上面那段
+  // 观察卡分离迁移的作用域，存在那里会被剥成假观察卡（owner 实抓的现行 bug）。
+  try { db.prepare(`ALTER TABLE episodes ADD COLUMN intent TEXT DEFAULT ''`).run(); }
+  catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
   try { db.prepare(`ALTER TABLE evidence ADD COLUMN kind TEXT DEFAULT 'fact'`).run(); } catch (e) {}
   // 观察卡状态四段化：raw→new、grown→episode_created；幂等，老库自动升级
   try {

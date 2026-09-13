@@ -2750,6 +2750,11 @@ select:focus-visible {
 .ep-title-input {
   font-size: 16px; font-weight: 600; padding: 10px 12px;
 }
+/* 本集命题输入（计划位）：比标题轻一档，但不隐藏——Season 2 的 11 集靠这行辨认 */
+.ep-intent-input {
+  font-size: 13px; padding: 8px 12px; margin-top: 6px;
+  color: var(--ink-2); line-height: 1.5;
+}
 .ep-hint {
   font-size: 12px; margin: 8px 0 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   color: var(--ink-3);

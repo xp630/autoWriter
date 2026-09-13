@@ -648,6 +648,7 @@ export interface Episode {
   season_title?: string;       // 来自 join
   title: string;
   slug?: string;
+  intent?: string;              // 本集命题（计划位：这一集要回答什么）
   status: EpisodeStatus;
   observation: string;          // Q1
   question: string;             // Q2

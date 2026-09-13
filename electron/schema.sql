@@ -252,6 +252,8 @@ CREATE TABLE IF NOT EXISTS episodes (
   season_id       INTEGER,                       -- 可空：未归入 Season 的 episode
   title           TEXT DEFAULT '',               -- 短标题，如"我以为自己没有观点"
   slug            TEXT DEFAULT '',               -- 友好 ID 如 ep-002，未来可作 URL
+  intent          TEXT DEFAULT '',               -- 本集命题（计划位：“这一集要回答什么”）。
+                                                 -- 不用 question 存：那是 2026-08-31 分离迁移的作用域，会被剥走
   status          TEXT DEFAULT 'observation',    -- observation/questioning/thinking/drafting/published/archived
   -- 3 问审问器的核心字段（按"不锁死"原则，全是 TEXT 不强结构）
   observation     TEXT DEFAULT '',               -- Q1：今天你观察到了什么

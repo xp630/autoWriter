@@ -533,7 +533,7 @@ function registerIpc() {
 
   ipcMain.handle('episode:save', (_e, params = {}) => {
     const {
-      id, season_id, title, slug, status,
+      id, season_id, title, slug, status, intent,
       observation, question, insight,
       event, reaction, development, shift, unknown, next,
       draft, publish_url, published_at,
@@ -569,12 +569,13 @@ function registerIpc() {
         observation=COALESCE(NULLIF(?, ''), observation),
         question=COALESCE(NULLIF(?, ''), question),
         insight=COALESCE(NULLIF(?, ''), insight),
+        intent=COALESCE(NULLIF(?, ''), intent),
         ${slotBits.join(',\n        ')},
         draft=?, publish_url=?, published_at=?,
         order_in_season=?, profile_id=?, updated_at=?
         WHERE id=?`).run(
           season_id || null, title || '', slug || '', status || 'observation',
-          observation || '', question || '', insight || '',
+          observation || '', question || '', insight || '', intent || '',
           ...slotArgs,
           draft || '', publish_url || '', published_at || null,
           Number(order_in_season) || 0, profileId || '', now, id,
@@ -589,12 +590,12 @@ function registerIpc() {
       return { ok: true, id, updated_at: now };
     }
     const r = db.prepare(`INSERT INTO episodes (
-      season_id, title, slug, status,
+      season_id, title, slug, status, intent,
       observation, question, insight,
       draft, publish_url, published_at,
       order_in_season, profile_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      season_id || null, title || '', slug || '', status || 'observation',
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      season_id || null, title || '', slug || '', status || 'observation', intent || '',
       observation || '', question || '', insight || '',
       draft || '', publish_url || '', published_at || null,
       Number(order_in_season) || 0, profileId || '', now, now,

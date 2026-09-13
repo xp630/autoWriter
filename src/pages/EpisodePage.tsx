@@ -47,6 +47,8 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
   const [saving, setSaving] = useState(false);
   // 编辑缓冲区（避免每个按键就触发 IPC）
   const [title, setTitle] = useState('');
+  // 本集命题（计划位）：写 intent 列。不能用 question——那是 2026-08-31 分离迁移的作用域
+  const [intent, setIntent] = useState('');
   const [draft, setDraft] = useState('');
   // 状态显式可控（planned→…→published/archived）：进页面取库值，用户改了以用户为准
   const [status, setStatus] = useState<EpisodeStatus>('observation');
@@ -73,6 +75,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
     if (!row) { showToast('❌ Episode 不存在'); onBack(); return; }
     setEp(row);
     setTitle(row.title || '');
+    setIntent(row.intent || '');
     setDraft(row.draft || '');
     setStatus((row.status as EpisodeStatus) || 'observation');
     setPublishUrl(row.publish_url || '');
@@ -121,6 +124,7 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
         id: ep?.id,
         season_id: ep?.season_id,
         title: next?.title ?? title,
+        intent: next?.intent ?? intent,
         draft: next?.draft ?? draft,
         status: newStatus,
         publish_url: publishUrl,
@@ -305,6 +309,15 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => title !== ep.title && save()}
+        />
+        {/* 计划位的“这一集要回答什么”：Season 2 开季时靠它辨认每集干什么 */}
+        <input
+          type="text"
+          className="input ep-intent-input"
+          placeholder="本集命题：这一集要回答什么？（计划位用，可留空）"
+          value={intent}
+          onChange={(e) => setIntent(e.target.value)}
+          onBlur={() => intent !== (ep.intent || '') && save()}
         />
         <div className="row ep-status-row">
           <label className="muted" style={{ fontSize: 12 }}>状态</label>

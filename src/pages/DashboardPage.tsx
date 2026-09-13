@@ -631,8 +631,8 @@ export function DashboardPage({ onNavigate }: Props) {
                   <div className="season-ep-title">
                     {ep.title || (ep.observation ? ep.observation.slice(0, 22) + '…' : '（未命名 Episode）')}
                   </div>
-                  {/* 每集的命题（question 列）：计划里的「这一集要回答什么」，序章/计划阶段靠它辨认 */}
-                  {ep.question && <div className="season-ep-question">{ep.question}</div>}
+                  {/* 本集命题：intent（计划位）优先，兼容旧数据里长出来的 question */}
+                  {(ep.intent || ep.question) && <div className="season-ep-question">{ep.intent || ep.question}</div>}
                   <div className="season-ep-meta">
                     <span className={`ep-status-pill ep-status-${ep.status}`}>{statusLabel(ep.status)}</span>
                     {ep.insight && <span className="season-ep-insight">“{ep.insight.slice(0, 36)}{ep.insight.length > 36 ? '…' : ''}”</span>}
