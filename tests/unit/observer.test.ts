@@ -108,3 +108,30 @@ describe('validateOpportunity（边界执法）', () => {
     expect(p).toEqual([]);
   });
 });
+
+// 评审补口（2026-09-09 sdd-task-reviewer）：漏抓的写法要能抓，引用的真实数字不能误伤
+describe('validateOpportunity 数字执法的两侧（评审补口）', () => {
+  const hit = (note: string) => validateOpportunity(parseObserverOutput(jsonOf({ ...GOOD, confidenceNote: note })).data).join('');
+  const pass = (note: string) => expect(hit(note)).toBe('');
+
+  it.each([
+    '把握 90%',
+    '涨粉概率 74',
+    '我给 8.5/10',
+    'Opportunity Score = 87.4',
+    '评分 87 分',
+    '九成把握',
+    '百分之八十的可能性',
+    '可能性最高不超过 80 个百分点',
+  ])('该拦：%s', (note) => {
+    expect(hit(note)).toContain('概率/评分');
+  });
+
+  it.each([
+    '该帖完播率 12%，是同类账号的两倍（引用外部数据，不是我们的预测）',
+    '一款 App Store 评分 4.8 的工具正在改动定价页',
+    '他最近 12 篇里有 3 篇带来了分享，样本太小',
+  ])('不该误伤：%s', (note) => {
+    pass(note);
+  });
+});

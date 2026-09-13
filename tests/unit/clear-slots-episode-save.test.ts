@@ -10,10 +10,19 @@ const IPC = fs.readFileSync(path.resolve(__dirname, '../../electron/ipc.cjs'), '
 // episode:save 的 SQL 埋在 ipc.cjs（依赖 electron，无法在 vitest require），
 // 所以用与 ipc-imports.test.ts 同族的静态扫描兜底，功能行为由 e2e 断言。
 describe('episode:save clearSlots 契约（静态）', () => {
-  it('解析 params.clearSlots 并按六槽位白名单过滤（observation/question/insight 不在白名单）', () => {
+  it('解析 params.clearSlots 并按可清空白名单过滤（observation/question/insight 不在白名单）', () => {
     expect(IPC).toContain('params.clearSlots');
-    // 白名单过滤表达式：map 后 lower-case 再 filter EP_SLOT_COLUMNS 命中项
-    expect(IPC).toMatch(/clearSlots\s*\.map\(\(s\)\s*=>\s*String\(s\)\.toLowerCase\(\)\)\.filter\(\(s\)\s*=>\s*EP_SLOT_COLUMNS\.includes\(s\)\)/);
+    // 白名单过滤表达式：map 后 lower-case 再 filter EP_CLEARABLE 命中项
+    expect(IPC).toMatch(/clearSlots\s*\.map\(\(s\)\s*=>\s*String\(s\)\.toLowerCase\(\)\)\.filter\(\(s\)\s*=>\s*EP_CLEARABLE\.includes\(s\)\)/);
+  });
+
+  it('可清空集合 = 六槽位 + intent；三件原始物料仍不可清空（2026-09-09 评审后定）', () => {
+    // intent（本集命题）加入可清空集合：清空输入框是合法意图，
+    // 只留 COALESCE 会让命题"只能加不能删"。
+    expect(IPC).toMatch(/const EP_CLEARABLE = \[\.\.\.EP_SLOT_COLUMNS, 'intent'\]/);
+    // 但 observation/question/insight 是卡的原始物料，绝不允许被显式清空
+    expect(IPC).not.toMatch(/EP_CLEARABLE = \[[^\]]*'question'/);
+    expect(IPC).toMatch(/intent=''|clearIntent \? "intent=''"/);
   });
 
   it('被请求清空的列写字面空串（绕过 COALESCE），未请求的列维持 COALESCE 保护', () => {

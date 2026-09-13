@@ -128,3 +128,23 @@ test('AI 不可用时不崩，返回人话错误', async () => {
   expect(r.ok).toBe(false);
   expect((r.error || '').length).toBeGreaterThan(0);
 });
+
+test('机会判断可以删掉（Signal 保留），UI 有入口', async () => {
+  setFakeScript(OPP_JSON);
+  const r = await invokeIpc<{ ok: boolean; opportunityId?: number }>(
+    ctx.window, 'observer:analyze', { cli: 'claude', model: '', type: 'text', content: '再一条用来删的信号' },
+  );
+  expect(r.ok).toBe(true);
+  const id = r.opportunityId!;
+
+  // UI 入口存在（评审指出 observer:delete 曾经无调用方 = YAGNI，补上）
+  await ctx.window.reload();
+  await ctx.window.waitForTimeout(900);
+  const row = ctx.window.locator('.opp-row').filter({ hasText: 'AI 写作工具开始管' }).first();
+  await expect(row.locator('.opp-del')).toHaveCount(1);
+
+  const d = await invokeIpc<{ ok: boolean }>(ctx.window, 'observer:delete', id);
+  expect(d.ok).toBe(true);
+  const list = await invokeIpc<{ opportunities: any[]; stats: { presented: number } }>(ctx.window, 'observer:list', {});
+  expect(list.opportunities.some((x) => x.id === id)).toBe(false);
+});

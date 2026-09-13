@@ -271,7 +271,9 @@ export function DashboardPage({ onNavigate }: Props) {
     try {
       const r = await window.electronAPI.observerList({ profileId: profile.id, limit: 20 });
       if (r?.ok) { setOpps(r.opportunities || []); setObsStats(r.stats || { presented: 0, accepted: 0 }); }
-    } catch { /* 表还没迁移时静默 */ }
+      // 失败要出声：曾经这里静默吞掉一个 SQL 报错，表现为"机会流永远是空的"却没有任何线索
+      else if (r?.error) console.warn('[observer] 机会流加载失败:', r.error);
+    } catch (e: any) { console.warn('[observer] 机会流加载异常:', e?.message || e); }
   };
   useEffect(() => { void loadOpps(); }, [profile.id, reloadTick]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -309,6 +311,14 @@ export function DashboardPage({ onNavigate }: Props) {
     setReloadTick((tk) => tk + 1);
     void loadOpps();
     if (d === 'create') onNavigate('write');
+  };
+
+  /** 删一条机会判断（原始 Signal 保留——"我看过什么"本身就是资产） */
+  const dropOpp = async (id: number) => {
+    if (!window.confirm('删掉这条机会判断？原始信号会保留。')) return;
+    if (!window.electronAPI?.observerDelete) { showToast('❌ IPC 未就绪'); return; }
+    const r = await window.electronAPI.observerDelete(id);
+    if (r?.ok) { showToast('🗑 已删除'); void loadOpps(); } else showToast('❌ ' + (r?.error || '删除失败'));
   };
 
   const saveCapture = async () => {
@@ -657,6 +667,7 @@ export function DashboardPage({ onNavigate }: Props) {
                   <div className="muted opp-row-sub">{o.signalSource || (o.signalContent || '').slice(0, 44)}</div>
                 </div>
                 <span className={`opp-status opp-status-${o.status}`}>{OPP_STATUS_LABEL[o.status] || o.status}</span>
+                <button type="button" className="opp-del" title="删掉这条机会判断" onClick={() => void dropOpp(o.id)}>×</button>
               </div>
             ))}
           </div>

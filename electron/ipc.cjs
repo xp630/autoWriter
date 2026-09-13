@@ -552,9 +552,12 @@ function registerIpc() {
       // observation/question/insight 是卡的原始物料，不在白名单）。对**被请求**的列绕
       // COALESCE 直接写 ''；**未被请求**的列维持 COALESCE 保护——显式请求 ≠ stale 覆盖，
       // 与 T5 的防冲职责不冲突（只对请求的列开特例）。
+      // 可显式清空的列：六槽位 + intent（命题清空输入框是合法意图，不能只加不能减）
+      const EP_CLEARABLE = [...EP_SLOT_COLUMNS, 'intent'];
       const clearSlots = Array.isArray(params.clearSlots)
-        ? [...new Set(params.clearSlots.map((s) => String(s).toLowerCase()).filter((s) => EP_SLOT_COLUMNS.includes(s)))]
+        ? [...new Set(params.clearSlots.map((s) => String(s).toLowerCase()).filter((s) => EP_CLEARABLE.includes(s)))]
         : [];
+      const clearIntent = clearSlots.includes('intent');
       const slotBits = [];
       const slotArgs = [];
       for (const col of EP_SLOT_COLUMNS) {
@@ -570,13 +573,14 @@ function registerIpc() {
         observation=COALESCE(NULLIF(?, ''), observation),
         question=COALESCE(NULLIF(?, ''), question),
         insight=COALESCE(NULLIF(?, ''), insight),
-        intent=COALESCE(NULLIF(?, ''), intent),
+        ${clearIntent ? "intent=''" : "intent=COALESCE(NULLIF(?, ''), intent)"},
         ${slotBits.join(',\n        ')},
         draft=?, publish_url=?, published_at=?,
         order_in_season=?, profile_id=?, updated_at=?
         WHERE id=?`).run(
-          season_id || null, title || '', slug || '', status || 'observation',
-          observation || '', question || '', insight || '', intent || '',
+          ...[season_id || null, title || '', slug || '', status || 'observation',
+              observation || '', question || '', insight || '']
+             .concat(clearIntent ? [] : [intent || '']),
           ...slotArgs,
           draft || '', publish_url || '', published_at || null,
           Number(order_in_season) || 0, profileId || '', now, id,
@@ -2059,7 +2063,8 @@ function registerIpc() {
     const drafts = db.prepare(`SELECT title FROM article_drafts WHERE title != ''${like} ORDER BY updated_at DESC LIMIT 5`).all(...args);
     const eps = db.prepare(`SELECT title, intent FROM episodes WHERE intent != ''${like} ORDER BY season_id, order_in_season LIMIT 12`).all(...args);
     const cards = db.prepare(`SELECT observation, question FROM observations WHERE observation != ''${like} ORDER BY id DESC LIMIT 8`).all(...args);
-    const season = db.prepare(`SELECT title FROM seasons WHERE status='active' ORDER BY created_at DESC LIMIT 1`).get();
+    // 带上 profile 条件：不带上会把别人身份的季名泄进这条 prompt
+    const season = db.prepare(`SELECT title FROM seasons WHERE status='active'${like} ORDER BY created_at DESC LIMIT 1`).get(...args);
     return {
       recentFocus: (season ? `当前主线：${season.title}` : '（暂无进行中的主线）')
         + (eps.length ? `；计划中 ${eps.length} 集` : ''),
@@ -2074,7 +2079,7 @@ function registerIpc() {
   ipcMain.handle('observer:analyze', async (_e, { cli, model, type = 'text', content, source = '', positioning = '', profileId } = {}) => {
     const text = String(content || '').trim();
     if (!text) return { ok: false, error: '先给我一个外部信号：一条链接，或一句话' };
-    const { p: pid, like, args } = obsProfile(profileId);
+    const { p: pid } = obsProfile(profileId);
     const nowS = new Date().toISOString();
     const sigType = ['url', 'image'].includes(String(type)) ? String(type) : 'text';
 
@@ -2184,13 +2189,17 @@ function registerIpc() {
 
   // 机会流 + Adoption Rate 原料（V1 只记 presented/accepted，不做统计系统，§15）
   ipcMain.handle('observer:list', (_e, { profileId, limit = 20 } = {}) => {
-    const { p: pid, like, args } = obsProfile(profileId);
+    const { p: pid } = obsProfile(profileId);
+    // 必须写 o.profile_id：opportunities 和 join 进来的 signals 都有 profile_id，
+    // 裸列名会 "ambiguous column name" 直接抛错（渲染层曾经静默吞掉，表现为机会流永远空）
+    const like = pid ? " AND (o.profile_id=? OR o.profile_id='' OR o.profile_id IS NULL)" : '';
+    const args = pid ? [pid] : [];
     try {
       const rows = db.prepare(`SELECT o.*, s.content AS signal_content, s.source AS signal_source, s.type AS signal_type,
                                       (SELECT COUNT(*) FROM decision_records d WHERE d.opportunity_id=o.id) AS decision_count
                                FROM opportunities o LEFT JOIN signals s ON s.id=o.signal_id
                                WHERE 1=1${like} ORDER BY o.id DESC LIMIT ?`).all(...args, Number(limit) || 20);
-      const presented = db.prepare(`SELECT COUNT(*) c FROM opportunities WHERE 1=1${like}`).get(...args).c;
+      const presented = db.prepare(`SELECT COUNT(*) c FROM opportunities o WHERE 1=1${like}`).get(...args).c;
       const accepted = db.prepare(`SELECT COUNT(*) c FROM opportunities o WHERE o.status IN ('observed','thinking','creating')${like}`).get(...args).c;
       return { ok: true, opportunities: rows.map(obsRowToOpp), stats: { presented, accepted } };
     } catch (e) { return { ok: false, error: e.message, opportunities: [], stats: { presented: 0, accepted: 0 } }; }

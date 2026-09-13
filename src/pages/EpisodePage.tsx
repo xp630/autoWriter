@@ -130,6 +130,11 @@ export function EpisodePage({ episodeId, onBack, onOpenPublish }: Props) {
         publish_url: publishUrl,
         published_at: isPublishing ? new Date().toISOString() : (ep?.published_at ?? null),
         order_in_season: ep?.order_in_season ?? 0,
+        // 必须回传：episode:save 的 profile_id=? 是无保护直写，不回传会把 EP 归属洗成 ''
+        profileId: ep?.profile_id ?? '',
+        // 命题清空是合法意图：save 对 intent 用 COALESCE 防 stale 覆盖，
+        // 不显式给 clearSlots 就变成“只能加不能删”
+        ...(intent.trim() === '' && (ep?.intent || '') !== '' ? { clearSlots: ['intent'] } : {}),
       });
       if (r?.ok) {
         showToast('✅ 已保存');

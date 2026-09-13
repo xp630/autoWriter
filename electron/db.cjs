@@ -111,27 +111,6 @@ function getDb(opts = {}) {
         ensureIdx('CREATE INDEX IF NOT EXISTS idx_article_episode ON article_drafts(episode_id)');
       }
 
-      // 2026-08-31 观察卡/EP 分离迁移：episodes 上的旧三字段搬进 observations 并清空
-      // ⚠ 这段必须只跑一次。card:grow 现在也会写这三列（64b41dd 修“EP 出生即空壳”），
-      //   没闸门时每次启动都会把 EP 原料复制成一张假观察卡、再把 EP 字段清空——
-      //   实测已产生 13 张污染卡，并把 Season 2 的 11 条计划位命题洗成空。
-      //   用 PRAGMA user_version 当水位：>=1 表示这次分离迁移已完成，永不再跑。
-      const MIG_EPISODE_TO_CARD = 1;
-      let migVer = 0;
-      try { migVer = Number(db.prepare('PRAGMA user_version').get().user_version) || 0; } catch { migVer = 0; }
-      if (migVer < MIG_EPISODE_TO_CARD) try {
-        const legacy = db.prepare(`SELECT id, observation, question, insight, season_id, profile_id, created_at
-                                   FROM episodes WHERE observation != '' OR question != '' OR insight != ''`).all();
-        for (const ep of legacy) {
-          db.prepare(`INSERT INTO observations (observation, question, insight, status, episode_id, season_id, profile_id, created_at, updated_at)
-            VALUES (?, ?, ?, 'grown', ?, ?, ?, ?, ?)`)
-            .run(ep.observation || '', ep.question || '', ep.insight || '', ep.id, ep.season_id || null, ep.profile_id || '', ep.created_at, new Date().toISOString());
-          db.prepare(`UPDATE episodes SET observation = '', question = '', insight = '' WHERE id = ?`).run(ep.id);
-        }
-        if (legacy.length > 0) console.log(`[db] 已把 ${legacy.length} 条 Episode 旧观察字段迁为观察卡（分离定稿，往后不再执行）`);
-        db.pragma(`user_version = ${MIG_EPISODE_TO_CARD}`);
-      } catch (e) { console.warn('[db] 观察卡迁移失败:', e.message); }
-
       // ===== 旧结构 → V2「一行 = 一个策略」炸开迁移 =====
       // 兼容两代旧结构：
       //   _legacy_content_angles （P0-1a/P0-2 中间态：angles_json + adopted_index + article_id）
@@ -330,6 +309,34 @@ function getDb(opts = {}) {
         if (n3) console.log(`[db] V3 升级：${n3} 条策略已补 insight/narrative 或升级证据形状`);
       }
     }
+  // 2026-08-31 观察卡/EP 分离迁移（一次性，PRAGMA user_version 当水位）
+  // ⚠ 这段必须只跑一次：card:grow 现在也会写这三列（64b41dd 修"EP 出生即空壳"），
+  //   没闸门时每次启动都会把 EP 原料复制成一张假观察卡、再把 EP 字段清空——
+  //   实测已产生 13 张污染卡，并把 Season 2 的 11 条计划位命题洗成空。
+  // 位置：从 images 补列分支里搬出来了——那个 if (cols.length>0) 罩住了 63~332 行的
+  //   所有迁移，一旦哪天 images 表探测失败，这段会被静默跳过且永不补跑。
+  // 事务：INSERT 卡 + 清空 EP + 设水位必须同生同死，否则中途崩会留下重复卡。
+  const MIG_EPISODE_TO_CARD = 1;
+  try {
+    const migVer = Number(db.prepare('PRAGMA user_version').get().user_version) || 0;
+    if (migVer < MIG_EPISODE_TO_CARD) {
+      const runSeparate = db.transaction(() => {
+        const legacy = db.prepare(`SELECT id, observation, question, insight, season_id, profile_id, created_at
+                                   FROM episodes WHERE observation != '' OR question != '' OR insight != ''`).all();
+        for (const ep of legacy) {
+          db.prepare(`INSERT INTO observations (observation, question, insight, status, episode_id, season_id, profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, 'grown', ?, ?, ?, ?, ?)`)
+            .run(ep.observation || '', ep.question || '', ep.insight || '', ep.id, ep.season_id || null, ep.profile_id || '', ep.created_at, new Date().toISOString());
+          db.prepare(`UPDATE episodes SET observation = '', question = '', insight = '' WHERE id = ?`).run(ep.id);
+        }
+        db.pragma(`user_version = ${MIG_EPISODE_TO_CARD}`);
+        return legacy.length;
+      });
+      const n = runSeparate();
+      if (n) console.log(`[db] 已把 ${n} 条 Episode 旧观察字段迁为观察卡（分离定稿，往后不再执行）`);
+    }
+  } catch (e) { console.warn('[db] 观察卡迁移失败:', e.message); }
+
   // ===== Idea Interview V1：EP→Article 转化层（2026-09-02）=====
   // 旧库补列（新库由 schema 自带）：ADD COLUMN 存在即跳过
   for (const col of ['event','reaction','development','shift','unknown','next']) {

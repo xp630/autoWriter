@@ -236,7 +236,7 @@ const SAFE_SAMPLE_ARGS: Array<[string, unknown[], boolean?]> = [
   ['card:grow', [999999]],
   ['observer:analyze', [{ content: '' }]],
   ['observer:decide', [{}]],
-  ['observer:list', [{}]],
+  ['observer:list', [{ profileId: 'p-smoke' }]],
   ['observer:delete', [999999]],
   ['interview:turn', [{}]],
   ['interview:history', [0]],
