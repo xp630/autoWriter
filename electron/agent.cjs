@@ -40,10 +40,13 @@ function runAgent(cfg, prompt, onChunk, opts) {
     let promptViaStdin = false;
     switch (cfg.cli) {
       case 'pi':
+        // pi 没有 --output 参数（之前写 `--output file` 会被拒：Unknown option）——
+        // prompt 走 stdin（长 transcript 不撞 ARG_MAX），结果从 stdout 收（下面的 stdout 回退分支接住）
         cmd = resolveCli('pi') || 'pi';
-        args = ['-p', prompt, '--output', outFile];
+        args = ['-p'];
         if (cfg.model) args.push('--model', cfg.model);
-        onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（带 --output 文件）...` });
+        promptViaStdin = true;
+        onChunk?.({ type: 'info', text: `🚀 启动 ${cmd}（prompt 走 stdin）...` });
         break;
       case 'claude':
         // claude -p 从 stdin 读 prompt：避免以 '-' 开头的 prompt 被当成选项，也避免超长 argv 撞 ARG_MAX
