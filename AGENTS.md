@@ -88,6 +88,7 @@
 | `README.md` | 项目入口 / 安装 / 启动 |
 | `docs/USER_GUIDE.md` | **用户视角**的功能说明（不是助手视角） |
 | `docs/WEEKLY_RECAP.md` | 周记计划的 9 段模板 + 节奏——写周报时读 |
+| **`docs/FINAL_FORM.md`** | **这个系统最终是什么 + 六层模型 + 反目标 + 停止线——想加功能前先读这一页** |
 | `docs/PRODUCT_PLAN.md` | 产品方向 + 阶段规划 |
 | `docs/MODULE_STATUS.md` | 模块成色（哪些是真实现，哪些是壳） |
 | `docs/CHANGELOG.md` | 最近变更 + 待办 |
