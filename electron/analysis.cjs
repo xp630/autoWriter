@@ -686,6 +686,91 @@ function parseInterviewOutput(raw) {
   return { type, text: body.slice(0, 200), reasoning: reasoning.slice(0, 200) };
 }
 
+// ===== Content Observer（2026-09-09 Phase 1）：Signal → Opportunity 纯函数契约 =====
+// 定位：Observer 只交回“值不值得看”的判断与依据，不替作者定观点、不做概率评分。
+// 两道约束分开：prompt 层写在 SKILL.md，程序层在这里执法（只靠 prompt 的“不要”会漂）。
+const OBSERVER_VERDICTS = ['opportunity', 'not_opportunity', 'insufficient'];
+const OBS_STR_FIELDS = ['title', 'summary', 'whyWorthAttention', 'relevance', 'timeliness', 'differentiation', 'audienceValue', 'confidenceNote'];
+const OBS_ARR_FIELDS = ['missingContext', 'risks'];
+
+/** 从模型输出里安全取第一个 JSON 对象（容忍 ```json 围栏与前后废话） */
+function extractJsonObject(raw) {
+  const t = String(raw || '').trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  const start = t.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(t.slice(start, i + 1)); }
+        catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/** 解析 + 归一化模型输出。不合法不“兑个包”——返回 ok:false 让上层走一次修复或报给用户。 */
+function parseObserverOutput(raw) {
+  const obj = extractJsonObject(raw);
+  if (!obj || typeof obj !== 'object') {
+    return { ok: false, error: '输出不是合法 JSON 对象' };
+  }
+  const verdict = String(obj.verdict || '').trim().toLowerCase();
+  if (!OBSERVER_VERDICTS.includes(verdict)) {
+    return { ok: false, error: `verdict 非法（只能是 ${OBSERVER_VERDICTS.join(' / ')}）：${obj.verdict || '缺失'}` };
+  }
+  const out = { verdict };
+  for (const f of OBS_STR_FIELDS) out[f] = String(obj[f] || '').replace(/\s+/g, ' ').trim().slice(0, f === 'title' ? 40 : 600);
+  for (const f of OBS_ARR_FIELDS) {
+    const v = Array.isArray(obj[f]) ? obj[f] : (obj[f] ? String(obj[f]).split(/\n+/) : []);
+    out[f] = v.map((s) => String(s).replace(/^[-\d.、)\s]+/, '').trim().slice(0, 200)).filter(Boolean).slice(0, 8);
+  }
+  return { ok: true, data: out };
+}
+
+/**
+ * 边界执法（程序层，不依赖模型自觉）：
+ * 1) 判成机会时必须说清“是什么 / 为什么值得看”——不允许空壳机会
+ * 2) 禁无依据的精确概率与评分（§13）——出现百分比/score/概率数字直接拒
+ * 3) 禁代作者确认观点（§6/§12）——“你的观点是 / 你应该写”这类句式直接拒
+ */
+function validateOpportunity(data) {
+  const problems = [];
+  if (!data || typeof data !== 'object') return ['输出为空'];
+  if (data.verdict === 'opportunity') {
+    if (!data.title) problems.push('缺 title');
+    if (!data.summary) problems.push('缺 summary（这件事是什么）');
+    if (!data.whyWorthAttention) problems.push('缺 whyWorthAttention（为什么值得看）');
+  }
+  const hay = OBS_STR_FIELDS.map((f) => data[f] || '')
+    .concat((data.missingContext || []).concat(data.risks || []))
+    .join(' \n ');
+  // 假精确：百分比 / Score=N / 概率：82 / 阅读量 8000+ 这种数字包装
+  if (/\d{1,3}(\.\d+)?\s*%/.test(hay)
+    || /(?:score|评分|概率|可能性)\D{0,3}\d{1,3}(\.\d+)?/i.test(hay)) {
+    problems.push('输出了无依据的精确概率/评分（当前样本不支持，改用自然语言写 confidenceNote）');
+  }
+  // 越界：替作者把观点定下来
+  if (/(你的观点是|你应该写|这说明你认为|你的结论是)/.test(hay)) {
+    problems.push('替作者确认了观点（观点归人，只能提“可能存在”的入口）');
+  }
+  return problems;
+}
+
 // ===== EP→Article 纯函数契约（2026-09-02 Task 2）=====
 // 九槽位白名单：只有这些名字允许进入 EP 活档案（大小写不敏感，保留原键名）
 const SLOT_WHITELIST = ['event', 'reaction', 'development', 'shift', 'unknown', 'next', 'observation', 'question', 'judgment'];
@@ -858,5 +943,6 @@ module.exports = {
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
   loadInterviewSkill,
   parseInterviewOutput,
+  parseObserverOutput, validateOpportunity,
   buildImageRoleHint, inferImageRole, saveAnalysis,
 };

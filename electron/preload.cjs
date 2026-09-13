@@ -104,6 +104,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteCard:  (id) => ipcRenderer.invoke('card:delete', id),
   growCard:    (id) => ipcRenderer.invoke('card:grow', id),
   interviewTurn: (params) => ipcRenderer.invoke('interview:turn', params),
+  // ===== Content Observer V1（2026-09-09）：Signal → Opportunity → Human Decision =====
+  observerAnalyze: (params) => ipcRenderer.invoke('observer:analyze', params),
+  observerDecide:  (params) => ipcRenderer.invoke('observer:decide', params),
+  observerList:    (params) => ipcRenderer.invoke('observer:list', params),
+  observerDelete:  (id) => ipcRenderer.invoke('observer:delete', id),
   // ===== EP→Article V1：访谈留痕 → 证据 → 观点确认 → 策划通道 =====
   interviewHistory: (observationId) => ipcRenderer.invoke('interview:history', observationId),
   evidenceList: (observationId) => ipcRenderer.invoke('evidence:list', observationId),

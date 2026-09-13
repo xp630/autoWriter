@@ -3,11 +3,12 @@ const { ipcMain, BrowserWindow } = require('electron');
 const { getDb } = require('./db.cjs');
 const { runAgent, detectAvailableClis, listModels } = require('./agent.cjs');
 const { fetchUrl } = require('./fetcher.cjs');
-const { loadAllSkills, buildSkillInjection } = require('./skills.cjs');
+const { loadAllSkills, buildSkillInjection, loadSkillBody } = require('./skills.cjs');
 const { renderPrompt } = require('./prompts.cjs');
 const { TaskQueue } = require('./queue.cjs');
 const {
   parseAnalysisJson, parseAngleResult, parseStrategyResult, loadAnalysisSkill,
+  parseObserverOutput, validateOpportunity,
   loadAngleSkill, loadTopicSkill,
   buildAnalysisPrompt, buildAnalysisContextBlock, buildStrategyBlock, buildImageStrategyHint,
   buildImageRoleHint, parseInterviewOutput, loadInterviewSkill, saveAnalysis,
@@ -2029,6 +2030,180 @@ function registerIpc() {
   ipcMain.handle('analysis:delete', (_e, id) => {
     const r = db.prepare(`DELETE FROM content_analysis WHERE id = ?`).run(Number(id));
     return { ok: true, changes: r.changes };
+  });
+
+  // ===== Content Observer V1（2026-09-09，Phase 1）=====
+  // 铁律（tech spec §10 单次调用模型）：一次输入 → 一次调用 → 一次判断 → 一次人类决策。
+  // 不做 scheduler / RSS / 自动抓取 / 多轮 loop；URL 只在点"分析"时抓，复用已有 fetchUrl。
+  // Observer 的产出是"值得思考的入口"，不是文章，也不是概率评分（§13 禁伪精确）。
+  const OBS_DECISION_STATUS = { ignore: 'ignored', observe: 'observed', think: 'thinking', create: 'creating' };
+
+  const obsProfile = (pid) => {
+    const p = String(pid || '');
+    return { p, like: p ? " AND (profile_id=? OR profile_id='' OR profile_id IS NULL)" : '', args: p ? [p] : [] };
+  };
+  const obsRowToOpp = (r) => ({
+    id: r.id, signalId: r.signal_id, verdict: r.verdict, title: r.title, summary: r.summary,
+    whyWorthAttention: r.why_worth_attention, relevance: r.relevance, timeliness: r.timeliness,
+    differentiation: r.differentiation, audienceValue: r.audience_value,
+    missingContext: (() => { try { return JSON.parse(r.missing_context || '[]'); } catch { return []; } })(),
+    risks: (() => { try { return JSON.parse(r.risks || '[]'); } catch { return []; } })(),
+    confidenceNote: r.confidence_note, status: r.status, createdAt: r.created_at,
+    signalContent: r.signal_content || '', signalSource: r.signal_source || '', signalType: r.signal_type || 'text',
+    decisions: Number(r.decision_count || 0),
+  });
+
+  // 最小上下文（§9）：只给判断这一个 Signal 所必需的东西，不灌整库
+  const obsBuildContext = (pid) => {
+    const { p, like, args } = obsProfile(pid);
+    const drafts = db.prepare(`SELECT title FROM article_drafts WHERE title != ''${like} ORDER BY updated_at DESC LIMIT 5`).all(...args);
+    const eps = db.prepare(`SELECT title, intent FROM episodes WHERE intent != ''${like} ORDER BY season_id, order_in_season LIMIT 12`).all(...args);
+    const cards = db.prepare(`SELECT observation, question FROM observations WHERE observation != ''${like} ORDER BY id DESC LIMIT 8`).all(...args);
+    const season = db.prepare(`SELECT title FROM seasons WHERE status='active' ORDER BY created_at DESC LIMIT 1`).get();
+    return {
+      recentFocus: (season ? `当前主线：${season.title}` : '（暂无进行中的主线）')
+        + (eps.length ? `；计划中 ${eps.length} 集` : ''),
+      recentContent: drafts.length ? drafts.map((d) => `- ${d.title}`).join('\n') : '（还没有文章）',
+      relatedObservations: cards.length
+        ? cards.map((c) => `- ${String(c.observation).slice(0, 46)}${c.question ? ` ／ 疑问：${String(c.question).slice(0, 36)}` : ''}`).join('\n')
+        : '（还没有观察卡）',
+      planCount: eps.length,
+    };
+  };
+
+  ipcMain.handle('observer:analyze', async (_e, { cli, model, type = 'text', content, source = '', positioning = '', profileId } = {}) => {
+    const text = String(content || '').trim();
+    if (!text) return { ok: false, error: '先给我一个外部信号：一条链接，或一句话' };
+    const { p: pid, like, args } = obsProfile(profileId);
+    const nowS = new Date().toISOString();
+    const sigType = ['url', 'image'].includes(String(type)) ? String(type) : 'text';
+
+    // Signal 先落库再分析：AI 挂了也要留下"我看过什么"（这是 Decision Record 的地基）
+    let normalized = '';
+    let src = String(source || '').slice(0, 200);
+    if (sigType === 'url' && /^https?:\/\//i.test(text)) {
+      try {
+        const f = await fetchUrl(text);
+        if (f && f.ok && f.content) {
+          normalized = String(f.content).replace(/\s+/g, ' ').trim().slice(0, 6000);
+          if (!src && f.title) src = String(f.title).slice(0, 120);
+        } else {
+          src = src || '（抓取失败，只按链接原文判断）';
+        }
+      } catch (e) { src = src || '（抓取失败，只按链接原文判断）'; }
+    }
+    let signalId = 0;
+    try {
+      signalId = Number(db.prepare(`INSERT INTO signals (type, content, source, normalized, profile_id, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(sigType, text.slice(0, 8000), src, normalized, pid, nowS).lastInsertRowid);
+    } catch (e) { return { ok: false, error: 'Signal 落库失败：' + e.message }; }
+
+    const ctx = obsBuildContext(pid);
+    let skillBody = '';
+    try { skillBody = loadSkillBody('observer', 'content-observer'); } catch (e) { console.warn('[observer] skill 缺失:', e.message); }
+    const basePrompt = renderPrompt('observer', {
+      skillBody,
+      signalType: sigType,
+      signalSource: src || '（未给来源）',
+      signalContent: (normalized || text).slice(0, 6000),
+      positioning: String(positioning || '').trim() || '（未填赛道定位）',
+      recentFocus: ctx.recentFocus,
+      recentContent: ctx.recentContent,
+      relatedObservations: ctx.relatedObservations,
+    });
+
+    let taskId = '';
+    const callOnce = async (extra) => {
+      const prompt = extra
+        ? `${basePrompt}\n\n---\n上一次输出不符合契约：${extra}\n只重新输出符合契约的那一个 JSON 对象，不要任何解释。`
+        : basePrompt;
+      const enq = enqueueAgentRun('observer', `机会判断: ${text.slice(0, 22)}`, { cli, model: model || '' }, prompt);
+      taskId = enq.taskId;
+      const { content: raw } = await enq.promise;
+      return raw;
+    };
+
+    try {
+      let raw = await callOnce('');
+      let parsed = parseObserverOutput(raw);
+      let problems = parsed.ok ? validateOpportunity(parsed.data) : [parsed.error];
+      if (!parsed.ok || problems.length) {
+        // §22：最多一次自动修复——不无限重试，失败就说人话
+        raw = await callOnce(problems.join('；'));
+        parsed = parseObserverOutput(raw);
+        problems = parsed.ok ? validateOpportunity(parsed.data) : [parsed.error];
+      }
+      if (!parsed.ok || problems.length) {
+        return { ok: false, signalId, taskId, error: 'AI 没按机会判断契约输出：' + problems.join('；') };
+      }
+      const d = parsed.data;
+      const oppId = Number(db.prepare(`INSERT INTO opportunities
+        (signal_id, verdict, title, summary, why_worth_attention, relevance, timeliness, differentiation,
+         audience_value, missing_context, risks, confidence_note, status, profile_id, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(signalId, d.verdict, d.title, d.summary, d.whyWorthAttention, d.relevance, d.timeliness,
+             d.differentiation, d.audienceValue, JSON.stringify(d.missingContext), JSON.stringify(d.risks),
+             d.confidenceNote, 'presented', pid, nowS, nowS).lastInsertRowid);
+      const row = db.prepare(`SELECT o.*, s.content AS signal_content, s.source AS signal_source, s.type AS signal_type,
+                                     (SELECT COUNT(*) FROM decision_records d WHERE d.opportunity_id=o.id) AS decision_count
+                              FROM opportunities o LEFT JOIN signals s ON s.id=o.signal_id WHERE o.id=?`).get(oppId);
+      console.log(`[observer] signal=${signalId} opp=${oppId} verdict=${d.verdict} 缺背景=${d.missingContext.length}`);
+      return { ok: true, signalId, opportunityId: oppId, opportunity: obsRowToOpp(row), taskId };
+    } catch (err) {
+      return { ok: false, signalId, taskId, error: err?.message || String(err) };
+    }
+  });
+
+  // 人类决策：AI 到 Opportunity 为止，最后一步永远是人（§15）
+  ipcMain.handle('observer:decide', (_e, { opportunityId, decision, reasoning = '', seasonId = null, profileId } = {}) => {
+    const id = Number(opportunityId);
+    const d = String(decision || '').trim().toLowerCase();
+    if (!id || !OBS_DECISION_STATUS[d]) return { ok: false, error: '缺 opportunityId 或 decision 非法' };
+    const opp = db.prepare('SELECT * FROM opportunities WHERE id=?').get(id);
+    if (!opp) return { ok: false, error: 'Opportunity 不存在' };
+    const nowS = new Date().toISOString();
+    const { p: pid } = obsProfile(profileId);
+    let observationId = null;
+    try {
+      if (d === 'observe') {
+        // 采纳为观察 → 复用已有 observations 表，不另建第二套内容系统（§18）
+        const txt = [opp.title && `「${opp.title}」`, opp.why_worth_attention || opp.summary || '']
+          .filter(Boolean).join(' ').trim().slice(0, 1000);
+        observationId = Number(db.prepare(`INSERT INTO observations (observation, question, insight, status, season_id, profile_id, created_at, updated_at)
+                                           VALUES (?, '', '', 'new', ?, ?, ?, ?)`)
+          .run(txt || '（来自外部信号的机会）', seasonId ? Number(seasonId) : null, pid, nowS, nowS).lastInsertRowid);
+      }
+      db.prepare(`UPDATE opportunities SET status=?, updated_at=? WHERE id=?`).run(OBS_DECISION_STATUS[d], nowS, id);
+      const r = db.prepare(`INSERT INTO decision_records (opportunity_id, user_decision, reasoning, observation_id, profile_id, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(id, d, String(reasoning || '').slice(0, 600), observationId, pid, nowS);
+      return { ok: true, decisionId: Number(r.lastInsertRowid), observationId, status: OBS_DECISION_STATUS[d] };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // 机会流 + Adoption Rate 原料（V1 只记 presented/accepted，不做统计系统，§15）
+  ipcMain.handle('observer:list', (_e, { profileId, limit = 20 } = {}) => {
+    const { p: pid, like, args } = obsProfile(profileId);
+    try {
+      const rows = db.prepare(`SELECT o.*, s.content AS signal_content, s.source AS signal_source, s.type AS signal_type,
+                                      (SELECT COUNT(*) FROM decision_records d WHERE d.opportunity_id=o.id) AS decision_count
+                               FROM opportunities o LEFT JOIN signals s ON s.id=o.signal_id
+                               WHERE 1=1${like} ORDER BY o.id DESC LIMIT ?`).all(...args, Number(limit) || 20);
+      const presented = db.prepare(`SELECT COUNT(*) c FROM opportunities WHERE 1=1${like}`).get(...args).c;
+      const accepted = db.prepare(`SELECT COUNT(*) c FROM opportunities o WHERE o.status IN ('observed','thinking','creating')${like}`).get(...args).c;
+      return { ok: true, opportunities: rows.map(obsRowToOpp), stats: { presented, accepted } };
+    } catch (e) { return { ok: false, error: e.message, opportunities: [], stats: { presented: 0, accepted: 0 } }; }
+  });
+
+  ipcMain.handle('observer:delete', (_e, id) => {
+    const num = Number(id);
+    if (!num) return { ok: false, error: '缺少 id' };
+    try {
+      db.prepare('DELETE FROM decision_records WHERE opportunity_id=?').run(num);
+      db.prepare('DELETE FROM opportunities WHERE id=?').run(num);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 }
 

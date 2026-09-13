@@ -64,6 +64,11 @@ declare global {
       deleteCard: (id: number) => Promise<{ ok: boolean }>;
       growCard:   (id: number) => Promise<{ ok: boolean; episodeId?: number; already?: boolean; error?: string }>;
       /** 对话流一问：AI 决定追问(question)还是收尾提炼(insight)；失败时给 error，UI 降级固定两问 */
+      // Content Observer V1
+      observerAnalyze: (params: { cli: string; model?: string; type?: 'url' | 'text' | 'image'; content: string; source?: string; positioning?: string; profileId?: string }) => Promise<{ ok: boolean; error?: string; signalId?: number; opportunityId?: number; opportunity?: Opportunity; taskId?: string }>;
+      observerDecide: (params: { opportunityId: number; decision: 'ignore' | 'observe' | 'think' | 'create'; reasoning?: string; seasonId?: number | null; profileId?: string }) => Promise<{ ok: boolean; error?: string; decisionId?: number; observationId?: number | null; status?: string }>;
+      observerList: (params?: { profileId?: string; limit?: number }) => Promise<{ ok: boolean; error?: string; opportunities: Opportunity[]; stats: { presented: number; accepted: number } }>;
+      observerDelete: (id: number) => Promise<{ ok: boolean; error?: string }>;
       interviewTurn: (params: { cli: string; model?: string; observation: string; observationId?: number; answers?: string[]; msgs?: Array<{ who: 'me'|'ai'; text: string; reasoning?: string }> }) =>
         Promise<{ ok: boolean; type?: 'question' | 'insight'; text?: string; reasoning?: string; error?: string; taskId?: string; round?: number }>;
       /** 回放留痕：重开访谈能续上（interview_messages 全量） */
@@ -641,6 +646,29 @@ export type EpisodeStatus =
   | 'drafting'      // 正在写
   | 'published'     // 已发
   | 'archived';     // 归档
+
+/** Content Observer V1：一次外部信号经判断后的机会入口（无评分字段——那是伪确定感）*/
+export interface Opportunity {
+  id: number;
+  signalId: number;
+  verdict: 'opportunity' | 'not_opportunity' | 'insufficient' | string;
+  title: string;
+  summary: string;
+  whyWorthAttention: string;
+  relevance: string;
+  timeliness: string;
+  differentiation: string;
+  audienceValue: string;
+  missingContext: string[];
+  risks: string[];
+  confidenceNote: string;
+  status: 'candidate' | 'presented' | 'ignored' | 'observed' | 'thinking' | 'creating' | string;
+  createdAt?: string;
+  signalContent?: string;
+  signalSource?: string;
+  signalType?: string;
+  decisions?: number;
+}
 
 export interface Episode {
   id: number;

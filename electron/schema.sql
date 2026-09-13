@@ -363,3 +363,56 @@ CREATE TABLE IF NOT EXISTS article_plans (
   created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_plans_episode ON article_plans(episode_id);
+
+-- ============================================================================
+-- Content Observer V1（2026-09-09，Phase 1：Signal → Opportunity → Human Decision）
+-- 设计约束（owner 定）：
+--   1) 不存任何评分/概率字段——当前样本不足以支撑精确数字，存了就是伪确定感
+--   2) Opportunity 的采纳结果落 decision_records；Observation 复用已有 observations 表
+--   3) 不做自动抓取：signal 只能由人手工录入（URL 也只在被点分析时才 fetch）
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS signals (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  type         TEXT NOT NULL DEFAULT 'text',      -- url | text | image
+  content      TEXT NOT NULL DEFAULT '',          -- 原文 / 链接 / 图片说明
+  source       TEXT DEFAULT '',                   -- 站点名或来源描述
+  normalized   TEXT DEFAULT '',                   -- URL 抓取并规整后的正文（非 URL 则空）
+  profile_id   TEXT DEFAULT '',
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_signals_profile ON signals(profile_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS opportunities (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  signal_id            INTEGER NOT NULL,
+  verdict              TEXT DEFAULT 'opportunity',  -- opportunity | not_opportunity | insufficient
+  title                TEXT DEFAULT '',             -- ≤20 字入口名（不是文章标题）
+  summary              TEXT DEFAULT '',             -- 这件事是什么（只说 Signal 里有的）
+  why_worth_attention  TEXT DEFAULT '',             -- 为什么值得你看（必须给连接点）
+  relevance            TEXT DEFAULT '',
+  timeliness           TEXT DEFAULT '',
+  differentiation      TEXT DEFAULT '',
+  audience_value       TEXT DEFAULT '',
+  missing_context      TEXT DEFAULT '[]',           -- JSON 数组：还缺哪些背景
+  risks                TEXT DEFAULT '[]',           -- JSON 数组：可能不值得的理由
+  confidence_note      TEXT DEFAULT '',             -- 自然语言不确定性（禁概率数字）
+  status               TEXT DEFAULT 'presented',    -- candidate|presented|ignored|observed|thinking|creating
+  profile_id           TEXT DEFAULT '',
+  created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_opps_signal ON opportunities(signal_id);
+CREATE INDEX IF NOT EXISTS idx_opps_status ON opportunities(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS decision_records (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  opportunity_id  INTEGER NOT NULL,
+  user_decision   TEXT NOT NULL,                   -- ignore | observe | think | create
+  reasoning       TEXT DEFAULT '',                 -- 我为什么这么判（"判断痕迹"，不是预测数字）
+  observation_id  INTEGER,                         -- 采纳为观察时回链 observations.id
+  profile_id      TEXT DEFAULT '',
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_opp ON decision_records(opportunity_id);
+-- Adoption Rate 的可算性靠这两张表，不在库里预先算好指标（V1 只留痕迹，不做统计系统）

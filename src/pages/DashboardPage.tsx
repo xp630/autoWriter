@@ -18,6 +18,7 @@ import {
   FileText,
   Image as ImageIcon,
   Layers,
+  Radar,
   PenLine,
   Plus,
   Sparkles,
@@ -28,7 +29,7 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Empty } from '../components/Empty';
-import type { Article, ArticlePlan, Episode, EvidenceItem, InsightItem, ObservationCard, QueueSnapshot, Season } from '../types';
+import type { Article, ArticlePlan, Episode, EvidenceItem, InsightItem, ObservationCard, Opportunity, QueueSnapshot, Season } from '../types';
 
 interface Props {
   onNavigate: (page: string) => void;
@@ -43,6 +44,15 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 
 const AGENT_LABEL: Record<string, string> = {
   pi: 'pi', claude: 'Claude Code', opencode: 'opencode', codex: 'Codex CLI',
+};
+
+// ===== Content Observer V1（2026-09-09）：Signal → Opportunity → Human Decision =====
+// verdict 是"AI 的判断结论"三档，不是评分；status 是"人的处置"，采纳三态才算进采纳率
+const OPP_VERDICT_LABEL: Record<string, string> = {
+  opportunity: '值得看', not_opportunity: '不值得', insufficient: '信息不够',
+};
+const OPP_STATUS_LABEL: Record<string, string> = {
+  candidate: '待看', presented: '已判断', ignored: '忽略', observed: '记了观察', thinking: '进入思考', creating: '去创作',
 };
 
 // ===== Task 6：EP 槽位生长预览（六列的展示顺序与中文标签） =====
@@ -115,6 +125,14 @@ export function DashboardPage({ onNavigate }: Props) {
   // Season 生命周期：开新季要自己填主线名（旧版写死 "Season 1"，开第二季会建出重名季）
   // Electron 不支持 window.prompt，所以用内联表单
   const [seasonForm, setSeasonForm] = useState<{ open: boolean; title: string; subtitle: string }>({ open: false, title: '', subtitle: '' });
+  // Observer：手工输入外部信号 → 一次判断 → 四选一决策（无 scheduler、无 RSS）
+  const [obsInput, setObsInput] = useState('');
+  const [obsBusy, setObsBusy] = useState(false);
+  const [obsOpp, setObsOpp] = useState<Opportunity | null>(null);
+  const [obsError, setObsError] = useState('');
+  const [obsReason, setObsReason] = useState('');
+  const [opps, setOpps] = useState<Opportunity[]>([]);
+  const [obsStats, setObsStats] = useState<{ presented: number; accepted: number }>({ presented: 0, accepted: 0 });
   // 观察卡（生活账）
   const [cards, setCards] = useState<ObservationCard[]>([]);
   const [capture, setCapture] = useState('');
@@ -248,6 +266,51 @@ export function DashboardPage({ onNavigate }: Props) {
       setReloadTick((tk) => tk + 1);
     } catch (err: any) { showToast('❌ ' + (err?.message || String(err))); }
   };
+  const loadOpps = async () => {
+    if (!window.electronAPI?.observerList) return;
+    try {
+      const r = await window.electronAPI.observerList({ profileId: profile.id, limit: 20 });
+      if (r?.ok) { setOpps(r.opportunities || []); setObsStats(r.stats || { presented: 0, accepted: 0 }); }
+    } catch { /* 表还没迁移时静默 */ }
+  };
+  useEffect(() => { void loadOpps(); }, [profile.id, reloadTick]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const analyzeSignal = async () => {
+    const text = obsInput.trim();
+    if (!text) { showToast('❌ 先给我一条外部信号：链接或一句话'); return; }
+    if (!window.electronAPI?.observerAnalyze) { showToast('❌ IPC 未就绪'); return; }
+    setObsBusy(true); setObsError(''); setObsOpp(null); setObsReason('');
+    try {
+      const r = await window.electronAPI.observerAnalyze({
+        cli: settings.cli, model: settings.model || '',
+        type: /^https?:\/\//i.test(text) ? 'url' : 'text',
+        content: text, positioning: profile.track || '', profileId: profile.id,
+      });
+      if (!r?.ok) { setObsError(r?.error || 'AI 没返回可用结果'); return; }
+      setObsOpp(r.opportunity || null);
+      void loadOpps();
+    } catch (err: any) {
+      setObsError(err?.message || String(err));
+    } finally {
+      setObsBusy(false);
+    }
+  };
+
+  /** 最后一步永远是人：AI 只交回入口，处置记进 decision_records（Decision Record） */
+  const decideOpp = async (d: 'ignore' | 'observe' | 'think' | 'create') => {
+    if (!obsOpp || !window.electronAPI?.observerDecide) return;
+    const r = await window.electronAPI.observerDecide({
+      opportunityId: obsOpp.id, decision: d, reasoning: obsReason.trim(),
+      seasonId: season?.id ?? null, profileId: profile.id,
+    });
+    if (!r?.ok) { showToast('❌ ' + (r?.error || '记录失败')); return; }
+    showToast({ ignore: '🙅 已忽略', observe: '✅ 已记为观察卡', think: '🧠 已进入思考', create: '✍️ 送去创作' }[d]);
+    setObsOpp(null); setObsInput(''); setObsReason('');
+    setReloadTick((tk) => tk + 1);
+    void loadOpps();
+    if (d === 'create') onNavigate('write');
+  };
+
   const saveCapture = async () => {
     const text = capture.trim();
     if (!text) { showToast('❌ 写点什么再存——观察卡唯一必填就是这句话'); return; }
@@ -514,6 +577,86 @@ export function DashboardPage({ onNavigate }: Props) {
                     : <button type="button" className="btn btn-ghost btn-sm" onClick={() => void growCard(c.id)} title="用这张卡开一个新的 Episode">长成 EP</button>}
                   <button type="button" className="obs-del" title="删除" onClick={() => void deleteCard(c.id)}>×</button>
                 </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* ===== Content Observer V1：外部信号 → 机会入口 → 人决策 =====
+          边界（owner 定）：AI 只回答"这件事值不值得你看"，不代定观点、不给概率数字、不自动抓源 */}
+      <Card title="外部信号 · Observer" icon={Radar} accent="configure">
+        {/* 类名独立于 obs-capture：那是观察卡的选择器，e2e 按它定位，共用会把两条流混成一个节点 */}
+        <div className="opp-capture">
+          <textarea
+            className="textarea"
+            rows={2}
+            placeholder="粘一条外部信号：链接 / 一段新闻 / 一个现象——Observer 只判断它值不值得你花注意力"
+            value={obsInput}
+            onChange={(e) => setObsInput(e.target.value)}
+          />
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void analyzeSignal()} disabled={obsBusy || !obsInput.trim()}>
+            <Radar size={13} /> {obsBusy ? '判断中…' : '判断机会'}
+          </button>
+        </div>
+        {obsError && <div className="opp-error">{obsError}</div>}
+
+        {obsOpp && (
+          <div className="opp-result">
+            <div className="row opp-head">
+              <span className={`opp-verdict opp-verdict-${obsOpp.verdict}`}>{OPP_VERDICT_LABEL[obsOpp.verdict] || obsOpp.verdict}</span>
+              <strong className="opp-title">{obsOpp.title || '（没给入口名）'}</strong>
+            </div>
+            {obsOpp.summary && <p className="opp-summary">{obsOpp.summary}</p>}
+            {obsOpp.whyWorthAttention && <p className="opp-why">{obsOpp.whyWorthAttention}</p>}
+            <div className="row opp-tags">
+              {obsOpp.relevance && <span className="opp-tag">相关性：{obsOpp.relevance}</span>}
+              {obsOpp.timeliness && <span className="opp-tag">时效：{obsOpp.timeliness}</span>}
+              {obsOpp.differentiation && <span className="opp-tag">差异化：{obsOpp.differentiation}</span>}
+              {obsOpp.audienceValue && <span className="opp-tag">读者价值：{obsOpp.audienceValue}</span>}
+            </div>
+            {obsOpp.missingContext.length > 0 && (
+              <div className="opp-block">
+                <div className="opp-block-title">还缺哪些背景</div>
+                <ul>{obsOpp.missingContext.map((m, i) => <li key={i}>{m}</li>)}</ul>
+              </div>
+            )}
+            {obsOpp.risks.length > 0 && (
+              <div className="opp-block">
+                <div className="opp-block-title">可能不值得的理由</div>
+                <ul>{obsOpp.risks.map((m, i) => <li key={i}>{m}</li>)}</ul>
+              </div>
+            )}
+            {obsOpp.confidenceNote && <div className="opp-conf">不确定性：{obsOpp.confidenceNote}</div>}
+            <input
+              className="input opp-reason"
+              placeholder="留一句你的理由：为什么值得（或不值得）继续——不填概率数字"
+              value={obsReason}
+              onChange={(e) => setObsReason(e.target.value)}
+            />
+            <div className="row opp-decisions">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void decideOpp('ignore')}>忽略</button>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void decideOpp('observe')}>记观察</button>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void decideOpp('think')}>进入思考</button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => void decideOpp('create')}>决定创作</button>
+            </div>
+          </div>
+        )}
+
+        {opps.length > 0 && (
+          <div className="opp-feed">
+            <div className="muted opp-adoption">
+              已判断 {obsStats.presented} 条 · 采纳 {obsStats.accepted} 条
+              {obsStats.presented > 0 && <> · 采纳率 {Math.round((obsStats.accepted / obsStats.presented) * 100)}%</>}
+            </div>
+            {opps.slice(0, 6).map((o) => (
+              <div key={o.id} className="opp-row">
+                <span className={`opp-verdict opp-verdict-${o.verdict}`}>{OPP_VERDICT_LABEL[o.verdict] || o.verdict}</span>
+                <div className="opp-row-main">
+                  <div className="opp-row-title">{o.title || (o.signalContent || '').slice(0, 28)}</div>
+                  <div className="muted opp-row-sub">{o.signalSource || (o.signalContent || '').slice(0, 44)}</div>
+                </div>
+                <span className={`opp-status opp-status-${o.status}`}>{OPP_STATUS_LABEL[o.status] || o.status}</span>
               </div>
             ))}
           </div>

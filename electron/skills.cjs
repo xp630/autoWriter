@@ -53,7 +53,7 @@ function loadAllSkills() {
 // 逼得 analysis.cjs 里 4 个 load*Skill 各自拼路径、各自剥 frontmatter，重复且易漂移）
 const KIND_DIRS = {
   channel: 'channels', persona: 'personas', analysis: 'analysis',
-  strategy: 'strategy', interview: 'interview',
+  strategy: 'strategy', interview: 'interview', observer: 'observer',
 };
 
 function findSkill(name, kind) {
